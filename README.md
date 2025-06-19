@@ -18,10 +18,12 @@ This project implements a multi-stage pipeline that processes microbial genome a
 - Generate N50, L50, and contiguity statistics
 - Identify potential assembly issues
 
-### Stage 2: Taxonomic Classification (CheckM/GTDB-Tk)
-- Evaluate genome completeness and contamination
-- Assign taxonomic classifications using GTDB
-- Generate phylogenetic placements
+### Stage 2: Taxonomic Classification (DFAST_QC)
+- Evaluate genome completeness and contamination using CheckM-style analysis
+- Assign taxonomic classifications using Average Nucleotide Identity (ANI)
+- Generate quality metrics and taxonomic confidence scores
+- Install: `conda install -c bioconda dfast_qc`
+- Usage: `dfast_qc -i genome.fna -o OUT --num_threads 8`
 
 ### Stage 3: Gene Prediction (Prodigal)
 - Predict protein-coding sequences
@@ -92,7 +94,7 @@ python -m src.cli ask --mode semantic "Find genomes with similar CAZyme profiles
 ├── data/                    # Data directories (gitignored)
 │   ├── raw/                # Input genome assemblies
 │   ├── stage01_quast/      # Quality assessment results
-│   ├── stage02_checkm/     # Taxonomic classification
+│   ├── stage02_dfast_qc/   # Taxonomic classification
 │   ├── stage03_prodigal/   # Gene predictions
 │   └── kg/                 # Knowledge graph exports
 ├── src/                    # Source code

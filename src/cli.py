@@ -17,13 +17,13 @@ from rich.logging import RichHandler
 import importlib
 prepare_inputs_module = importlib.import_module('src.ingest.00_prepare_inputs')
 run_quast_module = importlib.import_module('src.ingest.01_run_quast')
-run_checkm_gtdb_module = importlib.import_module('src.ingest.02_checkm_gtdb')
+run_dfast_qc_module = importlib.import_module('src.ingest.02_dfast_qc')
 run_prodigal_module = importlib.import_module('src.ingest.03_prodigal')
 run_astra_scan_module = importlib.import_module('src.ingest.04_astra_scan')
 
 prepare_inputs = prepare_inputs_module.prepare_inputs
 run_quast = run_quast_module.run_quast
-run_checkm_gtdb = run_checkm_gtdb_module.run_checkm_gtdb
+run_dfast_qc = run_dfast_qc_module.call
 run_prodigal = run_prodigal_module.run_prodigal
 run_astra_scan = run_astra_scan_module.run_astra_scan
 
@@ -74,15 +74,10 @@ def build(
         "--threads", "-j",
         help="Number of threads to use"
     ),
-    skip_checkm: bool = typer.Option(
+    skip_tax: bool = typer.Option(
         False,
-        "--skip-checkm",
-        help="Skip CheckM completeness analysis"
-    ),
-    skip_gtdb: bool = typer.Option(
-        False,
-        "--skip-gtdb", 
-        help="Skip GTDB-Tk taxonomic classification"
+        "--skip-tax",
+        help="Skip taxonomic classification with DFAST_QC"
     ),
     force: bool = typer.Option(
         False,
@@ -96,7 +91,7 @@ def build(
     Runs the complete genomic processing pipeline through multiple stages:
     0. Input preparation and validation
     1. Quality assessment with QUAST
-    2. Taxonomic classification with CheckM/GTDB-Tk  
+    2. Taxonomic classification with DFAST_QC (ANI+CheckM)  
     3. Gene prediction with Prodigal
     4. Functional annotation with Astra/PyHMMer
     """
@@ -128,17 +123,18 @@ def build(
             "function": lambda: run_quast(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage01_quast",
-                threads=threads
+                max_workers=min(threads, 4),  # Limit parallel workers
+                threads_per_genome=1,
+                force=force
             )
         },
         2: {
-            "name": "CheckM/GTDB-Tk Classification",
-            "function": lambda: run_checkm_gtdb(
+            "name": "DFAST_QC Taxonomy",
+            "function": lambda: run_dfast_qc(
                 input_dir=output_dir / "stage00_prepared",
-                output_dir=output_dir / "stage02_checkm",
+                output_dir=output_dir / "stage02_dfast_qc",
                 threads=threads,
-                skip_checkm=skip_checkm,
-                skip_gtdb=skip_gtdb
+                force=force
             )
         },
         3: {
@@ -146,7 +142,8 @@ def build(
             "function": lambda: run_prodigal(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage03_prodigal",
-                threads=threads
+                max_workers=threads,
+                force=force
             )
         },
         4: {
@@ -177,6 +174,11 @@ def build(
             
             # Execute stage
             try:
+                # Handle skip logic for taxonomy stage
+                if stage_num == 2 and skip_tax:
+                    console.print(f"[yellow]Skipping Stage {stage_num} (--skip-tax flag)[/yellow]")
+                    continue
+                    
                 stage["function"]()
                 console.print(f"[green]✓ Stage {stage_num} completed[/green]")
             except Exception as e:
