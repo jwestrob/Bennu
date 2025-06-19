@@ -149,11 +149,11 @@ def test_parse_json_malformed_file(tmp_path):
     assert result["status"] == "failed"
 
 
-@patch('src.ingest.02_dfast_qc.subprocess.run')
-def test_run_dfast_success(mock_subprocess, tmp_path, example_json):
+@patch.object(dfast_qc_module.subprocess, 'run')
+def test_run_dfast_success(mock_subprocess_run, tmp_path, example_json):
     """Test successful DFAST_QC execution."""
     # Setup mock
-    mock_subprocess.return_value.returncode = 0
+    mock_subprocess_run.return_value.returncode = 0
     
     # Create input and output paths
     input_fasta = tmp_path / "test_genome.fna"
@@ -177,24 +177,24 @@ def test_run_dfast_success(mock_subprocess, tmp_path, example_json):
     assert "taxonomy" in result
     assert result["taxonomy"]["rank"] == "species"
     
-    # Check that command was called correctly
-    mock_subprocess.assert_called_once()
-    call_args = mock_subprocess.call_args[0][0]
-    assert "dfast_qc" in call_args
-    assert "-i" in call_args
-    assert str(input_fasta) in call_args
-    assert "-o" in call_args
-    assert str(output_dir) in call_args
-    assert "--num_threads" in call_args
-    assert "2" in call_args
+    # Check that command was called correctly (first call is main dfast_qc, second is version)
+    assert mock_subprocess_run.call_count == 2
+    main_call_args = mock_subprocess_run.call_args_list[0][0][0]  # First call, first positional arg
+    assert "dfast_qc" in main_call_args
+    assert "-i" in main_call_args
+    assert str(input_fasta) in main_call_args
+    assert "-o" in main_call_args
+    assert str(output_dir) in main_call_args
+    assert "--num_threads" in main_call_args
+    assert "2" in main_call_args
     # enable_cc=True means --disable_cc should NOT be present
-    assert "--disable_cc" not in call_args
+    assert "--disable_cc" not in main_call_args
 
 
-@patch('src.ingest.02_dfast_qc.subprocess.run')
-def test_run_dfast_disable_cc(mock_subprocess, tmp_path, example_json):
+@patch.object(dfast_qc_module.subprocess, 'run')
+def test_run_dfast_disable_cc(mock_subprocess_run, tmp_path, example_json):
     """Test DFAST_QC execution with completeness/contamination disabled."""
-    mock_subprocess.return_value.returncode = 0
+    mock_subprocess_run.return_value.returncode = 0
     
     input_fasta = tmp_path / "test_genome.fna"
     input_fasta.write_text(">seq1\nATGC\n")
@@ -211,18 +211,18 @@ def test_run_dfast_disable_cc(mock_subprocess, tmp_path, example_json):
     
     assert result["execution_status"] == "success"
     
-    # Check that --disable_cc flag was added
-    call_args = mock_subprocess.call_args[0][0]
-    assert "--disable_cc" in call_args
-    assert "--num_threads" in call_args
-    assert "4" in call_args
+    # Check that --disable_cc flag was added (first call is main dfast_qc)
+    main_call_args = mock_subprocess_run.call_args_list[0][0][0]  # First call, first positional arg
+    assert "--disable_cc" in main_call_args
+    assert "--num_threads" in main_call_args
+    assert "4" in main_call_args
 
 
-@patch('src.ingest.02_dfast_qc.subprocess.run')
-def test_run_dfast_failure(mock_subprocess, tmp_path):
+@patch.object(dfast_qc_module.subprocess, 'run')
+def test_run_dfast_failure(mock_subprocess_run, tmp_path):
     """Test DFAST_QC execution failure."""
     # Setup mock to return failure
-    mock_subprocess.return_value.returncode = 1
+    mock_subprocess_run.return_value.returncode = 1
     
     input_fasta = tmp_path / "test_genome.fna"
     input_fasta.write_text(">seq1\nATGC\n")
@@ -235,13 +235,13 @@ def test_run_dfast_failure(mock_subprocess, tmp_path):
     assert result["genome_id"] == "test_genome"
 
 
-@patch('src.ingest.02_dfast_qc.subprocess.run')
-def test_run_dfast_timeout(mock_subprocess, tmp_path):
+@patch.object(dfast_qc_module.subprocess, 'run')
+def test_run_dfast_timeout(mock_subprocess_run, tmp_path):
     """Test DFAST_QC execution timeout."""
     from subprocess import TimeoutExpired
     
     # Setup mock to raise timeout
-    mock_subprocess.side_effect = TimeoutExpired("dfast_qc", 1800)
+    mock_subprocess_run.side_effect = TimeoutExpired("dfast_qc", 1800)
     
     input_fasta = tmp_path / "test_genome.fna"
     input_fasta.write_text(">seq1\nATGC\n")
@@ -253,10 +253,10 @@ def test_run_dfast_timeout(mock_subprocess, tmp_path):
     assert "timed out" in result["error_message"]
 
 
-@patch('src.ingest.02_dfast_qc.subprocess.run')
-def test_run_dfast_missing_output(mock_subprocess, tmp_path):
+@patch.object(dfast_qc_module.subprocess, 'run')
+def test_run_dfast_missing_output(mock_subprocess_run, tmp_path):
     """Test DFAST_QC when output file is not created."""
-    mock_subprocess.return_value.returncode = 0
+    mock_subprocess_run.return_value.returncode = 0
     
     input_fasta = tmp_path / "test_genome.fna"
     input_fasta.write_text(">seq1\nATGC\n")
