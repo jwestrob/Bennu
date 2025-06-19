@@ -4,7 +4,7 @@
 |------|----------------------------------------------|--------|-----------|-------|
 | 0.1  | Create progress_track.md                     | ☑      | 2025-06-18 17:17 | file created |
 | 1.1  | git init repo                                | ☑      | 2025-06-18 17:18 | initialized successfully |
-| 1.2  | initial commit "chore: project scaffold"    | ☐      |           | |
+| 1.2  | initial commit "chore: project scaffold"    | ☑      | 2025-06-18 17:36 | commit 5d04344 |
 | 2.1  | create directory scaffold                    | ☑      | 2025-06-18 17:18 | all dirs created |
 | 2.2  | add __init__.py files for Python packages   | ☑      | 2025-06-18 17:18 | all packages configured |
 | 3.1  | add .gitignore                              | ☑      | 2025-06-18 17:19 | comprehensive gitignore |
@@ -16,7 +16,7 @@
 | 4.4  | implement Typer CLI                         | ☑      | 2025-06-18 17:28 | build and ask commands |
 | 5.2  | confirm `python -m src.cli --help` works    | ☑      | 2025-06-18 17:28 | CLI working correctly |
 | 5.3  | flake8 passes                               | ☐      |           | skipped for bootstrap |
-| 6.1  | commit "feat: bootstrap pipeline skeleton"   | ☑      | 2025-06-18 17:29 | commit e7917733 |
+| 6.1  | commit "feat: bootstrap pipeline skeleton"   | ☑      | 2025-06-18 17:36 | commit 5d04344 |
 
 Legend: ☑ done ☐ pending
 
