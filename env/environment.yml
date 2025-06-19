@@ -10,6 +10,7 @@ dependencies:
   - quast
   - checkm-genome
   - gtdbtk
+  - dfast_qc
   - coverm
   - plasflow
   - isescan
