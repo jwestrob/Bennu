@@ -1,0 +1,55 @@
+name: genome-kg
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  # Core bioinformatics tools
+  - prodigal
+  - quast
+  - checkm-genome
+  - gtdbtk
+  - coverm
+  - plasflow
+  - isescan
+  - orthofinder
+  - eggnog-mapper
+  - bprom
+  - transtermhp
+  - crisprcasfinder
+  - signalp6
+  - tmhmm
+  # Python packages
+  - pyhmmer
+  - rdflib
+  - neo4j-python-driver
+  - faiss-cpu
+  - typer
+  - pydantic
+  - pyarrow
+  - click
+  - rich
+  - pandas
+  - numpy
+  - scipy
+  - matplotlib
+  - seaborn
+  - jupyter
+  - notebook
+  - ipykernel
+  - pytest
+  - flake8
+  - black
+  - isort
+  - mypy
+  # Additional utilities
+  - biopython
+  - requests
+  - pyyaml
+  - tqdm
+  - loguru
+  - pip
+  - pip:
+    - dsp-ml
+    - neo4j
