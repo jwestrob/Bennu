@@ -126,6 +126,45 @@ Python packages:
 - **dsp**: LLM structured prompting
 - **pyarrow**: Efficient data serialization
 
+## Testing
+
+The project includes a comprehensive testing system with automatic test discovery:
+
+```bash
+# Show all available tests
+python run_tests.py --discover
+
+# Run all tests
+python run_tests.py
+
+# Run quick smoke tests during development
+python run_tests.py --smoke
+
+# Run with coverage analysis
+python run_tests.py --coverage
+
+# Run tests for specific modules
+python run_tests.py --module ingest
+python run_tests.py --module build_kg
+
+# Run by test category
+python run_tests.py --marker unit
+python run_tests.py --marker integration
+
+# Shell wrapper (same commands)
+./test.sh --discover
+./test.sh --smoke
+```
+
+**Key Features:**
+- **Zero maintenance**: Automatically discovers new tests
+- **Multiple execution modes**: Smoke tests, full validation, CI/CD optimized
+- **Coverage integration**: Built-in coverage reporting
+- **HTML reports**: Detailed test result visualization
+- **Parallel execution**: Faster test runs with `--parallel`
+
+See `TESTING.md` for complete documentation.
+
 ## Development
 
 The project follows a modular architecture with clear separation between:

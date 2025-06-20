@@ -349,7 +349,7 @@ def call(
         help="Maximum number of parallel workers (default: CPU count - 1)"
     ),
     enable_cc: bool = typer.Option(
-        True,
+        False,
         "--enable-cc/--disable-cc",
         help="Enable/disable completeness and contamination analysis"
     ),

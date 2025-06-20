@@ -5,51 +5,46 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  # Core bioinformatics tools
-  - prodigal
-  - quast
-  - checkm-genome
-  - gtdbtk
-  - dfast_qc
-  - coverm
-  - plasflow
-  - isescan
-  - orthofinder
-  - eggnog-mapper
-  - bprom
-  - transtermhp
-  - crisprcasfinder
-  - signalp6
-  - tmhmm
-  # Python packages
+  # Core bioinformatics tools are installed via homebrew (quast, prodigal)
+  # Python packages for bioinformatics
   - pyhmmer
-  - rdflib
-  - neo4j-python-driver
-  - faiss-cpu
-  - typer
-  - pydantic
-  - pyarrow
-  - click
-  - rich
+  - biopython
+  # Dependencies for dfast_qc
+  - ete3
+  - more-itertools
+  - peewee
+  # Data processing and analysis
   - pandas
   - numpy
   - scipy
   - matplotlib
   - seaborn
-  - jupyter
-  - notebook
-  - ipykernel
+  - pyarrow
+  # Knowledge graph and database
+  - rdflib
+  - neo4j-python-driver
+  # Machine learning and retrieval
+  - faiss-cpu
+  # CLI and utilities
+  - typer
+  - pydantic
+  - click
+  - rich
+  - requests
+  - pyyaml
+  - tqdm
+  - loguru
+  # Development and testing
   - pytest
   - flake8
   - black
   - isort
   - mypy
-  # Additional utilities
-  - biopython
-  - requests
-  - pyyaml
-  - tqdm
-  - loguru
+  # Jupyter environment
+  - jupyter
+  - notebook
+  - ipykernel
+  # Package management
   - pip
   - pip:
     - dsp-ml

@@ -134,6 +134,7 @@ def build(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage02_dfast_qc",
                 threads=threads,
+                enable_cc=False,
                 force=force
             )
         },
