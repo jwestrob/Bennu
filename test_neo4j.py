@@ -74,7 +74,7 @@ def test_neo4j_connection():
             
             # 5. Sample protein domains
             console.print("\n[bold]5. Sample Protein Families (PFAM)[/bold]")
-            result = session.run("MATCH (pf:ProteinFamily) RETURN pf.id as family_id LIMIT 5")
+            result = session.run("MATCH (pf:Domain) RETURN pf.id as family_id LIMIT 5")
             
             for record in result:
                 console.print(f"  • {record['family_id']}")
@@ -82,7 +82,7 @@ def test_neo4j_connection():
             # 6. Protein with most domains
             console.print("\n[bold]6. Proteins with Most Domains[/bold]")
             result = session.run("""
-                MATCH (p:Protein)-[:hasDomain]->(d:ProteinDomain)
+                MATCH (p:Protein)-[:hasDomain]->(d:DomainAnnotation)
                 RETURN p.id as protein, count(d) as domain_count
                 ORDER BY domain_count DESC
                 LIMIT 3

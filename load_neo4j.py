@@ -42,8 +42,8 @@ class Neo4jLoader:
             "CREATE CONSTRAINT genome_id IF NOT EXISTS FOR (g:Genome) REQUIRE g.id IS UNIQUE",
             "CREATE CONSTRAINT protein_id IF NOT EXISTS FOR (p:Protein) REQUIRE p.id IS UNIQUE", 
             "CREATE CONSTRAINT gene_id IF NOT EXISTS FOR (g:Gene) REQUIRE g.id IS UNIQUE",
-            "CREATE CONSTRAINT domain_id IF NOT EXISTS FOR (d:ProteinDomain) REQUIRE d.id IS UNIQUE",
-            "CREATE CONSTRAINT family_id IF NOT EXISTS FOR (f:ProteinFamily) REQUIRE f.id IS UNIQUE",
+            "CREATE CONSTRAINT domain_annotation_id IF NOT EXISTS FOR (d:DomainAnnotation) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT domain_id IF NOT EXISTS FOR (f:Domain) REQUIRE f.id IS UNIQUE",
             "CREATE CONSTRAINT kegg_id IF NOT EXISTS FOR (k:KEGGOrtholog) REQUIRE k.id IS UNIQUE"
         ]
         
@@ -72,7 +72,7 @@ class Neo4jLoader:
         return stats
     
     def _convert_rdf_to_neo4j(self, g: rdflib.Graph) -> Dict[str, Any]:
-        """Convert RDF triples to Neo4j nodes and relationships."""
+        """Convert RDF triples to Neo4j nodes and relationships with proper batching."""
         
         # Parse namespaces for cleaner URIs
         namespaces = {
@@ -84,77 +84,134 @@ class Neo4jLoader:
             "kg": "http://genome-kg.org/ontology/"
         }
         
-        # First pass: collect RDF types for proper node classification
+        # First pass: collect RDF types and group triples by subject
         rdf_types = {}
+        entity_properties = {}  # subject -> {property: value}
+        relationships = []  # [(subj, pred, obj)]
+        
         for subj, pred, obj in g:
-            if str(pred) == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
-                rdf_types[str(subj)] = str(obj)
+            subj_str = str(subj)
+            pred_str = str(pred)
+            
+            if pred_str == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
+                rdf_types[subj_str] = str(obj)
+            elif isinstance(obj, rdflib.URIRef):
+                # This is a relationship
+                relationships.append((subj, pred, obj))
+            else:
+                # This is a property
+                if subj_str not in entity_properties:
+                    entity_properties[subj_str] = {}
+                
+                pred_name = self._uri_to_property(pred_str, namespaces)
+                
+                # Handle different data types
+                if isinstance(obj, rdflib.Literal):
+                    if obj.datatype == rdflib.XSD.decimal or obj.datatype == rdflib.XSD.double:
+                        obj_value = float(obj)
+                    elif obj.datatype == rdflib.XSD.integer:
+                        obj_value = int(obj)
+                    else:
+                        obj_value = str(obj)
+                else:
+                    obj_value = str(obj)
+                
+                entity_properties[subj_str][pred_name] = obj_value
         
         nodes_created = 0
         relationships_created = 0
         
         with self.driver.session() as session:
             with Progress(console=console) as progress:
-                task = progress.add_task("Processing triples...", total=len(g))
+                # Step 1: Create all nodes with their properties in batches
+                node_task = progress.add_task("Creating nodes...", total=len(entity_properties))
                 
-                # Process all triples
-                for i, (subj, pred, obj) in enumerate(g):
-                    try:
-                        # Convert URIs to readable IDs
+                # Process nodes in batches of 100
+                batch_size = 100
+                entity_items = list(entity_properties.items())
+                
+                for i in range(0, len(entity_items), batch_size):
+                    batch = entity_items[i:i + batch_size]
+                    
+                    # Build batch Cypher query
+                    batch_cypher_parts = []
+                    batch_params = {}
+                    
+                    for j, (subj_uri, props) in enumerate(batch):
+                        subj_id = self._uri_to_id(subj_uri, namespaces)
+                        node_type = self._get_node_type_from_rdf(subj_uri, rdf_types, namespaces)
+                        
+                        # Create parameter names for this node
+                        id_param = f"id_{j}"
+                        batch_params[id_param] = subj_id
+                        
+                        # Build SET clause for properties
+                        set_clauses = []
+                        for prop_name, prop_value in props.items():
+                            prop_param = f"prop_{j}_{prop_name}"
+                            # Replace invalid characters in parameter names
+                            prop_param = prop_param.replace('-', '_').replace('.', '_')
+                            batch_params[prop_param] = prop_value
+                            set_clauses.append(f"n_{j}.{prop_name} = ${prop_param}")
+                        
+                        set_clause = ", ".join(set_clauses) if set_clauses else ""
+                        
+                        # Add to batch
+                        node_clause = f"MERGE (n_{j}:{node_type} {{id: ${id_param}}})"
+                        if set_clause:
+                            node_clause += f" SET {set_clause}"
+                        
+                        batch_cypher_parts.append(node_clause)
+                    
+                    # Execute batch
+                    if batch_cypher_parts:
+                        batch_cypher = "\n".join(batch_cypher_parts)
+                        session.run(batch_cypher, **batch_params)
+                        nodes_created += len(batch)
+                    
+                    progress.advance(node_task, len(batch))
+                
+                # Step 2: Create all relationships in batches
+                rel_task = progress.add_task("Creating relationships...", total=len(relationships))
+                
+                for i in range(0, len(relationships), batch_size):
+                    batch = relationships[i:i + batch_size]
+                    
+                    batch_cypher_parts = []
+                    batch_params = {}
+                    
+                    for j, (subj, pred, obj) in enumerate(batch):
                         subj_id = self._uri_to_id(str(subj), namespaces)
+                        obj_id = self._uri_to_id(str(obj), namespaces)
                         pred_name = self._uri_to_property(str(pred), namespaces)
                         
-                        if isinstance(obj, rdflib.URIRef):
-                            # This is a relationship
-                            obj_id = self._uri_to_id(str(obj), namespaces)
-                            
-                            # Determine node types using RDF types
-                            subj_type = self._get_node_type_from_rdf(str(subj), rdf_types, namespaces)
-                            obj_type = self._get_node_type_from_rdf(str(obj), rdf_types, namespaces)
-                            
-                            # Create nodes and relationship
-                            cypher = f"""
-                            MERGE (s:{subj_type} {{id: $subj_id}})
-                            MERGE (o:{obj_type} {{id: $obj_id}})
-                            MERGE (s)-[:{pred_name}]->(o)
-                            """
-                            
-                            session.run(cypher, subj_id=subj_id, obj_id=obj_id)
-                            relationships_created += 1
-                            
-                        else:
-                            # This is a property
-                            node_type = self._get_node_type_from_rdf(str(subj), rdf_types, namespaces)
-                            
-                            # Handle different data types
-                            if isinstance(obj, rdflib.Literal):
-                                if obj.datatype == rdflib.XSD.decimal or obj.datatype == rdflib.XSD.double:
-                                    obj_value = float(obj)
-                                elif obj.datatype == rdflib.XSD.integer:
-                                    obj_value = int(obj)
-                                else:
-                                    obj_value = str(obj)
-                            else:
-                                obj_value = str(obj)
-                            
-                            cypher = f"""
-                            MERGE (n:{node_type} {{id: $subj_id}})
-                            SET n.{pred_name} = $obj_value
-                            """
-                            
-                            session.run(cypher, subj_id=subj_id, obj_value=obj_value)
-                            nodes_created += 1
+                        # Determine node types
+                        subj_type = self._get_node_type_from_rdf(str(subj), rdf_types, namespaces)
+                        obj_type = self._get_node_type_from_rdf(str(obj), rdf_types, namespaces)
                         
-                        if i % 1000 == 0:
-                            progress.advance(task, 1000)
+                        # Create parameter names
+                        subj_param = f"subj_{j}"
+                        obj_param = f"obj_{j}"
+                        batch_params[subj_param] = subj_id
+                        batch_params[obj_param] = obj_id
+                        
+                        # Add relationship
+                        rel_clause = f"""
+                        MERGE (s_{j}:{subj_type} {{id: ${subj_param}}})
+                        MERGE (o_{j}:{obj_type} {{id: ${obj_param}}})
+                        MERGE (s_{j})-[:{pred_name}]->(o_{j})
+                        """
+                        batch_cypher_parts.append(rel_clause)
                     
-                    except Exception as e:
-                        logger.warning(f"Error processing triple {subj} {pred} {obj}: {e}")
-                        continue
-                
-                progress.advance(task, len(g) % 1000)
+                    # Execute batch
+                    if batch_cypher_parts:
+                        batch_cypher = "\n".join(batch_cypher_parts)
+                        session.run(batch_cypher, **batch_params)
+                        relationships_created += len(batch)
+                    
+                    progress.advance(rel_task, len(batch))
         
-        console.print(f"✓ Created {nodes_created} node properties")
+        console.print(f"✓ Created {nodes_created} nodes with properties")
         console.print(f"✓ Created {relationships_created} relationships")
         
         return {
@@ -187,14 +244,14 @@ class Neo4jLoader:
                 return "Protein"
             elif rdf_type.endswith("Gene"):
                 return "Gene"
-            elif rdf_type.endswith("ProteinFamily"):
-                return "ProteinFamily"
+            elif rdf_type.endswith("Domain"):
+                return "Domain"
             elif rdf_type.endswith("KEGGOrtholog"):
                 return "KEGGOrtholog"
             elif rdf_type.endswith("QualityMetrics"):
                 return "QualityMetrics"
-            elif rdf_type.endswith("ProteinDomain"):
-                return "ProteinDomain"
+            elif rdf_type.endswith("DomainAnnotation"):
+                return "DomainAnnotation"
             elif rdf_type.endswith("FunctionalAnnotation"):
                 return "FunctionalAnnotation"
         
@@ -213,7 +270,7 @@ class Neo4jLoader:
         elif uri.startswith(namespaces["gene"]):
             return "Gene"
         elif uri.startswith(namespaces["pfam"]):
-            return "ProteinFamily"
+            return "Domain"
         elif uri.startswith(namespaces["ko"]):
             return "KEGGOrtholog"
         else:

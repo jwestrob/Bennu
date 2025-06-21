@@ -167,7 +167,7 @@ class TestGenomeKGBuilder:
         pfam_uri_1 = PFAM['PF00001']
         protein_uri_1 = PROTEIN['protein_001']
         
-        assert (domain_uri_1, RDF.type, KG.ProteinDomain) in builder.graph
+        assert (domain_uri_1, RDF.type, KG.DomainAnnotation) in builder.graph
         assert (domain_uri_1, KG.belongsToProtein, protein_uri_1) in builder.graph
         assert (domain_uri_1, KG.domainFamily, pfam_uri_1) in builder.graph
         assert (domain_uri_1, KG.domainStart, Literal(10, datatype=XSD.integer)) in builder.graph
@@ -175,8 +175,8 @@ class TestGenomeKGBuilder:
         assert (domain_uri_1, KG.bitscore, Literal(120.5, datatype=XSD.float)) in builder.graph
         assert (domain_uri_1, KG.evalue, Literal(1e-25, datatype=XSD.double)) in builder.graph
         
-        # Check PFAM family triples
-        assert (pfam_uri_1, RDF.type, KG.ProteinFamily) in builder.graph
+        # Check PFAM domain family triples
+        assert (pfam_uri_1, RDF.type, KG.Domain) in builder.graph
         assert (pfam_uri_1, KG.pfamAccession, Literal('PF00001')) in builder.graph
         
         # Check protein-domain link
@@ -205,7 +205,7 @@ class TestGenomeKGBuilder:
         
         # Should not add any domain triples for unknown protein
         domain_uri = PROTEIN['unknown_protein/domain/PF00001/10-50']
-        assert (domain_uri, RDF.type, KG.ProteinDomain) not in builder.graph
+        assert (domain_uri, RDF.type, KG.DomainAnnotation) not in builder.graph
 
     def test_add_kofam_functions(self):
         """Test adding KOFAM functional annotations."""

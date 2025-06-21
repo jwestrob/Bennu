@@ -144,7 +144,7 @@ class TestKnowledgeGraphIntegration:
         
         genome_count = len(list(graph.subjects(predicate=None, object=KG.Genome)))
         protein_count = len(list(graph.subjects(predicate=None, object=KG.Protein)))
-        domain_count = len(list(graph.subjects(predicate=None, object=KG.ProteinDomain)))
+        domain_count = len(list(graph.subjects(predicate=None, object=KG.DomainAnnotation)))
         function_count = len(list(graph.subjects(predicate=None, object=KG.FunctionalAnnotation)))
         
         # Verify counts match expected
@@ -164,7 +164,7 @@ class TestKnowledgeGraphIntegration:
         
         # Domains should link to proteins
         if domain_count > 0:
-            domains = list(graph.subjects(predicate=None, object=KG.ProteinDomain))
+            domains = list(graph.subjects(predicate=None, object=KG.DomainAnnotation))
             for domain_uri in domains:
                 protein_relations = list(graph.objects(subject=domain_uri, predicate=KG.belongsToProtein))
                 assert len(protein_relations) == 1

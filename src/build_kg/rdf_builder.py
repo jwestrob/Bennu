@@ -51,10 +51,10 @@ class GenomeKGBuilder:
             (KG.Genome, "Genome assembly"),
             (KG.Gene, "Protein-coding gene"),
             (KG.Protein, "Protein sequence"),
-            (KG.ProteinDomain, "Protein domain annotation"),
+            (KG.DomainAnnotation, "Protein domain annotation instance"),
             (KG.FunctionalAnnotation, "Functional annotation"),
             (KG.KEGGOrtholog, "KEGG Orthologous group"),
-            (KG.ProteinFamily, "Protein family (PFAM)")
+            (KG.Domain, "Protein domain family (PFAM)")
         ]
         
         properties = [
@@ -154,8 +154,8 @@ class GenomeKGBuilder:
             domain_uri = PROTEIN[domain['domain_id']]
             pfam_uri = PFAM[domain['pfam_id']]
             
-            # Domain instance
-            self.graph.add((domain_uri, RDF.type, KG.ProteinDomain))
+            # Domain annotation instance
+            self.graph.add((domain_uri, RDF.type, KG.DomainAnnotation))
             self.graph.add((domain_uri, KG.belongsToProtein, protein_uri))
             self.graph.add((domain_uri, KG.domainFamily, pfam_uri))
             self.graph.add((domain_uri, KG.domainStart, Literal(domain['start_pos'], datatype=XSD.integer)))
@@ -163,8 +163,8 @@ class GenomeKGBuilder:
             self.graph.add((domain_uri, KG.bitscore, Literal(domain['bitscore'], datatype=XSD.float)))
             self.graph.add((domain_uri, KG.evalue, Literal(domain['evalue'], datatype=XSD.double)))
             
-            # PFAM family reference
-            self.graph.add((pfam_uri, RDF.type, KG.ProteinFamily))
+            # PFAM domain family reference
+            self.graph.add((pfam_uri, RDF.type, KG.Domain))
             self.graph.add((pfam_uri, KG.pfamAccession, Literal(domain['pfam_id'])))
             
             # Link protein to domain

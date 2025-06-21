@@ -267,3 +267,33 @@ genomic context suggests involvement in aerobic respiration pathways."
 - **Apple Silicon Optimization**: ~85 proteins/second ESM2 processing
 
 This represents a complete transformation from a basic bioinformatics pipeline to an intelligent genomic AI platform.
+
+## Known Issues & Future Work
+
+### 🔧 High Priority Improvements Needed:
+
+#### 1. **LLM Context Formatting Enhancement** 
+- **Issue**: `_format_context` method in `src/llm/rag_system.py` needs improvement
+- **Problem**: Rich quantitative data retrieved (40 GGDEF domains, specific protein IDs, bitscores) but LLM responses still somewhat generic
+- **Solution Needed**: Format context to highlight key quantitative insights like:
+  ```
+  GGDEF DOMAIN ANALYSIS:
+  - Found 40 GGDEF domains across 37 proteins
+  - Top scoring domains: protein_X (score: 167.25), protein_Y (score: 158.24)
+  - Genome distribution: Acidovorax (28), Gammaproteobacteria (9), PLM0_60 (3)
+  ```
+
+#### 2. **Neo4j Schema Naming** 
+- **Issue**: Current `ProteinFamily` vs `ProteinDomain` naming is biologically confusing
+- **Proposed**: Rename to `Domain` (functional families) vs `DomainAnnotation` (sequence hits)
+- **Impact**: Would make DSPy prompts and biological reasoning much clearer
+
+#### 3. **Neo4j Loading Property Bug**
+- **Issue**: Some RDF properties dropped during bulk loading (GGDEF missing descriptions)
+- **Evidence**: Stockholm file → RDF enrichment works, but Neo4j loses some properties
+- **Fix Needed**: Debug bulk loading in `load_neo4j.py` for property preservation
+
+### 🧪 Recent Debugging Discoveries:
+- **GGDEF Domain Case Study**: 40 domains found in dataset, Stockholm file has perfect descriptions, RDF enrichment works, but Neo4j loading inconsistent
+- **Query Generation**: DSPy now correctly generates domain queries using `ProteinDomain.id CONTAINS '/domain/GGDEF/'`
+- **Data Quality**: Functional enrichment statistics show 3,389 PFAM families enriched vs only 15 missing

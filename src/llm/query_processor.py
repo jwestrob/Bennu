@@ -129,11 +129,12 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         cypher = """
         MATCH (g:Genome {id: $genome_id})
         OPTIONAL MATCH (g)<-[:belongsToGenome]-(p:Protein)
-        OPTIONAL MATCH (p)-[:hasDomain]->(d:ProteinDomain)-[:domainFamily]->(pf:ProteinFamily)
+        OPTIONAL MATCH (p)-[:hasDomain]->(d:DomainAnnotation)-[:domainFamily]->(pf:Domain)
         OPTIONAL MATCH (p)-[:hasFunction]->(ko:KEGGOrtholog)
         RETURN g.id as genome_id,
                count(DISTINCT p) as protein_count,
-               count(DISTINCT pf) as protein_family_count,
+               count(DISTINCT pf) as domain_family_count,
+               collect(DISTINCT pf.description)[0..5] as sample_family_descriptions,
                count(DISTINCT ko) as kegg_function_count,
                collect(DISTINCT pf.id)[0..5] as sample_families,
                collect(DISTINCT ko.id)[0..5] as sample_functions
@@ -148,21 +149,25 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         cypher = """
         MATCH (p:Protein {id: $protein_id})
         OPTIONAL MATCH (p)<-[:encodedBy]-(gene:Gene)-[:belongsToGenome]->(g:Genome)
-        OPTIONAL MATCH (p)-[:hasDomain]->(d:ProteinDomain)-[:domainFamily]->(pf:ProteinFamily)
+        OPTIONAL MATCH (p)-[:hasDomain]->(d:DomainAnnotation)-[:domainFamily]->(pf:Domain)
         OPTIONAL MATCH (p)-[:hasFunction]->(ko:KEGGOrtholog)
         
         // Get genomic neighborhood (genes on same scaffold)
         OPTIONAL MATCH (gene)-[:belongsToGenome]->(g)<-[:belongsToGenome]-(neighbor_gene:Gene)
         WHERE neighbor_gene.id CONTAINS split(gene.id, '_')[0] + '_' + split(gene.id, '_')[1] + '_' + split(gene.id, '_')[2] + '_' + split(gene.id, '_')[3] + '_' + split(gene.id, '_')[4]
-        OPTIONAL MATCH (neighbor_gene)<-[:encodedBy]-(neighbor_protein:Protein)-[:hasDomain]->(neighbor_domain:ProteinDomain)-[:domainFamily]->(neighbor_pf:ProteinFamily)
+        OPTIONAL MATCH (neighbor_gene)<-[:encodedBy]-(neighbor_protein:Protein)-[:hasDomain]->(neighbor_domain:DomainAnnotation)-[:domainFamily]->(neighbor_pf:Domain)
         
         RETURN p.id as protein_id,
                gene.id as gene_id,
                g.id as genome_id,
                collect(DISTINCT pf.id) as protein_families,
+               collect(DISTINCT pf.description) as domain_descriptions,
                collect(DISTINCT pf.pfamAccession) as pfam_accessions,
                collect(DISTINCT ko.id) as kegg_functions,
+               collect(DISTINCT ko.description) as kegg_descriptions,
                collect(DISTINCT d.id) as domain_ids,
+               collect(DISTINCT d.bitscore) as domain_scores,
+               collect(DISTINCT (d.domainStart + '-' + d.domainEnd)) as domain_positions,
                count(DISTINCT d) as domain_count,
                collect(DISTINCT neighbor_protein.id)[0..5] as neighboring_proteins,
                collect(DISTINCT neighbor_pf.id)[0..10] as neighborhood_families

@@ -42,19 +42,24 @@ class ContextRetriever(dspy.Signature):
     
     SCHEMA KNOWLEDGE:
     - KEGGOrtholog nodes: Use .description property for function descriptions, .id for KO IDs
-    - ProteinFamily nodes: Use .description property for PFAM descriptions, .id for family names  
-    - Protein nodes: Use .id property, linked via hasFunction->KEGGOrtholog and hasDomain->ProteinDomain->domainFamily->ProteinFamily
+    - Domain nodes: Use .description property for PFAM descriptions, .id for family names  
+    - DomainAnnotation nodes: Use .id property containing "/domain/DOMAIN_NAME/start-end" patterns
+    - Protein nodes: Use .id property, linked via hasFunction->KEGGOrtholog and hasDomain->DomainAnnotation->domainFamily->Domain
     - Gene nodes: Use .id property, linked via belongsToGenome->Genome
     - Genome nodes: Use .id property
+    
+    IMPORTANT: When users ask about "domains" (e.g., "GGDEF domains"), search DomainAnnotation.id field which contains patterns like "/domain/GGDEF/"
     
     EXAMPLE QUERIES:
     - For KEGG function: MATCH (ko:KEGGOrtholog {id: 'K12345'}) RETURN ko.id, ko.description
     - For protein function: MATCH (p:Protein {id: 'protein_id'})-[:hasFunction]->(ko:KEGGOrtholog) RETURN p.id, ko.id, ko.description
+    - For domain search: MATCH (p:Protein)-[:hasDomain]->(d:DomainAnnotation) WHERE d.id CONTAINS '/domain/GGDEF/' RETURN p.id, d.id, d.bitscore
+    - For family search: MATCH (pf:Domain {id: 'GGDEF'}) RETURN pf.id, pf.description
     """
     
     question = dspy.InputField(desc="User's question")
     query_type = dspy.InputField(desc="Classified query type")
-    neo4j_query = dspy.OutputField(desc="Cypher query for Neo4j using CORRECT schema: KEGGOrtholog.description, ProteinFamily.description")
+    neo4j_query = dspy.OutputField(desc="Cypher query for Neo4j using CORRECT schema: For domains use DomainAnnotation.id CONTAINS '/domain/NAME/', for families use Domain.description")
     protein_search = dspy.OutputField(desc="Protein ID or description for semantic search (if needed)")
     search_strategy = dspy.OutputField(desc="How to combine the results")
 
@@ -267,27 +272,48 @@ class GenomicRAG(dspy.Module):
                     formatted_parts.append(f"  • Gene: {item.get('gene_id', 'N/A')}")
                     formatted_parts.append(f"  • Genome: {item.get('genome_id', 'N/A')}")
                     
+                    # Enhanced domain family information with descriptions
                     if item.get('protein_families') and any(item['protein_families']):
                         families = [f for f in item['protein_families'] if f]
                         if families:
-                            formatted_parts.append(f"  • Protein Families: {', '.join(families[:5])}")
+                            formatted_parts.append(f"  • Domain Families: {', '.join(families[:5])}")
+                    
+                    # Add domain family descriptions if available
+                    if item.get('domain_descriptions') and any(item['domain_descriptions']):
+                        descriptions = [d for d in item['domain_descriptions'] if d and d != 'None']
+                        if descriptions:
+                            formatted_parts.append(f"  • Domain Functions: {', '.join(descriptions[:3])}")
                     
                     if item.get('pfam_accessions') and any(item['pfam_accessions']):
                         accessions = [a for a in item['pfam_accessions'] if a]
                         if accessions:
                             formatted_parts.append(f"  • PFAM Accessions: {', '.join(accessions[:3])}")
                     
+                    # Enhanced KEGG functional information
                     if item.get('kegg_functions') and any(item['kegg_functions']):
                         functions = [f for f in item['kegg_functions'] if f]
                         if functions:
                             formatted_parts.append(f"  • KEGG Functions: {', '.join(functions[:3])}")
                     
+                    # Add KEGG function descriptions if available
+                    if item.get('kegg_descriptions') and any(item['kegg_descriptions']):
+                        descriptions = [d for d in item['kegg_descriptions'] if d and d != 'None']
+                        if descriptions:
+                            formatted_parts.append(f"  • Function Details: {descriptions[0][:100]}...")
+                    
+                    # Enhanced domain annotation details
                     if item.get('domain_count', 0) > 0:
-                        formatted_parts.append(f"  • Domain Count: {item['domain_count']}")
-                        if item.get('domain_ids') and any(item['domain_ids']):
-                            domains = [d for d in item['domain_ids'] if d]
-                            if domains:
-                                formatted_parts.append(f"  • Domains: {', '.join(domains[:3])}")
+                        formatted_parts.append(f"  • Domain Annotations: {item['domain_count']} detected")
+                        
+                        # Show domain instances with scores if available
+                        if item.get('domain_scores') and any(item['domain_scores']):
+                            scores = [f"{s:.1f}" for s in item['domain_scores'][:3] if s]
+                            formatted_parts.append(f"  • Domain Bitscores: {', '.join(scores)}")
+                        
+                        # Show domain positions if available
+                        if item.get('domain_positions') and any(item['domain_positions']):
+                            positions = [pos for pos in item['domain_positions'][:3] if pos]
+                            formatted_parts.append(f"  • Domain Positions: {', '.join(positions)}")
                     
                     if item.get('neighboring_proteins') and any(item['neighboring_proteins']):
                         neighbors = [n for n in item['neighboring_proteins'] if n]
