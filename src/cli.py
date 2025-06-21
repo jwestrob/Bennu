@@ -20,15 +20,20 @@ run_quast_module = importlib.import_module('src.ingest.01_run_quast')
 run_dfast_qc_module = importlib.import_module('src.ingest.02_dfast_qc')
 run_prodigal_module = importlib.import_module('src.ingest.03_prodigal')
 run_astra_scan_module = importlib.import_module('src.ingest.04_astra_scan')
+build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
+esm2_embeddings_module = importlib.import_module('src.ingest.06_esm2_embeddings')
 
 prepare_inputs = prepare_inputs_module.prepare_inputs
 run_quast = run_quast_module.run_quast
 run_dfast_qc = run_dfast_qc_module.call
 run_prodigal = run_prodigal_module.run_prodigal
 run_astra_scan = run_astra_scan_module.run_astra_scan
+build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
+run_esm2_embeddings = esm2_embeddings_module.run_esm2_embeddings
 
 # Import LLM components
-from .llm.qa_chain import create_qa_chain
+from .llm.cli import ask_question
+from .llm.config import LLMConfig
 
 app = typer.Typer(
     name="genome-kg",
@@ -62,12 +67,12 @@ def build(
     from_stage: int = typer.Option(
         0,
         "--from-stage", "-f",
-        help="Resume pipeline from specific stage (0-4)"
+        help="Resume pipeline from specific stage (0-6)"
     ),
     to_stage: int = typer.Option(
-        4,
+        6,
         "--to-stage", "-t",
-        help="Stop pipeline at specific stage (0-4)"
+        help="Stop pipeline at specific stage (0-6)"
     ),
     threads: int = typer.Option(
         4,
@@ -94,6 +99,8 @@ def build(
     2. Taxonomic classification with DFAST_QC (ANI+CheckM)  
     3. Gene prediction with Prodigal
     4. Functional annotation with Astra/PyHMMer
+    5. Knowledge graph construction with RDF triples
+    6. ESM2 protein embeddings for semantic search
     """
     console.print("[bold blue]Genome-to-LLM Knowledge Graph Pipeline[/bold blue]")
     console.print(f"Input directory: {input_dir}")
@@ -152,7 +159,26 @@ def build(
             "function": lambda: run_astra_scan(
                 input_dir=output_dir / "stage03_prodigal",
                 output_dir=output_dir / "stage04_astra",
-                threads=threads
+                threads=threads,
+                databases=["PFAM", "KOFAM"],
+                force=force
+            )
+        },
+        5: {
+            "name": "Knowledge Graph Construction",
+            "function": lambda: build_knowledge_graph(
+                stage03_dir=output_dir / "stage03_prodigal",
+                stage04_dir=output_dir / "stage04_astra",
+                output_dir=output_dir / "stage05_kg"
+            )
+        },
+        6: {
+            "name": "ESM2 Protein Embeddings",
+            "function": lambda: run_esm2_embeddings(
+                stage03_dir=output_dir / "stage03_prodigal",
+                output_dir=output_dir / "stage06_esm2",
+                batch_size=max(1, threads // 2),  # Adjust batch size based on available threads
+                force=force
             )
         }
     }
@@ -210,30 +236,15 @@ def ask(
         "--output", "-o",
         help="Output file for answer (JSON format)"
     ),
-    faiss_index_dir: Path = typer.Option(
-        Path("data/kg/faiss"),
-        "--faiss-index",
-        help="Directory containing FAISS indices"
-    ),
-    neo4j_uri: str = typer.Option(
-        "bolt://localhost:7687",
-        "--neo4j-uri",
-        help="Neo4j connection URI"
-    ),
-    neo4j_username: str = typer.Option(
-        "neo4j",
-        "--neo4j-user",
-        help="Neo4j username"
-    ),
-    neo4j_password: str = typer.Option(
-        "password",
-        "--neo4j-password",
-        help="Neo4j password"
-    ),
-    batch_file: Optional[Path] = typer.Option(
+    config_file: Optional[Path] = typer.Option(
         None,
-        "--batch", "-b",
-        help="File containing multiple questions (one per line)"
+        "--config", "-c",
+        help="Configuration file path"
+    ),
+    neo4j_password: Optional[str] = typer.Option(
+        None,
+        "--neo4j-password",
+        help="Neo4j password (overrides config)"
     ),
     verbose: bool = typer.Option(
         False,
@@ -247,65 +258,75 @@ def ask(
     Uses the knowledge graph and LLM components to answer questions about
     genome assemblies, genes, proteins, taxonomy, and functional annotations.
     """
-    console.print("[bold blue]Genomic Question Answering[/bold blue]")
+    import asyncio
+    import json
     
-    # Handle batch processing
-    if batch_file:
-        if not batch_file.exists():
-            console.print(f"[red]Error: Batch file does not exist: {batch_file}[/red]")
-            raise typer.Exit(1)
-        
-        questions = []
-        with open(batch_file) as f:
-            questions = [line.strip() for line in f if line.strip()]
-        
-        console.print(f"Processing {len(questions)} questions from {batch_file}")
-        
-        # TODO: Implement batch processing
-        console.print("[yellow]Batch processing not yet implemented[/yellow]")
-        return
-    
-    # Single question processing
-    console.print(f"Question: {question}")
+    console.print("[bold blue]🧬 Genomic Question Answering[/bold blue]")
+    console.print(f"[dim]Question: {question}[/dim]")
     
     try:
-        # TODO: Initialize QA chain with proper configuration
-        qa_chain = create_qa_chain(
-            faiss_index_dir=faiss_index_dir,
-            neo4j_uri=neo4j_uri,
-            neo4j_username=neo4j_username,
-            neo4j_password=neo4j_password
-        )
+        # Load configuration
+        if config_file and config_file.exists():
+            config = LLMConfig.from_file(config_file)
+        else:
+            config = LLMConfig.from_env()
         
-        # Generate answer
-        with console.status("[bold green]Thinking..."):
-            result = qa_chain.answer_question(question)
+        # Override Neo4j password if provided
+        if neo4j_password:
+            config.database.neo4j_password = neo4j_password
+        
+        # Validate configuration
+        status = config.validate_configuration()
+        if not all(status.values()):
+            console.print("[red]⚠️  Configuration issues detected:[/red]")
+            for component, ok in status.items():
+                icon = "✅" if ok else "❌"
+                console.print(f"  {icon} {component}")
+            
+            if not status.get('llm_configured', False):
+                console.print("\n[yellow]💡 Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable[/yellow]")
+            
+            raise typer.Exit(1)
+        
+        # Process question
+        with console.status("[bold green]🤔 Processing question..."):
+            result = asyncio.run(ask_question(question, config))
         
         # Display answer
-        console.print(f"\n[bold green]Answer:[/bold green] {result['answer']}")
-        console.print(f"[dim]Confidence: {result['confidence']:.2f}[/dim]")
+        console.print(f"\n[bold green]🤖 Answer:[/bold green]")
+        console.print(result['answer'])
         
-        if verbose and result.get('reasoning'):
-            console.print(f"\n[bold yellow]Reasoning:[/bold yellow] {result['reasoning']}")
+        # Show confidence and metadata
+        confidence_color = {
+            "high": "green",
+            "medium": "yellow", 
+            "low": "red"
+        }.get(result.get('confidence', 'unknown'), "white")
         
-        if verbose and result.get('sources'):
-            console.print(f"\n[bold yellow]Sources:[/bold yellow]")
-            for i, source in enumerate(result['sources'][:3], 1):
-                console.print(f"  {i}. {source}")
+        console.print(f"\n[bold]Confidence:[/bold] [{confidence_color}]{result.get('confidence', 'unknown')}[/{confidence_color}]")
+        
+        if result.get('citations'):
+            console.print(f"[bold]Sources:[/bold] {result['citations']}")
+        
+        if verbose and 'query_metadata' in result:
+            metadata = result['query_metadata']
+            console.print(f"\n[dim]Query details:[/dim]")
+            console.print(f"[dim]  • Type: {metadata.get('query_type', 'unknown')}[/dim]")
+            console.print(f"[dim]  • Strategy: {metadata.get('search_strategy', 'unknown')}[/dim]")
+            console.print(f"[dim]  • Context items: {metadata.get('context_items', 0)}[/dim]")
+            console.print(f"[dim]  • Retrieval time: {metadata.get('retrieval_time', 0):.2f}s[/dim]")
         
         # Save to file if requested
         if output_file:
-            import json
             output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(output_file, 'w') as f:
                 json.dump(result, f, indent=2, default=str)
-            console.print(f"\n[dim]Answer saved to {output_file}[/dim]")
-        
-        qa_chain.close()
+            console.print(f"\n[dim]💾 Answer saved to {output_file}[/dim]")
         
     except Exception as e:
         console.print(f"[red]Error answering question: {e}[/red]")
-        logger.exception("QA error details:")
+        if verbose:
+            logger.exception("QA error details:")
         raise typer.Exit(1)
 
 

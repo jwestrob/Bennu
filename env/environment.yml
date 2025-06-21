@@ -2,30 +2,39 @@ name: genome-kg
 channels:
   - conda-forge
   - bioconda
-  - defaults
 dependencies:
+  # --- Core Specification ---
   - python=3.11
-  # Core bioinformatics tools are installed via homebrew (quast, prodigal)
-  # Python packages for bioinformatics
-  - pyhmmer
-  - biopython
-  # Dependencies for dfast_qc
-  - ete3
-  - more-itertools
-  - peewee
-  # Data processing and analysis
-  - pandas
+  # Use numpy 2.x for better compatibility with modern ML stack
   - numpy
-  - scipy
-  - matplotlib
-  - seaborn
+
+  # --- Machine Learning & AI ---
+  - pytorch
+  - transformers
+  - scikit-learn
+  - h5py
+  # Vector database for embeddings (replaces FAISS)
+  - lancedb
   - pyarrow
-  # Knowledge graph and database
+
+  # --- Data & Databases ---
+  - pandas
+  - scipy
+  - pyarrow
   - rdflib
   - neo4j-python-driver
-  # Machine learning and retrieval
-  - faiss-cpu
-  # CLI and utilities
+  - peewee
+
+  # --- Bioinformatics ---
+  - pyhmmer
+  - biopython
+  - ete3
+
+  # --- Plotting & Visualization ---
+  - matplotlib
+  - seaborn
+
+  # --- CLI & Utilities ---
   - typer
   - pydantic
   - click
@@ -34,18 +43,18 @@ dependencies:
   - pyyaml
   - tqdm
   - loguru
-  # Development and testing
+  - more-itertools
+
+  # --- Development, Jupyter & Testing ---
+  - jupyter
+  - notebook
+  - ipykernel
   - pytest
+  # Moved from pip to conda for better dependency resolution
+  - pytest-cov
+  - pytest-xdist
+  - platformdirs
   - flake8
   - black
   - isort
   - mypy
-  # Jupyter environment
-  - jupyter
-  - notebook
-  - ipykernel
-  # Package management
-  - pip
-  - pip:
-    - dsp-ml
-    - neo4j

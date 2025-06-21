@@ -1,0 +1,1 @@
+2025-06-19 17:29:31	-	marvelous_agnesi	-	f8e7470c4c5bdabb6c0d5639c3a00c3e	00c0bdc0-4f2d-48c9-9ee1-51fc19bd17d4	nextflow run main.nf --input_dir test_data --outdir test_results
