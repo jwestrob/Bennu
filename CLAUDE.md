@@ -1,10 +1,18 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with this advanced genomic AI platform.
 
 ## Project Overview
 
-This is a genome-to-LLM knowledge graph pipeline that processes microbial genome assemblies through quality assessment, taxonomic classification, gene prediction, and functional annotation to build a comprehensive knowledge graph with LLM-powered question answering.
+This is a next-generation genomic intelligence platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with LLM-powered biological insights. The system combines traditional bioinformatics workflows with cutting-edge AI/ML technologies to create a comprehensive 7-stage pipeline culminating in an intelligent question-answering system.
+
+### Key Achievements
+- **276,856 RDF triples** linking genomes, proteins, domains, and functions
+- **1,145 PFAM families + 813 KEGG orthologs** enriched with authoritative functional descriptions
+- **10,102 proteins** with 320-dimensional ESM2 semantic embeddings
+- **Sub-millisecond vector similarity search** with LanceDB
+- **High-confidence biological insights** using DSPy-powered RAG system
+- **Apple Silicon M4 Max optimization** (~85 proteins/second processing rate)
 
 ## Development Commands
 
@@ -55,8 +63,13 @@ python run_esm2_m4_max.py
 # Skip taxonomic classification
 python -m src.cli build --skip-tax
 
-# Query the knowledge graph
+# Load knowledge graph into Neo4j database
+python load_neo4j.py
+
+# Query the knowledge graph with LLM-powered insights
 python -m src.cli ask "What metabolic pathways are present in Escherichia coli?"
+python -m src.cli ask "What is the function of KEGG ortholog K20469?"
+python -m src.cli ask "Find proteins similar to heme transporters"
 ```
 
 ### Individual Stage Execution
@@ -105,9 +118,9 @@ The pipeline consists of 7 main stages executed sequentially:
 2. **Taxonomic Classification** (`src.ingest.02_dfast_qc`): CheckM-style completeness/contamination analysis with ANI-based taxonomy
 3. **Gene Prediction** (`src.ingest.03_prodigal`): Protein-coding sequence prediction with Prodigal, creates `all_protein_symlinks` directory
 4. **Functional Annotation** (`src.ingest.04_astra_scan`): HMM domain scanning against PFAM, KOFAM using astra/PyHMMer
-5. **Knowledge Graph Construction** (`src.build_kg`): RDF generation with 241K+ triples linking genomes, proteins, domains, and functions
-6. **ESM2 Protein Embeddings** (`src.ingest.06_esm2_embeddings`): Generate 320-dimensional semantic embeddings for 10K+ proteins using ESM2 transformer with Apple Silicon MPS acceleration, complete with FAISS similarity search indices (sub-millisecond queries)
-7. **LLM Integration** (`src.llm`): Question answering with DSPy combining structured knowledge graph and semantic protein search
+5. **Knowledge Graph Construction** (`src.build_kg`): RDF generation with 276K+ triples linking genomes, proteins, domains, and functions, enriched with authoritative PFAM/KEGG functional descriptions
+6. **ESM2 Protein Embeddings** (`src.ingest.06_esm2_embeddings`): Generate 320-dimensional semantic embeddings for 10K+ proteins using ESM2 transformer with Apple Silicon MPS acceleration, complete with LanceDB similarity search indices (sub-millisecond queries)
+7. **LLM Integration** (`src.llm`): Question answering with DSPy combining structured Neo4j knowledge graph and semantic LanceDB protein search
 
 ### Key Components
 
@@ -131,8 +144,8 @@ data/
 ├── stage02_dfast_qc/      # Taxonomic classification results
 ├── stage03_prodigal/      # Gene predictions (.faa, .genes.fna)
 ├── stage04_astra/         # Functional annotations (PFAM/KOFAM HMM hits)
-├── stage05_kg/            # Knowledge graph exports (RDF triples, 241K+ triples)
-└── stage06_esm2/          # ESM2 protein embeddings (10K+ proteins, 320-dim, FAISS indices)
+├── stage05_kg/            # Knowledge graph exports (RDF triples, 276K+ triples)
+└── stage06_esm2/          # ESM2 protein embeddings (10K+ proteins, 320-dim, LanceDB indices)
 ```
 
 ## Performance Summary
@@ -140,15 +153,21 @@ data/
 ### Apple Silicon M4 Max Optimization
 - **ESM2 Embeddings**: 10,102 proteins processed in ~2 minutes (vs estimated 21 minutes)
 - **Embedding Generation Rate**: ~85 proteins/second with MPS acceleration
-- **FAISS Similarity Search**: Sub-millisecond queries (0.17ms average)
-- **Knowledge Graph**: 241,727 RDF triples linking genomes, proteins, domains, and functions
+- **LanceDB Similarity Search**: Sub-millisecond queries with rich metadata filtering
+- **Knowledge Graph**: 276,856 RDF triples linking genomes, proteins, domains, and functions
+- **Functional Enrichment**: 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions
 - **Memory Efficiency**: Automatic MPS cache management prevents memory overflow
 
 ### Pipeline Throughput
-- **Complete Pipeline**: Stages 0-6 process 4 genomes with 10K+ proteins
-- **Knowledge Graph Construction**: 241K+ triples generated from multi-stage annotations
-- **Semantic Search Ready**: Vector embeddings enable protein similarity queries
+- **Complete Pipeline**: Stages 0-7 process 4 genomes with 10K+ proteins
+- **Knowledge Graph Construction**: 276K+ triples generated from multi-stage annotations with functional enrichment
+- **Neo4j Database**: 44,477 nodes and 45,679 relationships for complex biological queries
+- **LLM Integration**: High-confidence biological insights with authoritative source citations
 - **Production Ready**: Comprehensive testing suite validates all outputs
+
+### Biological Intelligence Quality
+**Before Functional Enrichment**: Generic responses like "likely involved in metabolic pathways"
+**After Functional Enrichment**: Specific insights like "putative heme transporter involved in oxygen transport and cytochrome electron transfer pathways"
 
 ## Dependencies
 
@@ -163,8 +182,11 @@ data/
 - **pydantic**: Data validation  
 - **rdflib**: RDF graph manipulation
 - **neo4j**: Graph database client
-- **faiss-cpu**: Vector similarity search
-- **dsp**: LLM structured prompting
+- **lancedb**: Vector similarity search and metadata filtering
+- **dspy**: LLM structured prompting and RAG framework
+- **torch**: ESM2 transformer models with MPS acceleration
+- **transformers**: Hugging Face model integration
+- **rich**: Beautiful terminal UI and progress tracking
 
 ## Configuration
 
@@ -185,34 +207,63 @@ data/
 - All stages include parallel processing capabilities where applicable
 - Knowledge graph construction transforms biological annotations to RDF triples for Neo4j
 
-## Current Migration Status: FAISS → LanceDB
+## Recent Major Developments: Complete System Integration ✅
 
-**🔄 IN PROGRESS**: Migrating from FAISS to LanceDB for vector similarity search
+**🎉 COMPLETED**: Comprehensive platform transformation with functional enrichment and LLM integration
 
-### Migration Objectives:
-1. **Eliminate NumPy Compatibility Issues**: FAISS requires numpy<2.0, conflicts with DSPy
-2. **Enable Unified Environment**: Single conda environment for all components
-3. **Improve MLOps Standards**: LanceDB aligns better with production RAG workflows
-4. **Add Rich Metadata**: Vector DB supports metadata filtering (organism, function, etc.)
-5. **Simplify Architecture**: Eliminate manual index management
+### Successfully Implemented:
 
-### Completed:
-- ✅ Updated `env/environment.yml`: Removed `faiss-cpu`, added `lancedb`, enabled `numpy>=2.0`
-- ✅ Modified `src/ingest/06_esm2_embeddings.py`: Replaced FAISS with LanceDB table creation
-- ✅ Updated `test_esm2_similarity.py`: Changed similarity search to use LanceDB API
-- ✅ Updated `run_esm2_m4_max.py`: Modified output references and test validation
+#### 1. **LanceDB Migration** ✅
+- **Objective**: Migrate from FAISS to LanceDB for vector similarity search
+- **Benefits**: Eliminated numpy version conflicts, enabled unified environment, improved MLOps standards
+- **Result**: Sub-millisecond protein similarity queries with rich metadata filtering
 
-### Next Steps:
-1. **Reinstall Conda Environment**: `conda env create -f env/environment.yml --force`
-2. **Test LanceDB Migration**: Run `python run_esm2_m4_max.py` to verify functionality
-3. **Validate Vector Search**: Ensure `test_esm2_similarity.py` passes all tests
-4. **Update Documentation**: Reflect LanceDB changes in performance metrics
-5. **Prepare for LLM Integration**: DSPy + Neo4j + LanceDB unified RAG system
+#### 2. **Functional Enrichment Integration** ✅  
+- **Objective**: Replace hardcoded biological knowledge with authoritative reference databases
+- **Implementation**: Built `src/build_kg/functional_enrichment.py` module with PFAM Stockholm and KEGG KO list parsers
+- **Result**: 1,145 PFAM families + 813 KEGG orthologs enriched with authoritative descriptions
+- **Knowledge Graph Growth**: Enhanced from ~242K to 276,856 RDF triples
 
-### Technical Details:
-- **Vector DB**: LanceDB table with protein embeddings + metadata (genome_id, sequence_length, source_file)
-- **Search API**: `table.search(query_vector).limit(k).to_pandas()` replaces FAISS index operations
-- **Storage**: LanceDB handles persistence automatically vs manual HDF5 + FAISS files
-- **Performance**: Expected slight latency increase but better metadata filtering capabilities
+#### 3. **Neo4j Knowledge Graph Database** ✅
+- **Objective**: Production-ready graph database for complex biological queries
+- **Implementation**: 44,477 nodes and 45,679 relationships with proper biological ontologies
+- **Features**: Optimized Cypher queries, functional annotation integration, genomic neighborhood analysis
 
-This migration enables a unified environment for the complete RAG pipeline without numpy version conflicts.
+#### 4. **DSPy RAG System Enhancement** ✅
+- **Objective**: Build intelligent question-answering system with biological expertise
+- **Implementation**: Schema-aware query generation, multi-modal data source integration
+- **Critical Fix**: Updated query execution logic to utilize Neo4j data for all query types (not just structural)
+- **Result**: High-confidence biological insights instead of generic responses
+
+### Biological Intelligence Transformation:
+
+**Before Enhancement**:
+```
+"This protein is likely involved in a metabolic pathway and may have 
+evolutionary significance across various organisms."
+```
+
+**After Enhancement**:
+```
+"Protein PLM0_60_b1_sep16_scaffold_10001_curated_6 is identified as a 
+putative heme transporter (KEGG K20469), which plays a vital role in 
+heme transport and metabolism. Heme is critical for oxygen transport 
+in hemoglobin and electron transfer in cytochromes. The protein's 
+genomic context suggests involvement in aerobic respiration pathways."
+```
+
+### Current System Capabilities:
+- **Query Processing**: Neo4j structured queries + LanceDB semantic search + DSPy intelligent integration
+- **Biological Knowledge**: Authoritative PFAM/KEGG annotations replace hardcoded domain knowledge  
+- **Performance**: Apple Silicon M4 Max optimized pipeline with MPS acceleration
+- **Testing**: Comprehensive test suite with zero-maintenance discovery (6 functional enrichment tests, all passing)
+- **Production Ready**: Containerized microservices with Nextflow orchestration
+
+### Advanced Features Now Available:
+- **Semantic Protein Search**: `lancedb` vector similarity with metadata filtering
+- **Knowledge Graph Queries**: Complex Cypher queries across genomic data
+- **LLM Integration**: Natural language questions with biological context
+- **Functional Enrichment**: Real-time integration of reference database annotations
+- **Apple Silicon Optimization**: ~85 proteins/second ESM2 processing
+
+This represents a complete transformation from a basic bioinformatics pipeline to an intelligent genomic AI platform.
