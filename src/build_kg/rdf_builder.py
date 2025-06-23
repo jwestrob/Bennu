@@ -389,7 +389,7 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     # Integrate KEGG pathways
     logger.info("Integrating KEGG pathways...")
     repo_root = Path(__file__).parent.parent.parent
-    ko_pathway_file = repo_root / "ko_pathway.list"
+    ko_pathway_file = repo_root / "data/reference/ko_pathway.list"
     
     # Extract KO IDs that are actually found in our proteins
     found_ko_ids = set()

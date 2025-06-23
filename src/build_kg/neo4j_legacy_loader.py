@@ -239,7 +239,7 @@ class Neo4jLoader:
             # Relationship files (excluding problematic pathway relationships)
             f'--relationships=HASFUNCTION={csv_dir}/hasfunction_relationships.csv',
             f'--relationships=ENCODEDBY={csv_dir}/encodedby_relationships.csv',
-            # f'--relationships=PARTICIPATESIN={csv_dir}/participatesin_relationships.csv',  # Skip for now
+            f'--relationships=PARTICIPATESIN={csv_dir}/participatesin_relationships.csv',  # Skip for now
             f'--relationships=HASDOMAIN={csv_dir}/hasdomain_relationships.csv',
             f'--relationships=DOMAINFAMILY={csv_dir}/domainfamily_relationships.csv',
             f'--relationships=BELONGSTOGENOME={csv_dir}/belongstogenome_relationships.csv',

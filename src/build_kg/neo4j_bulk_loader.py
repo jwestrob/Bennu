@@ -192,8 +192,7 @@ class Neo4jBulkLoader:
         cmd = [
             str(self.neo4j_admin), 
             "database", "import", "full",
-            "--overwrite-destination",
-            self.database_name  # Database name is a positional argument
+            "--overwrite-destination=true",
         ]
         
         # Add node files with labels
@@ -204,7 +203,7 @@ class Neo4jBulkLoader:
                 label = label[:-2] + "ies"
             elif label == "Domainannotation":
                 label = "DomainAnnotation"
-            elif label == "Functionalnnotation":
+            elif label == "Functionalannotation":
                 label = "FunctionalAnnotation"
             elif label == "Keggortholog":
                 label = "KEGGOrtholog"
@@ -218,7 +217,7 @@ class Neo4jBulkLoader:
             # Extract relationship type from filename
             rel_type = rel_file.stem.replace("_relationships", "").upper()
             cmd.extend(["--relationships", f"{rel_type}={rel_file}"])
-        
+                
         console.print(f"Running import command...")
         console.print(f"Command: {' '.join(cmd)}")
         

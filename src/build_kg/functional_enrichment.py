@@ -121,7 +121,7 @@ class FunctionalEnrichment:
                     try:
                         entry = KoEntry(
                             knum=parts[0],
-                            threshold=float(parts[1]),
+                            threshold=float(parts[1]) if parts[1] != '-' else float('nan'),
                             score_type=parts[2],
                             profile_type=parts[3],
                             definition=parts[11] if len(parts) > 11 else '',

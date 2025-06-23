@@ -30,11 +30,39 @@ class GenomicContext:
 
 
 class QueryClassifier(dspy.Signature):
-    """Classify the type of genomic query to determine retrieval strategy."""
+    """Classify genomic queries to determine optimal retrieval strategy.
+    
+    CLASSIFICATION GUIDELINES:
+    
+    🔍 SEMANTIC: Use when query involves:
+    - Similarity searches with specific protein IDs ("proteins similar to PLM0_scaffold_123", "find related proteins")  
+    - Functional searches that need similarity expansion ("alcohol dehydrogenase proteins", "iron transporters")
+    - Comparative analysis starting from known proteins ("find orthologs", "functionally equivalent")
+    → Strategy: Neo4j finds starting points → LanceDB similarity expansion
+    
+    🏗️ STRUCTURAL: Use when query targets:
+    - Specific protein/gene IDs for context only (no similarity needed)
+    - Domain family names and counts (GGDEF, TPR, etc.)
+    - Genomic coordinates or neighborhoods
+    - Pathway/function statistics and aggregations
+    → Primary: Neo4j graph traversal only
+    
+    🔀 HYBRID: Use when query combines:
+    - Similarity + genomic context ("similar proteins and their neighborhoods")
+    - Functional search + structural analysis ("iron transporters and their operons")
+    - Cross-genome comparisons with genomic context
+    → Strategy: LanceDB similarity → Neo4j structural context for results
+    
+    📊 GENERAL: Use for:
+    - Database overviews and statistics
+    - Broad exploratory queries without specific targets
+    → Primary: Neo4j aggregation queries
+    """
     
     question = dspy.InputField(desc="User's question about genomic data")
-    query_type = dspy.OutputField(desc="Type of query: 'structural' (specific genes/domains/coordinates), 'semantic' (similarity/function-based), 'hybrid' (combining both), or 'general' (database overviews/broad exploration)")
-    reasoning = dspy.OutputField(desc="Brief explanation of query type classification")
+    query_type = dspy.OutputField(desc="Query type: 'semantic', 'structural', 'hybrid', or 'general'")
+    reasoning = dspy.OutputField(desc="Specific reasoning for classification based on guidelines above")
+    primary_database = dspy.OutputField(desc="Primary database: 'lancedb', 'neo4j', or 'both'")
 
 
 class ContextRetriever(dspy.Signature):
@@ -91,6 +119,8 @@ class ContextRetriever(dspy.Signature):
     query_type = dspy.InputField(desc="Classified query type")
     neo4j_query = dspy.OutputField(desc="Rich Cypher query traversing full relationship chains: Use DomainAnnotation->DOMAINFAMILY->Domain for descriptions, include OPTIONAL MATCH for KEGGOrtholog, prioritize functional annotations over technical metrics")
     protein_search = dspy.OutputField(desc="Protein ID or description for semantic search (if needed)")
+    requires_multi_stage = dspy.OutputField(desc="Boolean: true if this query needs multi-stage processing (keyword search → similarity expansion). Use for functional similarity questions like 'find proteins similar to heme transporters'")
+    seed_proteins_for_similarity = dspy.OutputField(desc="Boolean: true if Neo4j results should be used as seeds for LanceDB similarity search in stage 2")
     search_strategy = dspy.OutputField(desc="How to combine the results")
 
 
@@ -139,7 +169,9 @@ class GenomicRAG(dspy.Module):
             lm = dspy.LM(
                 model=f"openai/{self.config.llm_model}",
                 api_key=api_key,
-                max_tokens=self.config.max_context_length
+                #max_tokens=self.config.max_context_length,
+                temperature=1.0,
+                max_tokens=100_000
             )
         elif self.config.llm_provider == "anthropic":
             # Use LiteLLM wrapper for Anthropic
@@ -275,33 +307,142 @@ class GenomicRAG(dspy.Module):
                 metadata['neo4j_execution_time'] = neo4j_result.execution_time
             
             if query_type in ["semantic", "hybrid"]:
-                # For protein-specific queries, get detailed protein info first
-                protein_search = retrieval_plan.protein_search if hasattr(retrieval_plan, 'protein_search') else ""
+                # Enhanced logic for semantic and hybrid queries with multi-stage support
+                protein_search = getattr(retrieval_plan, 'protein_search', '')
+                functional_search = getattr(retrieval_plan, 'functional_search', '')
+                primary_database = getattr(retrieval_plan, 'primary_database', 'lancedb')
+                requires_multi_stage = getattr(retrieval_plan, 'requires_multi_stage', False)
+                seed_proteins_for_similarity = getattr(retrieval_plan, 'seed_proteins_for_similarity', False)
+                
+                # Debug output for development (can be removed in production)
+                logger.debug(f"Query processing: {query_type}, multi_stage: {requires_multi_stage}, seed_proteins: {seed_proteins_for_similarity}")
                 
                 # Check if protein_search is actually a protein ID (not just a description)
                 is_actual_protein_id = (
-                    "RIFCS" in protein_search or 
-                    any(id_part in protein_search for id_part in ["scaffold", "contigs"]) or
-                    (len(protein_search) > 15 and "_" in protein_search and not " " in protein_search)
+                    protein_search and (
+                        "RIFCS" in protein_search or 
+                        any(id_part in protein_search for id_part in ["scaffold", "contigs"]) or
+                        (len(protein_search) > 15 and "_" in protein_search and not " " in protein_search)
+                    )
                 )
                 
-                if is_actual_protein_id:
-                    # This looks like a protein ID - get detailed info
-                    protein_info_result = await self.neo4j_processor.process_query(
-                        protein_search,
-                        query_type="protein_info"
-                    )
-                    structured_data.extend(protein_info_result.results)
-                    metadata['protein_info_time'] = protein_info_result.execution_time
+                if query_type == "semantic":
+                    if requires_multi_stage and seed_proteins_for_similarity:
+                        # MULTI-STAGE SEMANTIC: Stage 1 already done (Neo4j), now Stage 2 (LanceDB similarity)
+                        if structured_data:
+                            # Extract protein IDs from Neo4j results to use as similarity seeds
+                            seed_protein_ids = []
+                            for item in structured_data:
+                                protein_id = item.get('protein_id', '')
+                                if protein_id:
+                                    # Remove "protein:" prefix for LanceDB
+                                    clean_id = protein_id.replace("protein:", "") if protein_id.startswith("protein:") else protein_id
+                                    seed_protein_ids.append(clean_id)
+                            
+                            # Run similarity search for each seed protein and aggregate results
+                            all_similarity_results = []
+                            for seed_id in seed_protein_ids[:3]:  # Limit to top 3 seeds to avoid overload
+                                try:
+                                    lancedb_result = await self.lancedb_processor.process_query(
+                                        seed_id,
+                                        query_type="similarity",
+                                        limit=3  # Fewer results per seed
+                                    )
+                                    # Tag results with their seed protein
+                                    for result in lancedb_result.results:
+                                        result['seed_protein'] = seed_id
+                                    all_similarity_results.extend(lancedb_result.results)
+                                except Exception as e:
+                                    logger.debug(f"Similarity search failed for {seed_id}: {e}")
+                            
+                            # Remove duplicates and sort by similarity
+                            seen_proteins = set()
+                            unique_results = []
+                            for result in sorted(all_similarity_results, key=lambda x: x.get('similarity', -999), reverse=True):
+                                protein_id = result.get('protein_id', '')
+                                if protein_id not in seen_proteins:
+                                    seen_proteins.add(protein_id)
+                                    unique_results.append(result)
+                            
+                            semantic_data = unique_results[:5]  # Top 5 overall
+                            metadata['lancedb_execution_time'] = sum([r.get('execution_time', 0) for r in all_similarity_results])
+                            metadata['multi_stage_seeds_used'] = len(seed_protein_ids)
                     
-                    # Execute similarity search (excluding self) only for actual protein IDs
-                    lancedb_result = await self.lancedb_processor.process_query(
-                        protein_search,
-                        query_type="similarity",
-                        limit=max(5, self.config.max_results_per_query // 2)  # Fewer but better results
-                    )
-                    semantic_data = lancedb_result.results
-                    metadata['lancedb_execution_time'] = lancedb_result.execution_time
+                    elif is_actual_protein_id:
+                        # SEMANTIC with protein ID: Neo4j for context → LanceDB for similarity
+                        protein_info_result = await self.neo4j_processor.process_query(
+                            protein_search,
+                            query_type="protein_info"
+                        )
+                        structured_data.extend(protein_info_result.results)
+                        metadata['protein_info_time'] = protein_info_result.execution_time
+                        
+                        # Execute similarity search (excluding self)
+                        # Remove "protein:" prefix for LanceDB search
+                        clean_protein_id = protein_search.replace("protein:", "") if protein_search.startswith("protein:") else protein_search
+                        
+                        lancedb_result = await self.lancedb_processor.process_query(
+                            clean_protein_id,
+                            query_type="similarity",
+                            limit=max(5, self.config.max_results_per_query // 2)
+                        )
+                        semantic_data = lancedb_result.results
+                        metadata['lancedb_execution_time'] = lancedb_result.execution_time
+                    
+                    elif functional_search or (protein_search and not is_actual_protein_id):
+                        # SEMANTIC with functional description: LanceDB semantic search
+                        search_term = functional_search if functional_search else protein_search
+                        lancedb_result = await self.lancedb_processor.process_query(
+                            search_term,
+                            query_type="functional_search",
+                            limit=self.config.max_results_per_query
+                        )
+                        semantic_data = lancedb_result.results
+                        metadata['lancedb_execution_time'] = lancedb_result.execution_time
+                
+                elif query_type == "hybrid":
+                    # HYBRID: Combine both approaches based on primary_database guidance
+                    if primary_database == "lancedb" and functional_search:
+                        # LanceDB similarity → Neo4j context for results
+                        lancedb_result = await self.lancedb_processor.process_query(
+                            functional_search,
+                            query_type="functional_search",
+                            limit=max(3, self.config.max_results_per_query // 2)
+                        )
+                        semantic_data = lancedb_result.results
+                        metadata['lancedb_execution_time'] = lancedb_result.execution_time
+                        
+                        # Get additional context for top LanceDB results from Neo4j
+                        if semantic_data:
+                            top_protein_ids = [item.get('protein_id') for item in semantic_data[:3]]
+                            for protein_id in top_protein_ids:
+                                if protein_id:
+                                    try:
+                                        protein_context = await self.neo4j_processor.process_query(
+                                            protein_id,
+                                            query_type="protein_info"
+                                        )
+                                        structured_data.extend(protein_context.results)
+                                    except Exception as e:
+                                        logger.debug(f"Could not get context for {protein_id}: {e}")
+                    
+                    elif is_actual_protein_id:
+                        # HYBRID starting from protein ID: detailed context + similarity
+                        protein_info_result = await self.neo4j_processor.process_query(
+                            protein_search,
+                            query_type="protein_info"
+                        )
+                        structured_data.extend(protein_info_result.results)
+                        metadata['protein_info_time'] = protein_info_result.execution_time
+                        
+                        # Add similarity search
+                        lancedb_result = await self.lancedb_processor.process_query(
+                            protein_search,
+                            query_type="similarity",
+                            limit=max(3, self.config.max_results_per_query // 3)
+                        )
+                        semantic_data = lancedb_result.results
+                        metadata['lancedb_execution_time'] = lancedb_result.execution_time
             
             if query_type == "general":
                 # General database overview
@@ -895,6 +1036,38 @@ class GenomicRAG(dspy.Module):
                         else:
                             formatted_parts.append(f"  • Genomic Neighborhood: {len(neighbors)} proteins within 5kb")
                 
+        # Handle general structured data that doesn't match specific patterns
+        if context.structured_data and not any(['p.id' in str(item) or 'protein_id' in str(item) for item in context.structured_data]):
+            formatted_parts.append("\nSTRUCTURED DATA ANALYSIS:")
+            
+            # Handle contig/genomic queries
+            if any('contig' in str(item) for item in context.structured_data):
+                formatted_parts.append("  GENOMIC CONTIGS:")
+                for i, item in enumerate(context.structured_data[:10]):  # Show up to 10 contigs
+                    contig_id = item.get('contig_id', 'Unknown')
+                    count = item.get('ribosomal_gene_count') or item.get('gene_count') or item.get('count', 0)
+                    formatted_parts.append(f"    {i+1}. {contig_id}: {count} genes")
+            
+            # Handle pathway queries
+            elif any('pathway' in str(item) for item in context.structured_data):
+                formatted_parts.append("  PATHWAY ANALYSIS:")
+                for i, item in enumerate(context.structured_data[:5]):
+                    pathway_name = item.get('pathway_name') or item.get('name', 'Unknown pathway')
+                    count = item.get('protein_count') or item.get('ko_count') or item.get('count', 0)
+                    formatted_parts.append(f"    {i+1}. {pathway_name}: {count} proteins")
+            
+            # Handle general aggregation queries
+            else:
+                formatted_parts.append("  QUERY RESULTS:")
+                for i, item in enumerate(context.structured_data[:10]):
+                    # Show all non-metadata fields
+                    item_parts = []
+                    for key, value in item.items():
+                        if not key.startswith('_'):  # Skip metadata
+                            item_parts.append(f"{key}: {value}")
+                    if item_parts:
+                        formatted_parts.append(f"    {i+1}. {', '.join(item_parts)}")
+
         # Handle semantic similarity data with enhanced formatting
         if context.semantic_data:
             formatted_parts.append("\nFUNCTIONALLY SIMILAR PROTEINS:")
@@ -903,22 +1076,48 @@ class GenomicRAG(dspy.Module):
                 protein_id = item.get('protein_id', 'Unknown')
                 short_id, full_id = _format_protein_id(protein_id)
                 
-                formatted_parts.append(f"  {i+1}. {short_id} (similarity: {similarity:.3f})")
+                formatted_parts.append(f"  {i+1}. {short_id} (ESM2 similarity: {similarity:.3f})")
                 formatted_parts.append(f"     Genome: {item.get('genome_id', 'Unknown')}")
                 
-                # Add biological interpretation of similarity scores
+                # Add biological interpretation of similarity scores with enhanced context
                 if similarity > 0.95:
-                    formatted_parts.append(f"     Interpretation: IDENTICAL/ORTHOLOG (>95% similarity)")
+                    formatted_parts.append(f"     Interpretation: IDENTICAL/ORTHOLOG (>95% similarity) - functionally equivalent")
                 elif similarity > 0.8:
-                    formatted_parts.append(f"     Interpretation: HIGHLY SIMILAR - likely functional ortholog")
+                    formatted_parts.append(f"     Interpretation: HIGHLY SIMILAR - likely functional ortholog with conserved structure")
                 elif similarity > 0.6:
-                    formatted_parts.append(f"     Interpretation: MODERATELY SIMILAR - possible functional analog")
+                    formatted_parts.append(f"     Interpretation: MODERATELY SIMILAR - possible functional analog or domain similarity")
                 elif similarity > 0.4:
-                    formatted_parts.append(f"     Interpretation: WEAKLY SIMILAR - distantly related")
+                    formatted_parts.append(f"     Interpretation: WEAKLY SIMILAR - distantly related or shared domain")
+                else:
+                    formatted_parts.append(f"     Interpretation: LOW SIMILARITY - possible distant evolutionary relationship")
                 
-                # Show full ID if different from short ID
+                # Add functional annotation comparison if available
+                if item.get('pfam_domains'):
+                    domains = [d for d in item['pfam_domains'] if d and d != 'None']
+                    if domains:
+                        formatted_parts.append(f"     Domains: {', '.join(domains[:3])}")
+                
+                if item.get('kegg_functions'):
+                    functions = [f for f in item['kegg_functions'] if f and f != 'None']
+                    if functions:
+                        formatted_parts.append(f"     KEGG Functions: {', '.join(functions[:2])}")
+                
+                # Add sequence length comparison if available
+                if item.get('protein_length'):
+                    length = item['protein_length']
+                    formatted_parts.append(f"     Protein Length: {length} amino acids")
+                
+                # Add genomic context if available
+                if item.get('start_coordinate') and item.get('end_coordinate'):
+                    start = item['start_coordinate']
+                    end = item['end_coordinate']
+                    strand = item.get('strand', '?')
+                    strand_symbol = "+" if str(strand) == "1" else "-" if str(strand) == "-1" else strand
+                    formatted_parts.append(f"     Genomic Location: {start:,}-{end:,} bp (strand {strand_symbol})")
+                
+                # Show full ID if different from short ID (collapsed to save space)
                 if short_id != full_id:
-                    formatted_parts.append(f"     Full ID: {full_id}")
+                    formatted_parts.append(f"     [Full ID: {full_id}]")
         
         return "\n".join(formatted_parts) if formatted_parts else "No relevant genomic context found."
     

@@ -220,7 +220,7 @@ class KEGGPathwayIntegrator:
             
             # Add pathway node
             self.graph.add((pathway_uri, RDF.type, KG.Pathway))
-            self.graph.add((pathway_uri, KG.id, Literal(pathway.pathway_id)))
+            #self.graph.add((pathway_uri, KG.id, Literal(pathway.pathway_id)))
             self.graph.add((pathway_uri, KG.pathwayNumber, Literal(pathway.pathway_number)))
             self.graph.add((pathway_uri, KG.pathwayType, Literal(pathway.pathway_type)))
             
@@ -238,11 +238,15 @@ class KEGGPathwayIntegrator:
         # Create KO-pathway relationships
         relationship_count = 0
         missing_ko_count = 0
-        
+        ko_nodes_created = set()  # Track KOs we've created nodes for
+
         for ko_id, pathway_id in self.ko_pathway_relationships:
             ko_uri = KG[f"kegg/{ko_id}"]
             pathway_uri = KG[f"pathway/{pathway_id}"]
-            
+            if ko_id not in ko_nodes_created:
+                self.graph.add((ko_uri, RDF.type, KG.KEGGOrtholog))
+                self.graph.add((ko_uri, KG.koId, Literal(ko_id)))
+                ko_nodes_created.add(ko_id)
             # Add the relationship
             self.graph.add((ko_uri, KG.participatesIn, pathway_uri))
             relationship_count += 1

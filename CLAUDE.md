@@ -163,6 +163,7 @@ data/
 - **CSV Conversion**: 2-3 seconds for RDF → Neo4j format transformation
 - **Scalability**: Production-ready for millions of nodes using neo4j-admin import
 - **Data Integrity**: All relationships and properties preserved correctly
+- **Default Loader**: Now uses bulk loader by default for all knowledge graph construction
 
 ### Pipeline Throughput
 - **Complete Pipeline**: Stages 0-7 process 4 genomes with 10K+ proteins
@@ -247,6 +248,16 @@ data/
 - **Implementation**: Schema-aware query generation, multi-modal data source integration
 - **Critical Fix**: Updated query execution logic to utilize Neo4j data for all query types (not just structural)
 - **Result**: High-confidence biological insights instead of generic responses
+
+#### 5. **Multi-Stage Query Processing** ✅
+- **Objective**: Enable complex functional similarity searches via keyword→similarity expansion
+- **Implementation**: Enhanced DSPy prompts with multi-stage capability, updated query processing logic
+- **Capabilities**: 
+  - Stage 1: Neo4j finds annotated examples (e.g., "heme transporters")
+  - Stage 2: Uses those proteins as seeds for LanceDB similarity search
+  - Result: Comprehensive analysis combining annotations + sequence similarity
+- **Example**: "Find proteins similar to heme transporters" → 200 Neo4j annotations + 5 LanceDB similarity results
+- **Performance**: Automatic seed deduplication, similarity scoring, and biological interpretation
 
 ### Biological Intelligence Transformation:
 

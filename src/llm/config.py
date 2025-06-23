@@ -28,7 +28,7 @@ class LLMConfig(BaseModel):
     
     # LLM provider settings
     llm_provider: str = Field(default="openai", description="LLM provider (openai, anthropic, local)")
-    llm_model: str = Field(default="gpt-4o-mini", description="LLM model name")
+    llm_model: str = Field(default="o3", description="LLM model name")
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
     

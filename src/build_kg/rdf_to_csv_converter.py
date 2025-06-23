@@ -99,7 +99,14 @@ class RDFToCSVConverter:
             if not node_ids:
                 continue
                 
-            filename = f"{node_type.lower()}s.csv"
+            base_name = node_type.lower()
+            if base_name.endswith('y'):
+                filename = f"{base_name}s.csv"
+            elif base_name.endswith('s'):
+                filename = f"{base_name}.csv"
+            else:
+                filename = f"{base_name}s.csv"            
+            
             filepath = self.output_dir / filename
             
             # Collect all possible properties for this node type
