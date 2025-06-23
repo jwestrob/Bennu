@@ -1,0 +1,775 @@
+{
+  "formatted_context": "\nPROTEIN ANALYSIS:\n\nProtein 1:\n  \u2022 Protein: Gammaproteobacteria_61_01_61_200_01_scaffold_2\n    Full ID: protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_2\n  \u2022 Gene: Gammaproteobacteria_61_01_61_200_01_scaffold_2\n    Full ID: RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_2\n  \u2022 Genome: Gammaproteobacteria\n  \u2022 Contig: RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609\n  \u2022 Genomic Location: 278-805 bp (strand -)\n  \u2022 KEGG Functions: K01726\n    - Details: gamma-carbonic anhydrase [EC:4.2.1.-]\n  \u2022 Genomic Neighborhood Analysis:\n    - 2 neighboring proteins within 10kb\n    - Neighbor Domains: Shikimate 5'-dehydrogenase C-terminal domain\n  \u2022 Detailed Genomic Neighborhood Analysis:\n    - 2 neighboring proteins with precise positioning\n    - Proximal neighbors (200-500bp): 1\n      \u2022 276bp upstream, strand 1 (different strand): unknown function\n    - Distal neighbors (>500bp): 1\n      \u2022 557bp downstream: unknown function\n\nProtein 2:\n  \u2022 Protein: Acidovorax_64_01_64_960_01_scaffold_4_399\n    Full ID: protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_399\n  \u2022 Gene: Acidovorax_64_01_64_960_01_scaffold_4_399\n    Full ID: RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_399\n  \u2022 Genome: Acidovorax\n  \u2022 Contig: RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4\n  \u2022 Genomic Location: 451424-451948 bp (strand +)\n  \u2022 KEGG Functions: K01726\n    - Details: gamma-carbonic anhydrase [EC:4.2.1.-]\n  \u2022 Genomic Neighborhood Analysis:\n    - 11 neighboring proteins within 10kb\n    - Neighbor Functions: enolase 1/2/3 [EC:4.2.1.11], cell division protein FtsB, c-di-GMP phosphodiesterase [EC:3.1.4.52], putative tricarboxylic transport membrane protein, 2-dehydro-3-deoxyphosphooctonate aldolase (KDO 8-P synthase) [EC:2.5.1.55]\n    - Neighbor Domains: Septum formation initiator, Enolase, N-terminal domain, Domain of unknown function (DUF1330), DAHP synthetase I family, Protein of unknown function (DUF455)\n  \u2022 Detailed Genomic Neighborhood Analysis:\n    - 11 neighboring proteins with precise positioning\n    - Distal neighbors (>500bp): 11\n      \u2022 579bp downstream: molecular chaperone Hsp33\n      \u2022 914bp upstream: unknown function",
+  "neo4j_raw_data": [
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_2",
+      "ko.id": "K01726",
+      "ko.description": "gamma-carbonic anhydrase [EC:4.2.1.-]",
+      "g.startCoordinate": "278",
+      "g.endCoordinate": "805",
+      "g.strand": "-1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_1",
+        "protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_3"
+      ],
+      "neighbor_functions": [],
+      "neighbor_domains": [
+        "Shikimate 5'-dehydrogenase C-terminal domain"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 276,
+          "neighbor_end": "103",
+          "direction": "upstream",
+          "neighbor_start": "2",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_1",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 557,
+          "neighbor_end": "1038",
+          "direction": "downstream",
+          "neighbor_start": "835",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_3",
+          "neighbor_strand": "-1",
+          "function": null
+        }
+      ]
+    },
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_399",
+      "ko.id": "K01726",
+      "ko.description": "gamma-carbonic anhydrase [EC:4.2.1.-]",
+      "g.startCoordinate": "451424",
+      "g.endCoordinate": "451948",
+      "g.strand": "1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_406",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_404",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_395",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_396",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_398",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_405",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_403",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_397",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_402",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_401",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_400"
+      ],
+      "neighbor_functions": [
+        "2-dehydro-3-deoxyphosphooctonate aldolase (KDO 8-P synthase) [EC:2.5.1.55]",
+        "enolase 1/2/3 [EC:4.2.1.11]",
+        "putative tricarboxylic transport membrane protein",
+        "c-di-GMP phosphodiesterase [EC:3.1.4.52]",
+        "cell division protein FtsB",
+        "molecular chaperone Hsp33"
+      ],
+      "neighbor_domains": [
+        "DAHP synthetase I family",
+        "Enolase, C-terminal TIM barrel domain",
+        "Enolase, N-terminal domain",
+        "Tripartite tricarboxylate transporter family receptor",
+        "HDOD domain",
+        "Protein of unknown function (DUF455)",
+        "Domain of unknown function (DUF1330)",
+        "Septum formation initiator",
+        "EAL domain",
+        "Chemoreceptor zinc-binding domain",
+        "Hsp33 protein"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 4889,
+          "neighbor_end": "457167",
+          "direction": "downstream",
+          "neighbor_start": "456313",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_406",
+          "neighbor_strand": "-1",
+          "function": "2-dehydro-3-deoxyphosphooctonate aldolase (KDO 8-P synthase) [EC:2.5.1.55]"
+        },
+        {
+          "distance": 3260,
+          "neighbor_end": "455970",
+          "direction": "downstream",
+          "neighbor_start": "454684",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_404",
+          "neighbor_strand": "-1",
+          "function": "enolase 1/2/3 [EC:4.2.1.11]"
+        },
+        {
+          "distance": 4758,
+          "neighbor_end": "447628",
+          "direction": "upstream",
+          "neighbor_start": "446666",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_395",
+          "neighbor_strand": "1",
+          "function": "putative tricarboxylic transport membrane protein"
+        },
+        {
+          "distance": 3726,
+          "neighbor_end": "448978",
+          "direction": "upstream",
+          "neighbor_start": "447698",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_396",
+          "neighbor_strand": "-1",
+          "function": "c-di-GMP phosphodiesterase [EC:3.1.4.52]"
+        },
+        {
+          "distance": 914,
+          "neighbor_end": "451313",
+          "direction": "upstream",
+          "neighbor_start": "450510",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_398",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 4571,
+          "neighbor_end": "456300",
+          "direction": "downstream",
+          "neighbor_start": "455995",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_405",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 2958,
+          "neighbor_end": "454660",
+          "direction": "downstream",
+          "neighbor_start": "454382",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_403",
+          "neighbor_strand": "-1",
+          "function": "cell division protein FtsB"
+        },
+        {
+          "distance": 2364,
+          "neighbor_end": "450325",
+          "direction": "upstream",
+          "neighbor_start": "449060",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_397",
+          "neighbor_strand": "-1",
+          "function": "c-di-GMP phosphodiesterase [EC:3.1.4.52]"
+        },
+        {
+          "distance": 2351,
+          "neighbor_end": "454269",
+          "direction": "downstream",
+          "neighbor_start": "453775",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_402",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 1801,
+          "neighbor_end": "453713",
+          "direction": "downstream",
+          "neighbor_start": "453225",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_401",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 579,
+          "neighbor_end": "452995",
+          "direction": "downstream",
+          "neighbor_start": "452003",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_400",
+          "neighbor_strand": "1",
+          "function": "molecular chaperone Hsp33"
+        }
+      ]
+    },
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_370",
+      "ko.id": "K01726",
+      "ko.description": "gamma-carbonic anhydrase [EC:4.2.1.-]",
+      "g.startCoordinate": "410432",
+      "g.endCoordinate": "410959",
+      "g.strand": "1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_366",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_372",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_369",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_371",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_373",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_375",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_368",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_374",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_367",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_365"
+      ],
+      "neighbor_functions": [
+        "TetR/AcrR family transcriptional regulator, regulator of autoinduction and epiphytic fitness",
+        "N-acyl-phosphatidylethanolamine-hydrolysing phospholipase D [EC:3.1.4.54]",
+        "GntR family transcriptional regulator / MocR family aminotransferase",
+        "transcriptional regulator"
+      ],
+      "neighbor_domains": [
+        "OsmC-like protein",
+        "Ankyrin repeat",
+        "Ankyrin repeats (3 copies)",
+        "AefR-like transcriptional repressor, C-terminal domain",
+        "Bacterial regulatory proteins, tetR family",
+        "Radical SAM superfamily",
+        "Haloacid dehalogenase-like hydrolase",
+        "haloacid dehalogenase-like hydrolase",
+        "Beta-lactamase superfamily domain",
+        "Aminotransferase class I and II",
+        "Bacterial regulatory proteins, gntR family",
+        "Putative FMN-binding domain"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 4137,
+          "neighbor_end": "406774",
+          "direction": "upstream",
+          "neighbor_start": "406295",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_366",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 2613,
+          "neighbor_end": "414124",
+          "direction": "downstream",
+          "neighbor_start": "413045",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_372",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 825,
+          "neighbor_end": "410344",
+          "direction": "upstream",
+          "neighbor_start": "409607",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_369",
+          "neighbor_strand": "1",
+          "function": "TetR/AcrR family transcriptional regulator, regulator of autoinduction and epiphytic fitness"
+        },
+        {
+          "distance": 660,
+          "neighbor_end": "413029",
+          "direction": "downstream",
+          "neighbor_start": "411092",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_371",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 3742,
+          "neighbor_end": "414863",
+          "direction": "downstream",
+          "neighbor_start": "414174",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_373",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 4901,
+          "neighbor_end": "416811",
+          "direction": "downstream",
+          "neighbor_start": "415333",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_375",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 2087,
+          "neighbor_end": "409463",
+          "direction": "upstream",
+          "neighbor_start": "408345",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_368",
+          "neighbor_strand": "-1",
+          "function": "N-acyl-phosphatidylethanolamine-hydrolysing phospholipase D [EC:3.1.4.54]"
+        },
+        {
+          "distance": 4496,
+          "neighbor_end": "415227",
+          "direction": "downstream",
+          "neighbor_start": "414928",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_374",
+          "neighbor_strand": "-1",
+          "function": null
+        },
+        {
+          "distance": 3549,
+          "neighbor_end": "408343",
+          "direction": "upstream",
+          "neighbor_start": "406883",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_367",
+          "neighbor_strand": "1",
+          "function": "GntR family transcriptional regulator / MocR family aminotransferase"
+        },
+        {
+          "distance": 4765,
+          "neighbor_end": "406293",
+          "direction": "upstream",
+          "neighbor_start": "405667",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_10_365",
+          "neighbor_strand": "-1",
+          "function": "transcriptional regulator"
+        }
+      ]
+    },
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_130",
+      "ko.id": "K01674",
+      "ko.description": "carbonic anhydrase [EC:4.2.1.1]",
+      "g.startCoordinate": "153567",
+      "g.endCoordinate": "154325",
+      "g.strand": "-1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_132",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_133",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_131",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_124",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_127",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_125",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_126",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_129",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_128"
+      ],
+      "neighbor_functions": [
+        "para-aminobenzoate synthetase / 4-amino-4-deoxychorismate lyase [EC:2.6.1.85 4.1.3.38]",
+        "iron complex outermembrane recepter protein",
+        "5-carboxymethyl-2-hydroxymuconate isomerase [EC:5.3.3.10]",
+        "7-carboxy-7-deazaguanine synthase [EC:4.3.99.3]",
+        "adenosylmethionine---8-amino-7-oxononanoate aminotransferase [EC:2.6.1.62]",
+        "6-pyruvoyltetrahydropterin/6-carboxytetrahydropterin synthase [EC:4.2.3.12 4.1.2.50]",
+        "aspartate 1-decarboxylase [EC:4.1.1.11]",
+        "8-amino-7-oxononanoate synthase [EC:2.3.1.47]",
+        "dethiobiotin synthetase [EC:6.3.3.3]"
+      ],
+      "neighbor_domains": [
+        "chorismate binding enzyme",
+        "Amino-transferase class IV",
+        "TonB dependent receptor-like, beta-barrel",
+        "TonB-dependent Receptor Plug Domain",
+        "5-carboxymethyl-2-hydroxymuconate isomerase",
+        "Aminotransferase class-III",
+        "6-pyruvoyl tetrahydropterin synthase",
+        "Aspartate decarboxylase",
+        "Aminotransferase class I and II",
+        "CobQ/CobB/MinD/ParA nucleotide binding domain",
+        "AAA domain"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 1619,
+          "neighbor_end": "157006",
+          "direction": "downstream",
+          "neighbor_start": "155186",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_132",
+          "neighbor_strand": "-1",
+          "function": "para-aminobenzoate synthetase / 4-amino-4-deoxychorismate lyase [EC:2.6.1.85 4.1.3.38]"
+        },
+        {
+          "distance": 3695,
+          "neighbor_end": "159487",
+          "direction": "downstream",
+          "neighbor_start": "157262",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_133",
+          "neighbor_strand": "1",
+          "function": "iron complex outermembrane recepter protein"
+        },
+        {
+          "distance": 1142,
+          "neighbor_end": "155068",
+          "direction": "downstream",
+          "neighbor_start": "154709",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_131",
+          "neighbor_strand": "1",
+          "function": "5-carboxymethyl-2-hydroxymuconate isomerase [EC:5.3.3.10]"
+        },
+        {
+          "distance": 4807,
+          "neighbor_end": "149395",
+          "direction": "upstream",
+          "neighbor_start": "148760",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_124",
+          "neighbor_strand": "1",
+          "function": "7-carboxy-7-deazaguanine synthase [EC:4.3.99.3]"
+        },
+        {
+          "distance": 3327,
+          "neighbor_end": "151565",
+          "direction": "upstream",
+          "neighbor_start": "150240",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_127",
+          "neighbor_strand": "1",
+          "function": "adenosylmethionine---8-amino-7-oxononanoate aminotransferase [EC:2.6.1.62]"
+        },
+        {
+          "distance": 4146,
+          "neighbor_end": "149795",
+          "direction": "upstream",
+          "neighbor_start": "149421",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_125",
+          "neighbor_strand": "1",
+          "function": "6-pyruvoyltetrahydropterin/6-carboxytetrahydropterin synthase [EC:4.2.3.12 4.1.2.50]"
+        },
+        {
+          "distance": 3710,
+          "neighbor_end": "150237",
+          "direction": "upstream",
+          "neighbor_start": "149857",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_126",
+          "neighbor_strand": "1",
+          "function": "aspartate 1-decarboxylase [EC:4.1.1.11]"
+        },
+        {
+          "distance": 1334,
+          "neighbor_end": "153501",
+          "direction": "upstream",
+          "neighbor_start": "152233",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_129",
+          "neighbor_strand": "1",
+          "function": "8-amino-7-oxononanoate synthase [EC:2.3.1.47]"
+        },
+        {
+          "distance": 2002,
+          "neighbor_end": "152236",
+          "direction": "upstream",
+          "neighbor_start": "151565",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_131_128",
+          "neighbor_strand": "1",
+          "function": "dethiobiotin synthetase [EC:6.3.3.3]"
+        }
+      ]
+    },
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_54",
+      "ko.id": "K01673",
+      "ko.description": "carbonic anhydrase [EC:4.2.1.1]",
+      "g.startCoordinate": "68747",
+      "g.endCoordinate": "69427",
+      "g.strand": "1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_56",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_51",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_50",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_52",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_55",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_53"
+      ],
+      "neighbor_functions": [
+        "uncharacterized protein involved in response to NO",
+        "nitrate reductase molybdenum cofactor assembly chaperone NarJ/NarW",
+        "nitrate reductase / nitrite oxidoreductase, beta subunit [EC:1.7.5.1 1.7.99.-]",
+        "nitrate reductase gamma subunit [EC:1.7.5.1 1.7.99.-]",
+        "ribonucleoside-diphosphate reductase alpha chain [EC:1.17.4.1]"
+      ],
+      "neighbor_domains": [
+        "NnrS protein",
+        "Nitrate reductase delta subunit",
+        "4Fe-4S dicluster domain",
+        "Respiratory nitrate reductase beta C-terminal",
+        "Nitrate reductase gamma subunit",
+        "Ribonucleotide reductase, barrel domain",
+        "Intein splicing domain",
+        "LAGLIDADG-like domain",
+        "Ribonucleotide reductase, all-alpha domain",
+        "PPIC-type PPIASE domain"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 4457,
+          "neighbor_end": "74436",
+          "direction": "downstream",
+          "neighbor_start": "73204",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_56",
+          "neighbor_strand": "1",
+          "function": "uncharacterized protein involved in response to NO"
+        },
+        {
+          "distance": 2424,
+          "neighbor_end": "67024",
+          "direction": "upstream",
+          "neighbor_start": "66323",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_51",
+          "neighbor_strand": "1",
+          "function": "nitrate reductase molybdenum cofactor assembly chaperone NarJ/NarW"
+        },
+        {
+          "distance": 3968,
+          "neighbor_end": "66302",
+          "direction": "upstream",
+          "neighbor_start": "64779",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_50",
+          "neighbor_strand": "1",
+          "function": "nitrate reductase / nitrite oxidoreductase, beta subunit [EC:1.7.5.1 1.7.99.-]"
+        },
+        {
+          "distance": 1726,
+          "neighbor_end": "67755",
+          "direction": "upstream",
+          "neighbor_start": "67021",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_52",
+          "neighbor_strand": "1",
+          "function": "nitrate reductase gamma subunit [EC:1.7.5.1 1.7.99.-]"
+        },
+        {
+          "distance": 777,
+          "neighbor_end": "73108",
+          "direction": "downstream",
+          "neighbor_start": "69524",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_55",
+          "neighbor_strand": "1",
+          "function": "ribonucleoside-diphosphate reductase alpha chain [EC:1.17.4.1]"
+        },
+        {
+          "distance": 966,
+          "neighbor_end": "68719",
+          "direction": "upstream",
+          "neighbor_start": "67781",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_53",
+          "neighbor_strand": "1",
+          "function": null
+        }
+      ]
+    },
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_5",
+      "ko.id": "K01673",
+      "ko.description": "carbonic anhydrase [EC:4.2.1.1]",
+      "g.startCoordinate": "3680",
+      "g.endCoordinate": "4339",
+      "g.strand": "1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_2",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_9",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_3",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_6",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_8",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_4",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_7",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_1"
+      ],
+      "neighbor_functions": [
+        "uncharacterized protein",
+        "isocitrate dehydrogenase kinase/phosphatase [EC:2.7.11.5 3.1.3.-]",
+        "isovaleryl-CoA dehydrogenase [EC:1.3.8.4]",
+        "acetyl-CoA C-acetyltransferase [EC:2.3.1.9]"
+      ],
+      "neighbor_domains": [
+        "MerR family regulatory protein",
+        "MerR, DNA binding",
+        "MerR HTH family regulatory protein",
+        "Pyridoxamine 5'-phosphate oxidase",
+        "Thioesterase superfamily",
+        "Isocitrate dehydrogenase kinase/phosphatase (AceK), regulatory domain",
+        "Isocitrate dehydrogenase kinase/phosphatase (AceK) kinase domain",
+        "Acyl-CoA dehydrogenase, middle domain",
+        "Acyl-CoA dehydrogenase, C-terminal domain",
+        "Acyl-CoA dehydrogenase, N-terminal domain",
+        "Thiolase, N-terminal domain",
+        "Thiolase, C-terminal domain",
+        "Metallo-beta-lactamase superfamily",
+        "Metallo-beta-lactamase-like, C-terminal domain"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 2165,
+          "neighbor_end": "1910",
+          "direction": "upstream",
+          "neighbor_start": "1515",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_2",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 4884,
+          "neighbor_end": "9196",
+          "direction": "downstream",
+          "neighbor_start": "8564",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_9",
+          "neighbor_strand": "1",
+          "function": "uncharacterized protein"
+        },
+        {
+          "distance": 1727,
+          "neighbor_end": "2414",
+          "direction": "upstream",
+          "neighbor_start": "1953",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_3",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 697,
+          "neighbor_end": "6182",
+          "direction": "downstream",
+          "neighbor_start": "4377",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_6",
+          "neighbor_strand": "1",
+          "function": "isocitrate dehydrogenase kinase/phosphatase [EC:2.7.11.5 3.1.3.-]"
+        },
+        {
+          "distance": 3803,
+          "neighbor_end": "8535",
+          "direction": "downstream",
+          "neighbor_start": "7483",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_8",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 1224,
+          "neighbor_end": "3646",
+          "direction": "upstream",
+          "neighbor_start": "2456",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_4",
+          "neighbor_strand": "1",
+          "function": "isovaleryl-CoA dehydrogenase [EC:1.3.8.4]"
+        },
+        {
+          "distance": 2563,
+          "neighbor_end": "7436",
+          "direction": "downstream",
+          "neighbor_start": "6243",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_7",
+          "neighbor_strand": "1",
+          "function": "acetyl-CoA C-acetyltransferase [EC:2.3.1.9]"
+        },
+        {
+          "distance": 3370,
+          "neighbor_end": "1413",
+          "direction": "upstream",
+          "neighbor_start": "310",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_1",
+          "neighbor_strand": "-1",
+          "function": null
+        }
+      ]
+    },
+    {
+      "p.id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_12",
+      "ko.id": "K01673",
+      "ko.description": "carbonic anhydrase [EC:4.2.1.1]",
+      "g.startCoordinate": "10113",
+      "g.endCoordinate": "10832",
+      "g.strand": "1",
+      "neighbors": [
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_9",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_10",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_13",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_8",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_11",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_7",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_14",
+        "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_15"
+      ],
+      "neighbor_functions": [
+        "uncharacterized protein",
+        "butyryl-CoA dehydrogenase [EC:1.3.8.1]",
+        "acetyl-CoA C-acetyltransferase [EC:2.3.1.9]",
+        "two-component system, sensor histidine kinase [EC:2.7.13.3]"
+      ],
+      "neighbor_domains": [
+        "Pyridoxamine 5'-phosphate oxidase",
+        "Enoyl-(Acyl carrier protein) reductase",
+        "KR domain",
+        "short chain dehydrogenase",
+        "Acyl-CoA dehydrogenase, N-terminal domain",
+        "Acyl-CoA dehydrogenase, C-terminal domain",
+        "Acyl-CoA dehydrogenase, middle domain",
+        "Thiolase, N-terminal domain",
+        "Thiolase, C-terminal domain",
+        "Histidine kinase-, DNA gyrase B-, and HSP90-like ATPase",
+        "Response regulator receiver domain",
+        "His Kinase A (phospho-acceptor) domain",
+        "Tetratricopeptide repeat"
+      ],
+      "neighbor_details": [
+        {
+          "distance": 1549,
+          "neighbor_end": "9196",
+          "direction": "upstream",
+          "neighbor_start": "8564",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_9",
+          "neighbor_strand": "1",
+          "function": "uncharacterized protein"
+        },
+        {
+          "distance": 829,
+          "neighbor_end": "9952",
+          "direction": "upstream",
+          "neighbor_start": "9284",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_10",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 896,
+          "neighbor_end": "12139",
+          "direction": "downstream",
+          "neighbor_start": "11009",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_13",
+          "neighbor_strand": "1",
+          "function": "butyryl-CoA dehydrogenase [EC:1.3.8.1]"
+        },
+        {
+          "distance": 2630,
+          "neighbor_end": "8535",
+          "direction": "upstream",
+          "neighbor_start": "7483",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_8",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 133,
+          "neighbor_end": "10120",
+          "direction": "upstream",
+          "neighbor_start": "9980",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_11",
+          "neighbor_strand": "1",
+          "function": null
+        },
+        {
+          "distance": 3870,
+          "neighbor_end": "7436",
+          "direction": "upstream",
+          "neighbor_start": "6243",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_7",
+          "neighbor_strand": "1",
+          "function": "acetyl-CoA C-acetyltransferase [EC:2.3.1.9]"
+        },
+        {
+          "distance": 2205,
+          "neighbor_end": "14129",
+          "direction": "downstream",
+          "neighbor_start": "12318",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_14",
+          "neighbor_strand": "1",
+          "function": "two-component system, sensor histidine kinase [EC:2.7.13.3]"
+        },
+        {
+          "distance": 4020,
+          "neighbor_end": "16694",
+          "direction": "downstream",
+          "neighbor_start": "14133",
+          "neighbor_id": "protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_286_15",
+          "neighbor_strand": "-1",
+          "function": "two-component system, sensor histidine kinase [EC:2.7.13.3]"
+        }
+      ]
+    }
+  ],
+  "lancedb_raw_data": [],
+  "neo4j_record_count": 7,
+  "lancedb_record_count": 0,
+  "llm_response": {
+    "question": "Describe the nature of the genomic contexts surrounding carbonic anhydrase genes in this dataset. Provide maximal detail.",
+    "answer": "The genomic contexts surrounding the carbonic anhydrase genes reveal the following details:\n\n1. **Genomic Location**:\n   - **Gammaproteobacteria carbonic anhydrase**: 278-805 bp (strand -)\n   - **Acidovorax carbonic anhydrase**: 451424-451948 bp (strand +)\n\n2. **Functional Context**:\n   - Both genes are associated with KEGG function K01726, indicating they encode gamma-carbonic anhydrases (EC:4.2.1.-).\n\n3. **Neighborhood Analysis**:\n   - **Gammaproteobacteria**: \n     - 1 proximal neighbor (276 bp upstream, different strand, unknown function).\n     - 1 distal neighbor (557 bp downstream, unknown function).\n   - **Acidovorax**: \n     - 11 neighboring proteins within 10 kb, including enolases, FtsB, and c-di-GMP phosphodiesterase.\n     - Closest distal neighbor (579 bp downstream, Hsp33) and an unknown function protein (914 bp upstream).\n\n4. **Biological Significance**:\n   - The Acidovorax carbonic anhydrase is part of a complex network of neighboring proteins, suggesting potential co-regulation or shared pathways, while the Gammaproteobacteria carbonic anhydrase appears more isolated, indicating different regulatory mechanisms.",
+    "confidence": "high",
+    "citations": "KEGG K01726, PFAM accessions for carbonic anhydrase domains, genome IDs: RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_2, RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_4_399",
+    "query_metadata": {
+      "query_type": "structural",
+      "search_strategy": "Combine results by analyzing the relationships and functions of neighboring genes to provide a comprehensive overview of the genomic context surrounding carbonic anhydrase genes.",
+      "context_items": 7,
+      "retrieval_time": 0.0236358642578125
+    }
+  }
+}

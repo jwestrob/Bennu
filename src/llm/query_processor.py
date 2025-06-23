@@ -85,8 +85,12 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         
         try:
             if query_type == "cypher":
-                # Direct Cypher query
-                results = await self._execute_cypher(query)
+                # Check if this is a domain query that needs count enhancement
+                if "GGDEF" in query or "TPR" in query or "/domain/" in query:
+                    results = await self._execute_domain_query_with_count(query)
+                else:
+                    # Direct Cypher query
+                    results = await self._execute_cypher(query)
             elif query_type == "genome_overview":
                 results = await self._get_genome_overview(query)
             elif query_type == "protein_info":
@@ -129,14 +133,14 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         cypher = """
         MATCH (g:Genome {id: $genome_id})
         OPTIONAL MATCH (g)<-[:BELONGSTOGENOME]-(p:Protein)
-        OPTIONAL MATCH (p)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(pf:Domain)
+        OPTIONAL MATCH (p)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
         OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
         RETURN g.id as genome_id,
                count(DISTINCT p) as protein_count,
-               count(DISTINCT pf) as domain_family_count,
-               collect(DISTINCT pf.description)[0..5] as sample_family_descriptions,
+               count(DISTINCT dom) as domain_family_count,
+               collect(DISTINCT dom.description)[0..5] as sample_family_descriptions,
                count(DISTINCT ko) as kegg_function_count,
-               collect(DISTINCT pf.id)[0..5] as sample_families,
+               collect(DISTINCT dom.id)[0..5] as sample_families,
                collect(DISTINCT ko.id)[0..5] as sample_functions
         """
         
@@ -154,7 +158,7 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         MATCH (p:Protein {id: $protein_id})
         OPTIONAL MATCH (p)-[:ENCODEDBY]->(gene:Gene)-[:BELONGSTOGENOME]->(g:Genome)
         OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
-        OPTIONAL MATCH (p)-[:HASFUNCTION]->(fa:Functionalannotation)-[:ANNOTATESPROTEIN]->(ko:KEGGOrtholog)
+        OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
         
         // Get genomic neighborhood using coordinates (5kb window)
         OPTIONAL MATCH (neighbor_gene:Gene)-[:BELONGSTOGENOME]->(g)
@@ -164,6 +168,7 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
           AND abs(toInteger(neighbor_gene.startCoordinate) - toInteger(gene.startCoordinate)) < 5000
         OPTIONAL MATCH (neighbor_protein:Protein)-[:ENCODEDBY]->(neighbor_gene)
         OPTIONAL MATCH (neighbor_protein)-[:HASDOMAIN]->(neighbor_da:DomainAnnotation)-[:DOMAINFAMILY]->(neighbor_d:Domain)
+        OPTIONAL MATCH (neighbor_protein)-[:HASFUNCTION]->(neighbor_ko:KEGGOrtholog)
         
         RETURN p.id as protein_id,
                gene.id as gene_id,
@@ -182,9 +187,25 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
                collect(DISTINCT da.bitscore) as domain_scores,
                collect(DISTINCT (da.domainStart + '-' + da.domainEnd)) as domain_positions,
                count(DISTINCT da) as domain_count,
-               collect(DISTINCT neighbor_protein.id)[0..5] as neighboring_proteins,
-               collect(DISTINCT neighbor_d.id)[0..10] as neighborhood_families,
-               collect(DISTINCT neighbor_gene.startCoordinate)[0..5] as neighbor_coordinates
+               collect(DISTINCT {
+                   neighbor_id: neighbor_protein.id,
+                   neighbor_start: neighbor_gene.startCoordinate,
+                   neighbor_end: neighbor_gene.endCoordinate,
+                   neighbor_strand: neighbor_gene.strand,
+                   distance: abs(toInteger(neighbor_gene.startCoordinate) - toInteger(gene.startCoordinate)),
+                   direction: CASE WHEN toInteger(neighbor_gene.startCoordinate) > toInteger(gene.startCoordinate) THEN 'downstream' ELSE 'upstream' END,
+                   function: neighbor_ko.description
+               }) as neighbor_details,
+               collect(DISTINCT {
+                   protein_id: neighbor_protein.id,
+                   gene_id: neighbor_gene.id,
+                   position: toInteger(neighbor_gene.startCoordinate),
+                   strand: neighbor_gene.strand,
+                   pfam_ids: neighbor_d.id,
+                   pfam_desc: neighbor_d.description,
+                   kegg_id: neighbor_ko.id,
+                   kegg_desc: neighbor_ko.description
+               }) as detailed_neighbors
         """
         
         with self.driver.session() as session:
@@ -230,6 +251,48 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             """
         
         return await self._execute_cypher(cypher)
+    
+    async def _execute_domain_query_with_count(self, query: str) -> List[Dict[str, Any]]:
+        """Execute domain query with accurate count information."""
+        # Extract domain name from query with enhanced pattern matching
+        domain_name = None
+        import re
+        
+        # Direct domain name mentions
+        if "GGDEF" in query:
+            domain_name = "GGDEF"
+        elif "TPR" in query:
+            domain_name = "TPR"
+        elif "/domain/" in query:
+            # Extract domain name from pattern like "/domain/DOMAIN_NAME/"
+            match = re.search(r'/domain/([^/]+)/', query)
+            if match:
+                domain_name = match.group(1)
+        
+        # Get accurate count first with flexible domain matching
+        total_count = 0
+        if domain_name:
+            # Use flexible matching for domain families like TPR_1, TPR_2, etc.
+            if domain_name == "TPR":
+                count_query = "MATCH (da:DomainAnnotation) WHERE da.id CONTAINS '/domain/TPR' RETURN count(da) as total_count"
+            else:
+                count_query = f"MATCH (da:DomainAnnotation) WHERE da.id CONTAINS '/domain/{domain_name}/' RETURN count(da) as total_count"
+            
+            count_result = await self._execute_cypher(count_query)
+            if count_result:
+                total_count = count_result[0]['total_count']
+        
+        # Execute original query for sample results
+        sample_results = await self._execute_cypher(query)
+        
+        # Add count metadata to each result
+        for result in sample_results:
+            result['_domain_total_count'] = total_count
+            result['_domain_name'] = domain_name
+            result['_is_sample'] = len(sample_results) < total_count
+            result['_sample_size'] = len(sample_results)
+        
+        return sample_results
     
     def close(self):
         """Close Neo4j connection."""

@@ -107,14 +107,19 @@ class RDFToCSVConverter:
             for node_id in node_ids:
                 all_properties.update(self.nodes[node_id].keys())
             
+            # Keep all properties - we don't want to remove legitimate properties
+            
             # Write CSV
             with open(filepath, 'w', newline='', encoding='utf-8') as f:
-                fieldnames = ['id'] + sorted(all_properties)
+                # Neo4j bulk import expects ID column to be labeled with :ID
+                # Use a unique name that won't conflict with properties
+                id_column = 'id:ID'
+                fieldnames = [id_column] + sorted(all_properties)
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 
                 for node_id in node_ids:
-                    row = {'id': node_id}
+                    row = {id_column: node_id}
                     row.update(self.nodes[node_id])
                     writer.writerow(row)
             
@@ -133,7 +138,7 @@ class RDFToCSVConverter:
             
             with open(filepath, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(['from_id', 'to_id'])
+                writer.writerow([':START_ID', ':END_ID'])  # Neo4j bulk import format
                 writer.writerows(rels)
             
             stats["relationships"][rel_type] = len(rels)
@@ -142,10 +147,14 @@ class RDFToCSVConverter:
         return stats
     
     def _uri_to_id(self, uri: str) -> str:
-        """Convert URI to readable ID."""
+        """Convert URI to readable ID, preserving namespace for nodes to avoid conflicts."""
         for prefix, namespace in self.namespaces.items():
             if uri.startswith(namespace):
-                return uri.replace(namespace, "")
+                local_id = uri.replace(namespace, "")
+                # Preserve namespace prefix for nodes to distinguish protein:X from gene:X
+                if prefix in ['protein', 'gene']:
+                    return f"{prefix}:{local_id}"
+                return local_id
         return uri.split("/")[-1]
     
     def _uri_to_property(self, uri: str) -> str:

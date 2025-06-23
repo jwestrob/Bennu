@@ -15,7 +15,7 @@ This platform represents a paradigm shift in computational genomics, combining t
 
 - **🔬 Comprehensive Genome Analysis**: Quality assessment, taxonomic classification, gene prediction, and functional annotation
 - **🧠 Intelligent Question Answering**: LLM-powered system with biological expertise for complex genomic queries
-- **📊 Knowledge Graph Integration**: 276K+ RDF triples linking genomes, proteins, domains, and functions
+- **📊 Knowledge Graph Integration**: Comprehensive RDF triples linking genomes, proteins, domains, and functions
 - **🔍 Semantic Protein Search**: 320-dimensional ESM2 embeddings with sub-millisecond similarity queries
 - **🏗️ Production Architecture**: Containerized microservices with Nextflow orchestration
 - **⚡ High Performance**: Apple Silicon optimized with MPS acceleration
@@ -24,12 +24,12 @@ This platform represents a paradigm shift in computational genomics, combining t
 
 | Metric | Achievement |
 |--------|-------------|
-| **Pipeline Throughput** | 4 genomes + 10K proteins processed in minutes |
-| **Knowledge Graph Scale** | 276,856 RDF triples, 44K+ nodes, 45K+ relationships |
-| **ESM2 Processing** | ~85 proteins/second (2 min vs 21 min estimated) |
-| **Vector Search** | Sub-millisecond queries with rich metadata filtering |
-| **Functional Enrichment** | 1,145 PFAM + 813 KEGG authoritative annotations |
-| **Test Coverage** | Zero-maintenance discovery across all modules |
+| **Pipeline Throughput** | Multiple genomes processed in minutes |
+| **Knowledge Graph Scale** | Hundreds of thousands of RDF triples, rich biological relationships |
+| **ESM2 Processing** | ~85 proteins/second with Apple Silicon MPS acceleration |
+| **Vector Search** | Sub-millisecond similarity queries with metadata filtering |
+| **Functional Enrichment** | Comprehensive PFAM + KEGG authoritative annotations |
+| **Test Coverage** | Zero-maintenance test discovery across all modules |
 
 ## 🏗️ Architecture
 

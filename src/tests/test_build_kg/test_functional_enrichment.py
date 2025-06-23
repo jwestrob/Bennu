@@ -281,8 +281,8 @@ class TestIntegration:
         
         # Temporarily move reference files to expected locations
         import shutil
-        original_pfam = Path("Pfam-A.hmm.dat.stockholm")
-        original_ko = Path("ko_list")
+        original_pfam = Path("data/reference/Pfam-A.hmm.dat.stockholm")
+        original_ko = Path("data/reference/ko_list")
         
         # Use the test files instead
         if original_pfam.exists():
@@ -340,8 +340,8 @@ class TestIntegration:
     def test_enrichment_with_real_domains(self):
         """Test enrichment with domains that should exist in real reference data."""
         # This test will only run if real reference files exist
-        pfam_file = Path("Pfam-A.hmm.dat.stockholm")
-        ko_file = Path("ko_list")
+        pfam_file = Path("data/reference/Pfam-A.hmm.dat.stockholm")
+        ko_file = Path("data/reference/ko_list")
         
         if not (pfam_file.exists() and ko_file.exists()):
             pytest.skip("Real reference files not available")

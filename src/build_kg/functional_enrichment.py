@@ -238,8 +238,8 @@ class FunctionalEnrichment:
 
 
 def add_functional_enrichment_to_pipeline(graph: rdflib.Graph, 
-                                        pfam_file: Path = Path("Pfam-A.hmm.dat.stockholm"),
-                                        ko_file: Path = Path("ko_list")) -> Tuple[rdflib.Graph, Dict[str, int]]:
+                                        pfam_file: Path = Path("data/reference/Pfam-A.hmm.dat.stockholm"),
+                                        ko_file: Path = Path("data/reference/ko_list")) -> Tuple[rdflib.Graph, Dict[str, int]]:
     """
     Main function to add functional enrichment to the knowledge graph pipeline.
     

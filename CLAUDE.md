@@ -19,24 +19,24 @@ This is a next-generation genomic intelligence platform that transforms microbia
 ### Testing
 ```bash
 # Run all tests
-python run_tests.py
+python scripts/run_tests.py
 
 # Quick smoke tests during development
-python run_tests.py --smoke
+python scripts/run_tests.py --smoke
 
 # Run with coverage analysis
-python run_tests.py --coverage
+python scripts/run_tests.py --coverage
 
 # Run tests for specific modules
-python run_tests.py --module ingest
-python run_tests.py --module build_kg
+python scripts/run_tests.py --module ingest
+python scripts/run_tests.py --module build_kg
 
 # Run by test category
-python run_tests.py --marker unit
-python run_tests.py --marker integration
+python scripts/run_tests.py --marker unit
+python scripts/run_tests.py --marker integration
 
 # Discover all available tests
-python run_tests.py --discover
+python scripts/run_tests.py --discover
 
 # Shell wrapper (equivalent commands)
 ./test.sh --smoke
@@ -158,10 +158,16 @@ data/
 - **Functional Enrichment**: 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions
 - **Memory Efficiency**: Automatic MPS cache management prevents memory overflow
 
+### Neo4j Database Performance
+- **Bulk Import Speed**: 20.08 seconds for 37,930 nodes + 85,626 relationships (15x faster than Python MERGE)
+- **CSV Conversion**: 2-3 seconds for RDF → Neo4j format transformation
+- **Scalability**: Production-ready for millions of nodes using neo4j-admin import
+- **Data Integrity**: All relationships and properties preserved correctly
+
 ### Pipeline Throughput
 - **Complete Pipeline**: Stages 0-7 process 4 genomes with 10K+ proteins
 - **Knowledge Graph Construction**: 276K+ triples generated from multi-stage annotations with functional enrichment
-- **Neo4j Database**: 44,477 nodes and 45,679 relationships for complex biological queries
+- **Neo4j Database**: 37,930 nodes and 85,626 relationships for complex biological queries
 - **LLM Integration**: High-confidence biological insights with authoritative source citations
 - **Production Ready**: Comprehensive testing suite validates all outputs
 
@@ -206,6 +212,13 @@ data/
 - Pipeline supports resuming from any stage and selective execution
 - All stages include parallel processing capabilities where applicable
 - Knowledge graph construction transforms biological annotations to RDF triples for Neo4j
+
+### **IMPORTANT: No Helper Scripts in Root Directory**
+**Always use the proper pipeline instead of creating temporary helper scripts in the root directory.** 
+- Use `python -m src.build_kg.rdf_builder` for knowledge graph generation
+- Use `python -m src.build_kg.neo4j_legacy_loader` for database loading
+- Modify existing modules in `src/` as needed rather than creating one-off scripts
+- This maintains workflow integrity and prevents fragmentation
 
 ## Recent Major Developments: Complete System Integration ✅
 
@@ -268,32 +281,79 @@ genomic context suggests involvement in aerobic respiration pathways."
 
 This represents a complete transformation from a basic bioinformatics pipeline to an intelligent genomic AI platform.
 
+## Recent System Improvements ✅
+
+### **Major LLM Integration Fixes (June 2025):**
+
+1. **✅ DSPy Query Generation Fixed**
+   - **Issue**: Syntax errors in generated Cypher queries (`pf` variable undefined, schema mismatches)
+   - **Solution**: Updated DSPy prompts with correct Neo4j schema, fixed variable scoping
+   - **Result**: Complex domain queries now execute successfully (e.g., 100 GGDEF domains found vs previous false "none found")
+
+2. **✅ Error Handling Enhanced**
+   - **Issue**: Query failures returning confident false answers instead of surfacing errors
+   - **Solution**: Added proper error propagation from query processor to main ask method
+   - **Result**: Users now see "Query execution failed" instead of "High confidence: No results found"
+
+3. **✅ Schema Relationships Corrected**
+   - **Issue**: Using non-existent `Functionalannotation` intermediate node
+   - **Solution**: Updated to direct `(Protein)-[:HASFUNCTION]->(KEGGOrtholog)` relationships
+   - **Result**: Functional annotation queries now work reliably
+
+4. **✅ Context Formatting Improved**
+   - **Issue**: Misleading "possible operon" language for different-strand neighbors
+   - **Solution**: Removed biological conclusions from context, use factual distance/strand reporting
+   - **Result**: LLM makes proper biological reasoning instead of being misled by context
+
+5. **✅ Distance Categories Standardized**
+   - **Categories**: Close (0-200bp), Proximal (200-500bp), Distal (>500bp)
+   - **Co-transcription**: Only suggested for same-strand + <200bp proximity
+   - **Result**: Biologically accurate genomic context analysis
+
+### **File Organization Completed:**
+- Moved debugging scripts to `src/tests/debug/`
+- Moved reference files to `data/reference/`
+- Updated code paths accordingly
+- Clean repository structure
+
 ## Known Issues & Future Work
 
-### 🔧 High Priority Improvements Needed:
+### 🧬 Prodigal Data Integration Available
 
-#### 1. **LLM Context Formatting Enhancement** 
-- **Issue**: `_format_context` method in `src/llm/rag_system.py` needs improvement
-- **Problem**: Rich quantitative data retrieved (40 GGDEF domains, specific protein IDs, bitscores) but LLM responses still somewhat generic
-- **Solution Needed**: Format context to highlight key quantitative insights like:
-  ```
-  GGDEF DOMAIN ANALYSIS:
-  - Found 40 GGDEF domains across 37 proteins
-  - Top scoring domains: protein_X (score: 167.25), protein_Y (score: 158.24)
-  - Genome distribution: Acidovorax (28), Gammaproteobacteria (9), PLM0_60 (3)
-  ```
+The prodigal gene prediction stage outputs rich genomic metadata that can be integrated into the knowledge graph:
 
-#### 2. **Neo4j Schema Naming** 
-- **Issue**: Current `ProteinFamily` vs `ProteinDomain` naming is biologically confusing
-- **Proposed**: Rename to `Domain` (functional families) vs `DomainAnnotation` (sequence hits)
-- **Impact**: Would make DSPy prompts and biological reasoning much clearer
+**Currently Integrated:**
+- Gene coordinates (start, end positions)
+- Strand orientation (+1/-1)
+- Amino acid length
+- GC content
 
-#### 3. **Neo4j Loading Property Bug**
-- **Issue**: Some RDF properties dropped during bulk loading (GGDEF missing descriptions)
-- **Evidence**: Stockholm file → RDF enrichment works, but Neo4j loses some properties
-- **Fix Needed**: Debug bulk loading in `load_neo4j.py` for property preservation
+**Available for Future Integration:**
+- Start codon type (ATG, GTG, TTG)
+- Ribosome binding site (RBS) motif and spacer distance
+- Partial gene indicators
+- Additional quality metrics
 
-### 🧪 Recent Debugging Discoveries:
-- **GGDEF Domain Case Study**: 40 domains found in dataset, Stockholm file has perfect descriptions, RDF enrichment works, but Neo4j loading inconsistent
-- **Query Generation**: DSPy now correctly generates domain queries using `ProteinDomain.id CONTAINS '/domain/GGDEF/'`
-- **Data Quality**: Functional enrichment statistics show 3,389 PFAM families enriched vs only 15 missing
+**Prodigal Header Example:**
+```
+>protein_id # 76 # 171 # -1 # ID=1_1;partial=00;start_type=ATG;rbs_motif=AGGAG;rbs_spacer=5-10bp;gc_cont=0.573
+```
+
+This data enables genomic context analysis, operon prediction, and regulatory element identification for enhanced biological insights.
+
+### 🔧 Remaining Improvements:
+
+#### 1. **LanceDB Integration Testing** 
+- **Status**: Neo4j integration now fully functional, LanceDB protein similarity testing pending
+- **Next**: Comprehensive testing of semantic protein search capabilities
+- **Goal**: Validate ESM2 embedding similarity search with sub-millisecond performance
+
+#### 2. **Enhanced Context Formatting** 
+- **Opportunity**: Further optimize context formatting for complex multi-protein analyses
+- **Focus**: Highlight quantitative insights and genomic neighborhood relationships
+- **Status**: Basic formatting working well, room for advanced optimizations
+
+#### 3. **Production Deployment** 
+- **Components**: Containerized Neo4j + LanceDB + LLM microservices ready
+- **Scaling**: Test with larger datasets (>100K proteins)
+- **Monitoring**: Add comprehensive logging and performance metrics

@@ -192,8 +192,8 @@ class Neo4jBulkLoader:
         cmd = [
             str(self.neo4j_admin), 
             "database", "import", "full",
-            "--database", self.database_name,
-            "--overwrite-destination"
+            "--overwrite-destination",
+            self.database_name  # Database name is a positional argument
         ]
         
         # Add node files with labels
