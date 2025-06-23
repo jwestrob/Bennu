@@ -14,22 +14,24 @@ This platform represents a paradigm shift in computational genomics, combining t
 ### ✨ Key Capabilities
 
 - **🔬 Comprehensive Genome Analysis**: Quality assessment, taxonomic classification, gene prediction, and functional annotation
-- **🧠 Intelligent Question Answering**: LLM-powered system with biological expertise for complex genomic queries
-- **📊 Knowledge Graph Integration**: Comprehensive RDF triples linking genomes, proteins, domains, and functions
-- **🔍 Semantic Protein Search**: 320-dimensional ESM2 embeddings with sub-millisecond similarity queries
+- **🧠 Multi-Stage Query Processing**: Intelligent keyword→similarity expansion for complex functional searches  
+- **📊 Knowledge Graph Integration**: 276,856 RDF triples linking genomes, proteins, domains, and functions
+- **🔍 Dual-Database Architecture**: Neo4j structured queries + LanceDB semantic search with intelligent routing
+- **🤖 Advanced Biological Intelligence**: Authoritative PFAM/KEGG annotations with ESM2 similarity scoring
 - **🏗️ Production Architecture**: Containerized microservices with Nextflow orchestration
-- **⚡ High Performance**: Apple Silicon optimized with MPS acceleration
+- **⚡ High Performance**: Apple Silicon M4 Max optimized with sub-millisecond similarity queries
 
 ## 📈 Performance Highlights
 
 | Metric | Achievement |
 |--------|-------------|
-| **Pipeline Throughput** | Multiple genomes processed in minutes |
-| **Knowledge Graph Scale** | Hundreds of thousands of RDF triples, rich biological relationships |
+| **Pipeline Throughput** | 4 genomes with 10K+ proteins processed in minutes |
+| **Knowledge Graph Scale** | 276,856 RDF triples with rich biological relationships |
+| **Multi-Stage Queries** | "Find proteins similar to heme transporters" → 200 annotations + 5 similarity results |
 | **ESM2 Processing** | ~85 proteins/second with Apple Silicon MPS acceleration |
 | **Vector Search** | Sub-millisecond similarity queries with metadata filtering |
-| **Functional Enrichment** | Comprehensive PFAM + KEGG authoritative annotations |
-| **Test Coverage** | Zero-maintenance test discovery across all modules |
+| **Functional Enrichment** | 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions |
+| **Test Coverage** | Zero-maintenance test discovery with multi-stage query validation |
 
 ## 🏗️ Architecture
 

@@ -173,8 +173,14 @@ data/
 - **Production Ready**: Comprehensive testing suite validates all outputs
 
 ### Biological Intelligence Quality
-**Before Functional Enrichment**: Generic responses like "likely involved in metabolic pathways"
-**After Functional Enrichment**: Specific insights like "putative heme transporter involved in oxygen transport and cytochrome electron transfer pathways"
+**Before Enhancement**: Generic responses like "likely involved in metabolic pathways"
+**After Multi-Stage Integration**: Sophisticated analysis like "shows distant similarity to known heme-transport systems (ESM-2 0.373), requires additional evidence for definitive annotation"
+
+### Multi-Stage Query Performance
+- **Complex Functional Searches**: "Find proteins similar to heme transporters" processes 200 Neo4j annotations + 5 LanceDB similarity results
+- **Automatic Seed Selection**: Uses top 3 annotated proteins as similarity seeds with deduplication
+- **Biological Context Integration**: Combines annotation-based + sequence similarity-based evidence
+- **Query Classification**: Intelligent routing between semantic/structural/hybrid approaches based on query type
 
 ## Dependencies
 
@@ -267,26 +273,29 @@ data/
 evolutionary significance across various organisms."
 ```
 
-**After Enhancement**:
+**After Multi-Stage Enhancement**:
 ```
-"Protein PLM0_60_b1_sep16_scaffold_10001_curated_6 is identified as a 
-putative heme transporter (KEGG K20469), which plays a vital role in 
-heme transport and metabolism. Heme is critical for oxygen transport 
-in hemoglobin and electron transfer in cytochromes. The protein's 
-genomic context suggests involvement in aerobic respiration pathways."
+"Among the sequences supplied, only OD1_41_01_41_220_01_scaffold_7 
+(6208–9111 bp, – strand) shows even distant similarity to known heme-transport 
+systems, based on its positional similarity score (ESM-2 0.373) to 
+Acidovorax_64_scaffold_14_362, a protein from Burkholderiales where heme 
+utilization systems are common. The protein should be flagged as a 'putative 
+heme-transport related protein' pending additional evidence."
 ```
 
 ### Current System Capabilities:
-- **Query Processing**: Neo4j structured queries + LanceDB semantic search + DSPy intelligent integration
-- **Biological Knowledge**: Authoritative PFAM/KEGG annotations replace hardcoded domain knowledge  
-- **Performance**: Apple Silicon M4 Max optimized pipeline with MPS acceleration
-- **Testing**: Comprehensive test suite with zero-maintenance discovery (6 functional enrichment tests, all passing)
-- **Production Ready**: Containerized microservices with Nextflow orchestration
+- **Multi-Stage Query Processing**: Keyword→similarity expansion for comprehensive functional searches
+- **Dual-Database Integration**: Neo4j structured queries + LanceDB semantic search with intelligent routing
+- **Biological Knowledge**: 1,145 PFAM families + 813 KEGG orthologs with authoritative annotations
+- **Advanced Context**: ESM2 similarity scoring, genomic neighborhoods, functional relationships
+- **Production Performance**: Apple Silicon M4 Max optimized with sub-millisecond similarity queries
+- **Comprehensive Testing**: Zero-maintenance test discovery with multi-stage query validation
 
 ### Advanced Features Now Available:
-- **Semantic Protein Search**: `lancedb` vector similarity with metadata filtering
-- **Knowledge Graph Queries**: Complex Cypher queries across genomic data
-- **LLM Integration**: Natural language questions with biological context
+- **Multi-Stage Semantic Search**: Stage 1 (Neo4j annotations) → Stage 2 (LanceDB similarity expansion)
+- **Intelligent Query Classification**: Automatic routing between semantic/structural/hybrid approaches
+- **Enhanced Context Formatting**: Similarity score interpretation, biological significance analysis
+- **Complex Functional Queries**: "Find proteins similar to heme transporters" → 200 annotations + 5 similar proteins
 - **Functional Enrichment**: Real-time integration of reference database annotations
 - **Apple Silicon Optimization**: ~85 proteins/second ESM2 processing
 
