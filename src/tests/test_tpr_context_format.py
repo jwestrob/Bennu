@@ -3,6 +3,7 @@
 Test TPR context formatting to see why count isn't showing.
 """
 
+import pytest
 import asyncio
 import os
 import sys
@@ -18,6 +19,7 @@ from src.llm.rag_system import GenomicRAG
 
 console = Console()
 
+@pytest.mark.asyncio
 async def test_tpr_context_format():
     """Test TPR context formatting."""
     
@@ -26,7 +28,7 @@ async def test_tpr_context_format():
     
     if not os.getenv('OPENAI_API_KEY'):
         console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
-        return False
+        pytest.skip("No OPENAI_API_KEY found")
     
     try:
         # Initialize system

@@ -3,6 +3,7 @@
 Test ESM2 embedding similarity search functionality.
 """
 
+import pytest
 import numpy as np
 import lancedb
 import h5py
@@ -10,6 +11,24 @@ import json
 from pathlib import Path
 import time
 from typing import List, Tuple
+
+
+@pytest.fixture
+def embedding_dir():
+    """Fixture to provide embedding directory path."""
+    # Try common locations in order of preference
+    test_dirs = [
+        Path("data/stage06_esm2"),
+        Path("data/test_esm2_mps_output"),
+        Path("data/test_esm2_output"),
+        Path("data/test_esm2_lancedb_output")
+    ]
+    
+    for test_dir in test_dirs:
+        if test_dir.exists() and (test_dir / "protein_embeddings.h5").exists():
+            return test_dir
+    
+    pytest.skip("No valid embedding directory found - run ESM2 embeddings first")
 
 
 def test_similarity_search(embedding_dir: Path):

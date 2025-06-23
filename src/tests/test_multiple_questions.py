@@ -26,6 +26,7 @@ TEST_QUESTIONS = [
     "How many proteins are in each genome?",
 ]
 
+@pytest.mark.asyncio
 async def test_multiple_questions():
     """Test multiple questions with the enhanced system."""
     
@@ -34,7 +35,7 @@ async def test_multiple_questions():
     
     if not os.getenv('OPENAI_API_KEY'):
         console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
-        return False
+        pytest.skip("No OPENAI_API_KEY found")
     
     try:
         # Initialize system
@@ -86,13 +87,13 @@ async def test_multiple_questions():
         
         rag.close()
         console.print("[green]🎉 Testing completed![/green]")
-        return True
+        assert True  # Test completed successfully
         
     except Exception as e:
         console.print(f"[red]❌ System test failed: {e}[/red]")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"System test failed: {e}"
 
 if __name__ == "__main__":
     success = asyncio.run(test_multiple_questions())

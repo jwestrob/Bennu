@@ -3,6 +3,7 @@
 Test the LLM integration system with basic questions.
 """
 
+import pytest
 import asyncio
 import os
 import sys
@@ -18,6 +19,7 @@ from src.llm.rag_system import GenomicRAG
 console = Console()
 
 
+@pytest.mark.asyncio
 async def test_llm_integration():
     """Test the LLM integration with simple questions."""
     

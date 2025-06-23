@@ -31,9 +31,9 @@ class TestGenomeKGBuilder:
         
         # Check namespace bindings
         namespaces = dict(builder.graph.namespaces())
-        assert namespaces['kg'] == KG
-        assert namespaces['genome'] == GENOME
-        assert namespaces['protein'] == PROTEIN
+        assert str(namespaces['kg']) == str(KG)
+        assert str(namespaces['genome']) == str(GENOME)
+        assert str(namespaces['protein']) == str(PROTEIN)
         
         # Check ontology definitions are added
         assert (KG.Genome, RDF.type, RDFS.Class) in builder.graph
@@ -91,18 +91,16 @@ class TestGenomeKGBuilder:
         gene_data = [
             {
                 'gene_id': 'gene_001',
-                'contig': 'contig_1',
                 'start': 100,
                 'end': 500,
-                'strand': '+',
+                'strand': 1,
                 'protein_sequence': 'MKTLPQVKRS'
             },
             {
                 'gene_id': 'gene_002',
-                'contig': 'contig_1',
                 'start': 600,
                 'end': 900,
-                'strand': '-'
+                'strand': -1
             }
         ]
         
@@ -118,8 +116,8 @@ class TestGenomeKGBuilder:
         assert (gene_uri_1, RDF.type, KG.Gene) in builder.graph
         assert (gene_uri_1, KG.belongsToGenome, genome_uri) in builder.graph
         assert (gene_uri_1, KG.geneId, Literal('gene_001')) in builder.graph
-        assert (gene_uri_1, KG.hasLocation, Literal('contig_1:100-500')) in builder.graph
-        assert (gene_uri_1, KG.strand, Literal('+')) in builder.graph
+        assert (gene_uri_1, KG.hasLocation, Literal(':100-500')) in builder.graph
+        assert (gene_uri_1, KG.strand, Literal(1)) in builder.graph
         
         # Check protein triples
         protein_uri_1 = PROTEIN['gene_001']

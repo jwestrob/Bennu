@@ -3,6 +3,7 @@
 Test script for genomic RAG system with realistic bacterial genome questions.
 """
 
+import pytest
 import asyncio
 import os
 import sys
@@ -45,6 +46,7 @@ TEST_QUESTIONS = [
     "What are the most common protein domain families in these genomes?",
 ]
 
+@pytest.mark.asyncio
 async def test_genomic_rag():
     """Test the genomic RAG system with various bacterial genome questions."""
     
@@ -54,7 +56,7 @@ async def test_genomic_rag():
     # Check API key
     if not os.getenv('OPENAI_API_KEY'):
         console.print("[red]❌ No OPENAI_API_KEY found. Please set it to test.[/red]")
-        return False
+        pytest.skip("No OPENAI_API_KEY found")
     
     try:
         # Initialize system
@@ -70,7 +72,7 @@ async def test_genomic_rag():
         
         if not all(health.values()):
             console.print("[red]⚠️  System not healthy. Check configuration.[/red]")
-            return False
+            pytest.skip("System not healthy. Check configuration.")
         
         console.print(f"[green]✅ System ready! Testing with {config.llm_model}[/green]\n")
         
@@ -108,13 +110,13 @@ async def test_genomic_rag():
         
         rag.close()
         console.print("[green]🎉 Testing completed![/green]")
-        return True
+        assert True  # Test completed successfully
         
     except Exception as e:
         console.print(f"[red]❌ System test failed: {e}[/red]")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"System test failed: {e}"
 
 if __name__ == "__main__":
     success = asyncio.run(test_genomic_rag())

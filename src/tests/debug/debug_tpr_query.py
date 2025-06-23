@@ -25,7 +25,7 @@ async def debug_tpr_query():
     
     if not os.getenv('OPENAI_API_KEY'):
         console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
-        return False
+        return
     
     try:
         # Initialize system

@@ -3,6 +3,7 @@
 Test the GGDEF query fix.
 """
 
+import pytest
 import asyncio
 import os
 import sys
@@ -17,6 +18,7 @@ from src.llm.rag_system import GenomicRAG
 
 console = Console()
 
+@pytest.mark.asyncio
 async def test_ggdef_fix():
     """Test if the GGDEF query fix works."""
     
@@ -25,7 +27,7 @@ async def test_ggdef_fix():
     
     if not os.getenv('OPENAI_API_KEY'):
         console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
-        return False
+        pytest.skip("No OPENAI_API_KEY found")
     
     try:
         # Initialize system
@@ -57,13 +59,13 @@ async def test_ggdef_fix():
         
         rag.close()
         
-        return True
+        assert True  # Test completed successfully
         
     except Exception as e:
         console.print(f"[red]❌ Test failed: {e}[/red]")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"Test failed: {e}"
 
 if __name__ == "__main__":
     success = asyncio.run(test_ggdef_fix())

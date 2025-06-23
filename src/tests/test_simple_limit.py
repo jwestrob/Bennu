@@ -3,6 +3,7 @@
 Test if the 100-limit applies to all queries.
 """
 
+import pytest
 import asyncio
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ from src.llm.rag_system import GenomicRAG
 
 console = Console()
 
+@pytest.mark.asyncio
 async def test_simple_queries():
     """Test simple queries to see if 100-limit is universal."""
     

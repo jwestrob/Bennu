@@ -53,6 +53,7 @@ dependencies:
   # Moved from pip to conda for better dependency resolution
   - pytest-cov
   - pytest-xdist
+  - pytest-asyncio
   - platformdirs
   - flake8
   - black

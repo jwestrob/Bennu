@@ -11,7 +11,17 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pandas as pd
 
-from src.ingest.04_astra_scan import run_astra_scan, run_single_astra_scan
+import importlib
+# Import module with numeric prefix using importlib
+astra_module = importlib.import_module('src.ingest.04_astra_scan')
+run_astra_scan = astra_module.run_astra_scan
+run_single_astra_scan = astra_module.run_single_astra_scan
+
+
+@pytest.fixture
+def temp_dir(tmp_path):
+    """Provide a temporary directory for test files."""
+    return tmp_path
 
 
 @pytest.fixture
@@ -108,7 +118,7 @@ def test_run_single_astra_scan_success(temp_dir, mock_astra_results):
         assert result["total_hits"] == 3
         assert result["unique_proteins"] == 2
         assert result["unique_domains"] == 3
-        assert result["execution_time_seconds"] > 0
+        assert result["execution_time_seconds"] >= 0  # Allow zero for mocked execution
         
         # Verify astra command was called correctly
         mock_run.assert_called_once()
@@ -229,19 +239,24 @@ def test_run_astra_scan_full_workflow(mock_prodigal_output, temp_dir, mock_astra
 
 
 @pytest.mark.unit
-def test_astra_command_building():
+def test_astra_command_building(temp_dir):
     """Test that astra commands are built correctly."""
-    from src.ingest.04_astra_scan import run_single_astra_scan
+    # Already imported at module level
+    
+    test_input = temp_dir / "test_input"
+    test_output = temp_dir / "test_output"
+    test_input.mkdir()
+    test_output.mkdir()
     
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stderr="test", stdout="")
         
         # Test PFAM with cutoffs
-        run_single_astra_scan("PFAM", Path("/test"), Path("/output"), 4, True)
+        run_single_astra_scan("PFAM", test_input, test_output, 4, True)
         called_args = mock_run.call_args[0][0]
         assert "--cut_ga" in called_args
         
         # Test database without cutoffs
-        run_single_astra_scan("CUSTOM_DB", Path("/test"), Path("/output"), 4, True)
+        run_single_astra_scan("CUSTOM_DB", test_input, test_output, 4, True)
         called_args = mock_run.call_args[0][0] 
         assert "--cut_ga" not in called_args

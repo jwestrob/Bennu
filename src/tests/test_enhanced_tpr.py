@@ -3,6 +3,7 @@
 Test the enhanced TPR domain query processor.
 """
 
+import pytest
 import asyncio
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ from src.llm.rag_system import GenomicRAG
 
 console = Console()
 
+@pytest.mark.asyncio
 async def test_enhanced_tpr():
     """Test enhanced TPR domain processing."""
     
