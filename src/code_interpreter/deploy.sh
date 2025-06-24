@@ -43,12 +43,17 @@ check_dependencies() {
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null; then
+    # Check for Docker Compose (both V1 and V2)
+    if command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    elif docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    else
         print_error "Docker Compose is not installed"
         exit 1
     fi
     
-    print_success "Dependencies satisfied"
+    print_success "Dependencies satisfied (using $DOCKER_COMPOSE_CMD)"
 }
 
 check_gvisor() {
@@ -69,14 +74,14 @@ build_image() {
 
 deploy_standard() {
     echo "Deploying with standard Docker security..."
-    docker-compose up -d $SERVICE_NAME
+    $DOCKER_COMPOSE_CMD up -d $SERVICE_NAME
     print_success "Service deployed on port $PORT"
     print_warning "Running with standard Docker security (not maximum security)"
 }
 
 deploy_gvisor() {
     echo "Deploying with gVisor maximum security..."
-    docker-compose --profile gvisor up -d $GVISOR_SERVICE_NAME
+    $DOCKER_COMPOSE_CMD --profile gvisor up -d $GVISOR_SERVICE_NAME
     print_success "Service deployed with gVisor on port $PORT"
     print_success "Maximum security configuration active"
 }
@@ -103,17 +108,17 @@ check_health() {
 
 show_status() {
     echo -e "\n${BLUE}Service Status:${NC}"
-    docker-compose ps
+    $DOCKER_COMPOSE_CMD ps
     
     echo -e "\n${BLUE}Service Logs (last 20 lines):${NC}"
-    docker-compose logs --tail=20 $SERVICE_NAME 2>/dev/null || \
-    docker-compose logs --tail=20 $GVISOR_SERVICE_NAME 2>/dev/null || \
+    $DOCKER_COMPOSE_CMD logs --tail=20 $SERVICE_NAME 2>/dev/null || \
+    $DOCKER_COMPOSE_CMD logs --tail=20 $GVISOR_SERVICE_NAME 2>/dev/null || \
     echo "No logs available"
 }
 
 stop_services() {
     echo "Stopping code interpreter services..."
-    docker-compose down
+    $DOCKER_COMPOSE_CMD down
     print_success "Services stopped"
 }
 
@@ -195,8 +200,8 @@ main() {
             check_health
             ;;
         "logs")
-            docker-compose logs -f $SERVICE_NAME 2>/dev/null || \
-            docker-compose logs -f $GVISOR_SERVICE_NAME 2>/dev/null
+            $DOCKER_COMPOSE_CMD logs -f $SERVICE_NAME 2>/dev/null || \
+            $DOCKER_COMPOSE_CMD logs -f $GVISOR_SERVICE_NAME 2>/dev/null
             ;;
         "test")
             run_test
