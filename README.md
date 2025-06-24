@@ -14,12 +14,13 @@ This platform represents a paradigm shift in computational genomics, combining t
 ### ✨ Key Capabilities
 
 - **🔬 Comprehensive Genome Analysis**: Quality assessment, taxonomic classification, gene prediction, and functional annotation
-- **🧠 Multi-Stage Query Processing**: Intelligent keyword→similarity expansion for complex functional searches  
+- **🧠 Agentic Multi-Stage Query Processing**: Intelligent routing between traditional and multi-step execution with external tool integration
 - **📊 Knowledge Graph Integration**: 276,856 RDF triples linking genomes, proteins, domains, and functions
-- **🔍 Dual-Database Architecture**: Neo4j structured queries + LanceDB semantic search with intelligent routing
-- **🤖 Advanced Biological Intelligence**: Authoritative PFAM/KEGG annotations with ESM2 similarity scoring
+- **🔍 Dual-Database Architecture**: Neo4j structured queries + LanceDB semantic search with cosine similarity
+- **🤖 Advanced Biological Intelligence**: Professional genomic analysis with proper PFAM/KEGG citations and operon prediction
 - **🏗️ Production Architecture**: Containerized microservices with Nextflow orchestration
 - **⚡ High Performance**: Apple Silicon M4 Max optimized with sub-millisecond similarity queries
+- **📚 Literature Integration**: PubMed search with PFAM-aware query enhancement for comprehensive biological context
 
 ## 📈 Performance Highlights
 
@@ -27,7 +28,7 @@ This platform represents a paradigm shift in computational genomics, combining t
 |--------|-------------|
 | **Pipeline Throughput** | 4 genomes with 10K+ proteins processed in minutes |
 | **Knowledge Graph Scale** | 276,856 RDF triples with rich biological relationships |
-| **Multi-Stage Queries** | "Find proteins similar to heme transporters" → 200 annotations + 5 similarity results |
+| **Multi-Stage Queries** | "Find proteins similar to heme transporters" → Stage 1: Neo4j annotations → Stage 2: LanceDB similarity |
 | **ESM2 Processing** | ~85 proteins/second with Apple Silicon MPS acceleration |
 | **Vector Search** | Sub-millisecond similarity queries with metadata filtering |
 | **Functional Enrichment** | 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions |
@@ -194,6 +195,32 @@ table = db.open_table("protein_embeddings")
 
 # Query by embedding similarity
 results = table.search(query_vector).limit(10).to_pandas()
+```
+
+### Enhanced Query Examples
+
+The platform supports sophisticated biological queries with intelligent multi-stage processing:
+
+```bash
+# Multi-stage functional similarity
+python -m src.cli ask "Find proteins similar to heme transporters"
+# Stage 1: Neo4j finds annotated heme transporters  
+# Stage 2: LanceDB similarity search using those as seeds
+# Result: Professional analysis with PFAM/KEGG citations
+
+# Literature integration (when triggered)
+python -m src.cli ask "What does recent literature say about CRISPR proteins?"
+# Extracts PFAM domains → Enhanced PubMed queries → Integrated analysis
+
+# Complex genomic analysis 
+python -m src.cli ask "Analyze the genomic neighborhood of scaffold_4_463"
+# Returns: coordinates, operon prediction, functional context
+
+# Professional output example:
+# "PF13407 periplasmic-binding + PF01032 permease domains exactly match 
+#  bacterial heme ABC transporter architecture (KEGG K07224/K02014). 
+#  Gene index difference = 1; estimated ≤50 bp separation ⇒ likely 
+#  co-transcribed operon core."
 ```
 
 ### Knowledge Graph Queries
