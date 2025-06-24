@@ -5,10 +5,12 @@ Combines structured queries (Neo4j) with semantic search (LanceDB).
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 import asyncio
 import json
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
+from enum import Enum
 
 import dspy
 from rich.console import Console
@@ -19,6 +21,273 @@ from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQ
 console = Console()
 logger = logging.getLogger(__name__)
 
+# ===== AGENTIC CAPABILITIES: TASK GRAPH SYSTEM =====
+
+class TaskStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"  # For tasks whose dependencies have failed
+
+class TaskType(Enum):
+    ATOMIC_QUERY = "atomic_query"  # Query against Neo4j or LanceDB
+    TOOL_CALL = "tool_call"        # A call to an external tool
+    AGGREGATE = "aggregate"        # A task to synthesize results
+
+@dataclass
+class Task:
+    task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    task_type: TaskType = TaskType.ATOMIC_QUERY
+    query: Optional[str] = None
+    dependencies: Set[str] = field(default_factory=set)
+    status: TaskStatus = TaskStatus.PENDING
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    
+    # New fields for agentic capabilities
+    retry_count: int = 0
+    tool_name: Optional[str] = None
+    tool_args: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+class TaskGraph:
+    def __init__(self):
+        self.tasks: Dict[str, Task] = {}
+        
+    def add_task(self, task: Task) -> str:
+        """Add a task to the graph and return its ID."""
+        self.tasks[task.task_id] = task
+        return task.task_id
+    
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Get a task by ID."""
+        return self.tasks.get(task_id)
+    
+    def get_ready_tasks(self) -> List[Task]:
+        """Get all tasks that are ready to execute (dependencies satisfied)."""
+        ready = []
+        for task in self.tasks.values():
+            if task.status == TaskStatus.PENDING:
+                deps_satisfied = all(
+                    self.tasks.get(dep_id, Task(status=TaskStatus.FAILED)).status == TaskStatus.COMPLETED
+                    for dep_id in task.dependencies
+                )
+                if deps_satisfied:
+                    ready.append(task)
+        return ready
+    
+    def mark_task_status(self, task_id: str, status: TaskStatus, result: Optional[Any] = None, error: Optional[str] = None):
+        """Update task status and optionally set result or error."""
+        if task_id in self.tasks:
+            task = self.tasks[task_id]
+            task.status = status
+            if result is not None:
+                task.result = result
+            if error is not None:
+                task.error = error
+    
+    def get_failed_dependencies(self, task_id: str) -> List[str]:
+        """Get list of failed dependency task IDs for a given task."""
+        task = self.tasks.get(task_id)
+        if not task:
+            return []
+        
+        failed_deps = []
+        for dep_id in task.dependencies:
+            dep_task = self.tasks.get(dep_id)
+            if dep_task and dep_task.status == TaskStatus.FAILED:
+                failed_deps.append(dep_id)
+        return failed_deps
+    
+    def mark_skipped_tasks(self):
+        """Mark tasks as skipped if their dependencies have failed."""
+        for task in self.tasks.values():
+            if task.status == TaskStatus.PENDING and self.get_failed_dependencies(task.task_id):
+                task.status = TaskStatus.SKIPPED
+    
+    def is_complete(self) -> bool:
+        """Check if all tasks have completed (successfully, failed, or skipped)."""
+        return all(
+            task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SKIPPED]
+            for task in self.tasks.values()
+        )
+    
+    def get_summary(self) -> Dict[str, int]:
+        """Get a summary of task statuses."""
+        summary = {status.value: 0 for status in TaskStatus}
+        for task in self.tasks.values():
+            summary[task.status.value] += 1
+        return summary
+
+# ===== AGENTIC CAPABILITIES: TOOL SUITE =====
+
+# Try to import Bio.Entrez at module level for easier testing
+try:
+    from Bio import Entrez
+    ENTREZ_AVAILABLE = True
+except ImportError:
+    ENTREZ_AVAILABLE = False
+    Entrez = None
+
+def literature_search(query: str, email: str, **kwargs) -> str:
+    """
+    Searches PubMed for biomedical literature using the Entrez API.
+    
+    Args:
+        query: Search query for PubMed
+        email: Email address for Entrez API (required by NCBI)
+        **kwargs: Additional parameters (ignored for compatibility)
+        
+    Returns:
+        Formatted string containing search results with abstracts and PMIDs
+    """
+    if not query:
+        return "Error: Empty query provided"
+    
+    if not email:
+        return "Error: Email address is required for PubMed API access"
+    
+    if not ENTREZ_AVAILABLE:
+        return "Error: Biopython not available for PubMed search"
+    
+    try:
+        # Configure Entrez with email
+        Entrez.email = email
+        
+        # Search PubMed
+        logger.info(f"Executing literature search for: {query}")
+        search_handle = Entrez.esearch(db="pubmed", term=query, retmax=10)
+        search_results = Entrez.read(search_handle)
+        search_handle.close()
+        
+        # Get list of PMIDs
+        pmids = search_results.get('IdList', [])
+        
+        if not pmids:
+            return f"No recent literature found for enhanced query: '{query}' (searched 2020-2024 publications)"
+        
+        # Fetch detailed information for the articles
+        fetch_handle = Entrez.efetch(db="pubmed", id=pmids, rettype="medline", retmode="xml")
+        fetch_results = Entrez.read(fetch_handle)
+        fetch_handle.close()
+        
+        # Format results
+        formatted_results = []
+        formatted_results.append(f"Literature search results for: '{query}'")
+        formatted_results.append(f"Found {len(pmids)} articles:")
+        formatted_results.append("")
+        
+        for i, article in enumerate(fetch_results.get('PubmedArticle', []), 1):
+            try:
+                citation = article['MedlineCitation']
+                
+                # Handle PMID - can be dict or StringElement
+                pmid_obj = citation.get('PMID', {})
+                if hasattr(pmid_obj, 'get'):
+                    pmid = pmid_obj.get('content', str(pmid_obj))
+                else:
+                    pmid = str(pmid_obj)
+                
+                article_info = citation.get('Article', {})
+                
+                # Handle title - can be string or StringElement
+                title_obj = article_info.get('ArticleTitle', 'No title available')
+                title = str(title_obj)
+                
+                # Extract abstract - handle StringElement objects
+                abstract_info = article_info.get('Abstract', {})
+                abstract_texts = abstract_info.get('AbstractText', [])
+                if abstract_texts:
+                    if isinstance(abstract_texts, list):
+                        abstract = ' '.join(str(text) for text in abstract_texts)
+                    else:
+                        abstract = str(abstract_texts)
+                else:
+                    abstract = "No abstract available"
+                
+                # Format entry
+                formatted_results.append(f"{i}. PMID: {pmid}")
+                formatted_results.append(f"   Title: {title}")
+                formatted_results.append(f"   Abstract: {abstract[:500]}{'...' if len(abstract) > 500 else ''}")
+                formatted_results.append("")
+                
+            except Exception as e:
+                logger.warning(f"Error processing article {i}: {e}")
+                formatted_results.append(f"{i}. Error processing article")
+                formatted_results.append("")
+        
+        return '\n'.join(formatted_results)
+    except Exception as e:
+        logger.error(f"Literature search failed: {e}")
+        return f"Error: Literature search failed - {str(e)}"
+
+# Tool manifest for the agent
+AVAILABLE_TOOLS = {
+    "literature_search": literature_search,
+}
+
+# ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
+
+class PlannerAgent(dspy.Signature):
+    """
+    Advanced genomic research planner with agentic task decomposition.
+    
+    DECISION LOGIC:
+    - requires_planning = false: Simple queries answerable with local data only (count, list, find specific items)
+    - requires_planning = true: Complex queries needing external tools or multi-step analysis
+    
+    WHEN TO USE AGENTIC PLANNING (requires_planning = true):
+    - Literature search needed: "What does recent research say about X?"
+    - Cross-reference analysis: "Compare our data with published studies"
+    - Multi-step workflows: "Find X, then search literature about Y, then combine"
+    
+    WHEN TO USE TRADITIONAL MODE (requires_planning = false):
+    - Simple counts: "How many proteins?"
+    - Direct lookups: "Find proteins with domain X"
+    - Similarity searches: "Find proteins similar to Y"
+    - Database statistics: "What genomes do we have?"
+    
+    AVAILABLE TOOLS:
+    - literature_search: Search PubMed for scientific literature and papers
+    
+    TASK TYPES:
+    - atomic_query: Query the local knowledge graph for known facts
+    - tool_call: Execute external tools for additional information
+    - aggregate: Combine and synthesize results from multiple tasks
+    
+    CRITICAL: If requires_planning is true, you MUST provide a valid JSON task plan.
+    If requires_planning is false, set task_plan to "N/A".
+    
+    EXAMPLE TASK PLAN JSON:
+    {
+        "tasks": [
+            {
+                "id": "search_literature",
+                "type": "tool_call",
+                "tool_name": "literature_search",
+                "tool_args": {"query": "CRISPR proteins", "email": "researcher@example.com"},
+                "dependencies": []
+            },
+            {
+                "id": "query_local_db", 
+                "type": "atomic_query",
+                "query": "MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'heme transport' MATCH (p:Protein)-[:HASFUNCTION]->(ko) MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WITH p, g, ko, dom, split(g.id, '_scaffold_')[0] + '_scaffold_' + split(split(g.id, '_scaffold_')[1], '_')[0] as scaffold_id OPTIONAL MATCH (g2:Gene) WHERE g2.id STARTS WITH scaffold_id AND abs(toInteger(g.startCoordinate) - toInteger(g2.startCoordinate)) < 5000 AND g.id <> g2.id OPTIONAL MATCH (g2)<-[:ENCODEDBY]-(p2:Protein) OPTIONAL MATCH (p2)-[:HASFUNCTION]->(ko2:KEGGOrtholog) RETURN p.id as protein_id, g.startCoordinate as gene_start, g.endCoordinate as gene_end, g.strand as gene_strand, ko.description as function_desc, collect(dom.pfamAccession) as pfam_accessions, collect(DISTINCT {neighbor_id: p2.id, neighbor_start: g2.startCoordinate, neighbor_strand: g2.strand, neighbor_function: ko2.description}) as neighbors",
+                "dependencies": []
+            },
+            {
+                "id": "synthesize",
+                "type": "aggregate",
+                "dependencies": ["search_literature", "query_local_db"]
+            }
+        ]
+    }
+    """
+    
+    user_query = dspy.InputField(desc="User query about genomic data")
+    requires_planning = dspy.OutputField(desc="Boolean: true if query needs multi-step agentic planning with external tools, false for simple direct queries using local data only")
+    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'.")
+    reasoning = dspy.OutputField(desc="Explanation of why planning is or isn't needed and the chosen strategy")
 
 @dataclass
 class GenomicContext:
@@ -68,62 +337,68 @@ class QueryClassifier(dspy.Signature):
 class ContextRetriever(dspy.Signature):
     """Generate database queries to retrieve relevant genomic context.
     
-    SCHEMA KNOWLEDGE:
-    - KEGGOrtholog nodes: Use .description property for detailed function descriptions, .id for KO IDs
-    - Domain nodes: Use .description property for authoritative PFAM descriptions, .pfamAccession for accessions, .id for family names  
-    - DomainAnnotation nodes: Use .id containing "/domain/DOMAIN_NAME/start-end", .bitscore for confidence
-    - Protein nodes: Use .id property with "protein:" prefix, linked DIRECTLY via HASFUNCTION->KEGGOrtholog and HASDOMAIN->DomainAnnotation->DOMAINFAMILY->Domain
-    - Gene nodes: Use .id, .startCoordinate, .endCoordinate, .strand, .lengthAA, .gcContent properties, linked via BELONGSTOGENOME->Genome and (p)-[:ENCODEDBY]->(g:Gene)
-    - Genome nodes: Use .id property, linked to QualityMetrics via HASQUALITYMETRICS relationship
-    - QualityMetrics nodes: Use QUAST properties: quast_contigs, quast_total_length, quast_largest_contig, quast_n50, quast_n75, quast_gc_content, quast_n_count, quast_n_per_100_kbp, quast_contigs_1000bp, quast_contigs_5000bp, quast_contigs_10000bp, quast_l50, quast_l75
+    MANDATORY QUERY TEMPLATES - CHOOSE ONE AND ADAPT:
     
-    CRITICAL: 
-    - Protein IDs must include "protein:" prefix. 
-    - Gene-Protein relationship is (p:Protein)-[:ENCODEDBY]->(g:Gene) NOT (p)<-[:ENCODEDBY]-(g).
-    - KEGG relationship is DIRECT: (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog) - NO intermediate nodes.
+    TEMPLATE A - GENOMIC CONTEXT WITH NEIGHBORS (for heme transport, operons, gene clusters):
+    ```
+    MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS '{search_term}'
+    MATCH (p:Protein)-[:HASFUNCTION]->(ko)
+    MATCH (p)-[:ENCODEDBY]->(g:Gene)
+    OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
+    WITH p, g, ko, dom, split(g.id, '_scaffold_')[0] + '_scaffold_' + split(split(g.id, '_scaffold_')[1], '_')[0] as scaffold_id
+    OPTIONAL MATCH (g2:Gene) 
+    WHERE g2.id STARTS WITH scaffold_id 
+      AND abs(toInteger(g.startCoordinate) - toInteger(g2.startCoordinate)) < 5000 
+      AND g.id <> g2.id
+    OPTIONAL MATCH (g2)<-[:ENCODEDBY]-(p2:Protein)
+    OPTIONAL MATCH (p2)-[:HASFUNCTION]->(ko2:KEGGOrtholog)
+    OPTIONAL MATCH (p2)-[:HASDOMAIN]->(d2:DomainAnnotation)-[:DOMAINFAMILY]->(dom2:Domain)
+    RETURN p.id as protein_id, g.id as gene_id, g.startCoordinate as gene_start, 
+           g.endCoordinate as gene_end, g.strand as gene_strand, g.lengthAA as gene_length_aa,
+           ko.description as function_desc, collect(DISTINCT dom.pfamAccession) as pfam_accessions,
+           collect(DISTINCT {neighbor_id: p2.id, neighbor_gene: g2.id, neighbor_start: g2.startCoordinate, 
+                            neighbor_end: g2.endCoordinate, neighbor_strand: g2.strand, 
+                            neighbor_function: ko2.description, neighbor_domain: dom2.description}) as detailed_neighbors
+    ORDER BY g.startCoordinate
+    ```
     
-    QUERY CONSTRUCTION PRINCIPLES:
-    1. ALWAYS include functional descriptions when available (Domain.description, KEGGOrtholog.description)
-    2. Traverse full relationship chains: DomainAnnotation->DOMAINFAMILY->Domain for rich annotations
-    3. Include PFAM accessions (Domain.pfamAccession) for authoritative references
-    4. Use OPTIONAL MATCH for KEGGOrtholog to include proteins without KEGG annotations
-    5. Prioritize biological insights over technical metrics like bitscores
-    6. FOR DOMAIN FAMILY SEARCHES: Use Domain.id CONTAINS 'DOMAIN_NAME' instead of Domain.description to find all variants (e.g., TPR_1, TPR_2, etc.)
-    7. CRITICAL: NEVER use exists() function - use "variable.property IS NOT NULL" instead
+    TEMPLATE B - SIMPLE PROTEIN SEARCH (for counts, basic info):
+    ```
+    MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS '{search_term}'
+    MATCH (p:Protein)-[:HASFUNCTION]->(ko)
+    OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+    OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
+    RETURN p.id as protein_id, ko.id as ko_id, ko.description as ko_description,
+           g.startCoordinate as start_coordinate, g.endCoordinate as end_coordinate, g.strand,
+           collect(DISTINCT dom.pfamAccession) as pfam_accessions
+    ```
     
-    SEMANTIC SEARCH GUIDANCE:
-    - Use protein_search for: similarity queries, functional descriptions, protein names without specific IDs
-    - Use Neo4j only for: specific gene/protein IDs, coordinate ranges, taxonomic searches, domain family names
-    - Use hybrid approach for: complex questions combining similarity and structural data
+    TEMPLATE C - DOMAIN FAMILY SEARCH:
+    ```
+    MATCH (p:Protein)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) 
+    WHERE dom.id CONTAINS '{domain_name}'
+    MATCH (p)-[:ENCODEDBY]->(g:Gene)
+    OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+    RETURN p.id as protein_id, d.id as domain_annotation_id, dom.description as domain_description,
+           g.startCoordinate as gene_start, g.endCoordinate as gene_end, g.strand as gene_strand
+    ```
     
-    QUERY EXAMPLES BY TYPE:
-    
-    STRUCTURAL QUERIES (Neo4j only):
-    - Domain family search: MATCH (p:Protein)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WHERE dom.id CONTAINS 'TPR' MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN p.id, d.id, d.bitscore, dom.description, dom.pfamAccession, ko.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand, g.lengthAA
-    - Function search: MATCH (ko:KEGGOrtholog) WHERE ko.description CONTAINS 'cyclase' MATCH (p:Protein)-[:HASFUNCTION]->(ko) RETURN ko.id, ko.description, collect(p.id)
-    - Ribosomal protein search: MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'ribosom' AND toLower(ko.description) CONTAINS 'l15' MATCH (p:Protein)-[:HASFUNCTION]->(ko) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) RETURN ko.id, ko.description, p.id, g.startCoordinate, g.endCoordinate LIMIT 20
-    - Genome quality metrics: MATCH (genome:Genome {id: 'GENOME_ID'}) OPTIONAL MATCH (genome)-[:HASQUALITYMETRICS]->(qm:QualityMetrics) OPTIONAL MATCH (g:Gene)-[:BELONGSTOGENOME]->(genome) OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) RETURN genome.id, qm.quast_contigs, qm.quast_total_length, qm.quast_n50, qm.quast_gc_content, qm.quast_largest_contig, qm.quast_l50, count(DISTINCT g) as gene_count, count(DISTINCT p) as protein_count
-    
-    GENOMIC CONTEXT QUERIES (Neo4j + neighbor analysis):
-    - CRITICAL: For context questions, ALWAYS include neighbor analysis on same scaffold/contig only
-    - Include neighbor coordinates and distances for co-transcription analysis
-    - Example: MATCH (dom:Domain) WHERE dom.id CONTAINS 'GGDEF' MATCH (p:Protein)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom) MATCH (p)-[:ENCODEDBY]->(g:Gene) WITH p, dom, g, split(g.id, '_scaffold_')[0] + '_scaffold_' + split(split(g.id, '_scaffold_')[1], '_')[0] as scaffold_id MATCH (g2:Gene) WHERE g2.id STARTS WITH scaffold_id AND abs(toInteger(g.startCoordinate) - toInteger(g2.startCoordinate)) < 5000 AND g.id <> g2.id MATCH (g2)<-[:ENCODEDBY]-(p2:Protein) OPTIONAL MATCH (p2)-[:HASFUNCTION]->(ko2:KEGGOrtholog) OPTIONAL MATCH (p2)-[:HASDOMAIN]->(d2:DomainAnnotation)-[:DOMAINFAMILY]->(dom2:Domain) RETURN p.id, dom.id, dom.description, g.startCoordinate, g.endCoordinate, g.strand, collect(DISTINCT p2.id) as neighbors, collect(DISTINCT ko2.description) as neighbor_functions, collect(DISTINCT dom2.description) as neighbor_domains
-    
-    PATHWAY/FUNCTIONAL QUERIES (Neo4j aggregation):
-    - Pathway analysis: MATCH (ko:KEGGOrtholog)-[:PARTICIPATESIN]->(pathway:Pathway) WHERE pathway.id = 'ko00010' MATCH (p:Protein)-[:HASFUNCTION]->(ko) RETURN pathway.name, pathway.description, ko.id, ko.description, count(p) as protein_count
-    - Metabolic overview: MATCH (ko:KEGGOrtholog)-[:PARTICIPATESIN]->(pathway:Pathway) MATCH (p:Protein)-[:HASFUNCTION]->(ko) WHERE pathway.pathwayType = 'ko' AND pathway.pathwayNumber IN ['00010', '00020', '00030'] RETURN pathway.name, pathway.description, count(DISTINCT ko) as ko_count, count(DISTINCT p) as protein_count
-    
-    CRITICAL FOR GENOMIC CONTEXT: When users ask about "genomic context", "surrounding genes", "neighborhoods", or "what's around gene X", ALWAYS retrieve neighboring genes within 5-10kb using the neighbor analysis pattern above.
-    
-    IMPORTANT: All relationship names are UPPERCASE. Always include descriptions for biological context.
+    CRITICAL RULES:
+    1. ALWAYS use Template A for questions about transport, operons, gene clusters, neighborhoods
+    2. ALWAYS include detailed_neighbors collection for genomic context
+    3. SUBSTITUTE {search_term} or {domain_name} with actual search terms
+    4. Gene coordinates (startCoordinate, endCoordinate, strand) are MANDATORY
+    5. Use toLower() for case-insensitive matching
     """
     
     question = dspy.InputField(desc="User's question")
     query_type = dspy.InputField(desc="Classified query type")
-    neo4j_query = dspy.OutputField(desc="Rich Cypher query traversing full relationship chains: Use DomainAnnotation->DOMAINFAMILY->Domain for descriptions, include OPTIONAL MATCH for KEGGOrtholog, prioritize functional annotations over technical metrics. IMPORTANT: Use only simple alphanumeric characters in alias names (no unicode symbols like ≥)")
+    template_choice = dspy.OutputField(desc="Choose: 'A' for genomic context with neighbors, 'B' for simple protein search, 'C' for domain search")
+    search_terms = dspy.OutputField(desc="Extract key search terms from the question (e.g., 'heme transport', 'GGDEF', 'cyclase')")
+    neo4j_query = dspy.OutputField(desc="Complete Cypher query using the chosen template with search terms substituted. MUST include gene coordinates and detailed_neighbors for Template A")
     protein_search = dspy.OutputField(desc="Protein ID or description for semantic search (if needed)")
-    requires_multi_stage = dspy.OutputField(desc="Boolean: true if this query needs multi-stage processing (keyword search → similarity expansion). Use for functional similarity questions like 'find proteins similar to heme transporters'")
-    seed_proteins_for_similarity = dspy.OutputField(desc="Boolean: true if Neo4j results should be used as seeds for LanceDB similarity search in stage 2")
+    requires_multi_stage = dspy.OutputField(desc="Boolean: true if query asks for 'proteins similar to X' where X is a functional description (like 'heme transporters'). This triggers Stage 1: Neo4j finds proteins with function X, then Stage 2: LanceDB similarity search using those proteins as seeds.")
+    seed_proteins_for_similarity = dspy.OutputField(desc="Boolean: true if requires_multi_stage is true and we need to use Neo4j results as seeds for LanceDB similarity search")
     search_strategy = dspy.OutputField(desc="How to combine the results")
 
 
@@ -133,21 +408,24 @@ class GenomicAnswerer(dspy.Signature):
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data including domain descriptions, KEGG functions, and quantitative metrics")
     answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) Ground all statements in specific data points (coordinates, counts, IDs) and quantify relationships where possible, 2) Prioritize analysis of proximal neighbors vs distal ones except when there is an obvious functional relationship between the protein of interest and the distal neighbor, 3) Calculate and report specific distances between genes, identifying potential co-transcription based on SAME STRAND + proximity (<200bp = likely co-transcribed, 200-500bp same strand = possible operon, different strands = separate regulation), 4) Consider strand orientation and gene order for operon/cluster identification, 5) Use specific protein/domain names from the data, 6) Organize response logically: Genomic Location → Functional Context → Neighborhood Analysis → Biological Significance. FORBIDDEN: Language lacking description or analysis; avoid fluff language.")
-    confidence = dspy.OutputField(desc="Confidence level: high (with authoritative descriptions), medium (partial annotations), or low (limited data)")
-    citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs")
+    confidence = dspy.OutputField(desc="Confidence level with reasoning: 'high - complete genomic context + literature support', 'medium - good genomic data but limited literature', 'low - minimal data available'")
+    citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, PubMed search terms used")
 
 
 class GenomicRAG(dspy.Module):
-    """Main RAG system for genomic question answering."""
+    """Main RAG system for genomic question answering with agentic capabilities."""
     
     def __init__(self, config: LLMConfig):
         super().__init__()
         self.config = config
         
-        # Initialize DSPy components
+        # Initialize original DSPy components
         self.classifier = dspy.ChainOfThought(QueryClassifier)
         self.retriever = dspy.ChainOfThought(ContextRetriever)
         self.answerer = dspy.ChainOfThought(GenomicAnswerer)
+        
+        # Initialize NEW agentic components
+        self.planner = dspy.ChainOfThought(PlannerAgent)
         
         # Initialize query processors
         self.neo4j_processor = Neo4jQueryProcessor(config)
@@ -157,7 +435,7 @@ class GenomicRAG(dspy.Module):
         # Configure DSPy LLM
         self._configure_dspy()
         
-        logger.info("GenomicRAG system initialized")
+        logger.info("GenomicRAG system initialized with agentic capabilities")
     
     def _configure_dspy(self):
         """Configure DSPy with the specified LLM provider."""
@@ -200,7 +478,7 @@ class GenomicRAG(dspy.Module):
     
     async def ask(self, question: str) -> Dict[str, Any]:
         """
-        Main method to answer genomic questions.
+        Main method to answer genomic questions with agentic planning.
         
         Args:
             question: Natural language question about genomic data
@@ -211,48 +489,28 @@ class GenomicRAG(dspy.Module):
         try:
             console.print(f"🧬 [bold blue]Processing question:[/bold blue] {question}")
             
-            # Step 1: Classify the query type
-            classification = self.classifier(question=question)
-            console.print(f"📊 Query type: {classification.query_type}")
-            console.print(f"💭 Reasoning: {classification.reasoning}")
+            # STEP 1: Determine if agentic planning is needed
+            planning_result = self.planner(user_query=question)
+            console.print(f"🤖 Agentic planning: {planning_result.requires_planning}")
+            console.print(f"💭 Planning reasoning: {planning_result.reasoning}")
             
-            # Step 2: Generate retrieval strategy
-            retrieval_plan = self.retriever(
-                question=question,
-                query_type=classification.query_type
-            )
-            console.print(f"🔍 Search strategy: {retrieval_plan.search_strategy}")
+            # Convert string boolean to actual boolean if needed
+            requires_planning = planning_result.requires_planning
+            if isinstance(requires_planning, str):
+                requires_planning = requires_planning.lower() == 'true'
             
-            # Step 3: Execute database queries
-            context = await self._retrieve_context(classification.query_type, retrieval_plan)
-            
-            # Check for retrieval errors
-            if 'retrieval_error' in context.metadata:
-                raise Exception(f"Query execution failed: {context.metadata['retrieval_error']}")
-            
-            # Step 4: Generate answer using context
-            answer_result = self.answerer(
-                question=question,
-                context=self._format_context(context)
-            )
-            
-            # Compile final response
-            response = {
-                "question": question,
-                "answer": answer_result.answer,
-                "confidence": answer_result.confidence,
-                "citations": answer_result.citations,
-                "query_metadata": {
-                    "query_type": classification.query_type,
-                    "search_strategy": retrieval_plan.search_strategy,
-                    "context_items": len(context.structured_data) + len(context.semantic_data),
-                    "retrieval_time": context.query_time
-                }
-            }
-            
-            console.print(f"✅ [green]Answer generated[/green] (confidence: {answer_result.confidence})")
-            return response
-            
+            if requires_planning:
+                # AGENTIC PATH: Multi-step task execution
+                # Check if we actually have a valid task plan
+                task_plan = planning_result.task_plan
+                if task_plan == "N/A" or not task_plan or task_plan.strip() == "":
+                    console.print("⚠️ [yellow]Agentic planning requested but no task plan provided, falling back to traditional mode[/yellow]")
+                    return await self._execute_traditional_query(question)
+                return await self._execute_agentic_plan(question, planning_result)
+            else:
+                # TRADITIONAL PATH: Direct query execution
+                return await self._execute_traditional_query(question)
+                
         except Exception as e:
             logger.error(f"Error processing question: {e}")
             return {
@@ -262,6 +520,371 @@ class GenomicRAG(dspy.Module):
                 "citations": "",
                 "error": str(e)
             }
+    
+    async def _execute_traditional_query(self, question: str) -> Dict[str, Any]:
+        """Execute traditional single-step query (backward compatibility)."""
+        console.print("📋 [dim]Using traditional query path[/dim]")
+        
+        # Step 1: Classify the query type
+        classification = self.classifier(question=question)
+        console.print(f"📊 Query type: {classification.query_type}")
+        console.print(f"💭 Reasoning: {classification.reasoning}")
+        
+        # Step 2: Generate retrieval strategy
+        retrieval_plan = self.retriever(
+            question=question,
+            query_type=classification.query_type
+        )
+        console.print(f"🔍 Search strategy: {retrieval_plan.search_strategy}")
+        
+        # Step 3: Execute database queries
+        # Log template usage for debugging
+        if hasattr(retrieval_plan, 'template_choice'):
+            console.print(f"🔧 Using Template {retrieval_plan.template_choice} for query generation")
+        
+        context = await self._retrieve_context(classification.query_type, retrieval_plan)
+        
+        # Check for retrieval errors
+        if 'retrieval_error' in context.metadata:
+            raise Exception(f"Query execution failed: {context.metadata['retrieval_error']}")
+        
+        # Step 4: Generate answer using context
+        answer_result = self.answerer(
+            question=question,
+            context=self._format_context(context)
+        )
+        
+        # Compile final response
+        response = {
+            "question": question,
+            "answer": answer_result.answer,
+            "confidence": answer_result.confidence,
+            "citations": answer_result.citations,
+            "query_metadata": {
+                "query_type": classification.query_type,
+                "search_strategy": retrieval_plan.search_strategy,
+                "context_items": len(context.structured_data) + len(context.semantic_data),
+                "retrieval_time": context.query_time,
+                "execution_mode": "traditional"
+            }
+        }
+        
+        console.print(f"✅ [green]Answer generated[/green] (confidence: {answer_result.confidence})")
+        return response
+    
+    async def _execute_agentic_plan(self, question: str, planning_result) -> Dict[str, Any]:
+        """Execute multi-step agentic plan with task orchestration."""
+        console.print("🤖 [bold cyan]Using agentic planning path[/bold cyan]")
+        
+        try:
+            # Parse the task plan
+            task_plan_json = planning_result.task_plan
+            if isinstance(task_plan_json, str):
+                if not task_plan_json.strip():
+                    raise ValueError("Empty task plan provided")
+                task_plan = json.loads(task_plan_json)
+            else:
+                task_plan = task_plan_json
+                
+            # Validate task plan structure
+            if not isinstance(task_plan, dict) or 'tasks' not in task_plan:
+                raise ValueError(f"Invalid task plan structure: {task_plan}")
+            
+            if not task_plan.get('tasks'):
+                raise ValueError("Task plan contains no tasks")
+            
+            console.print(f"📋 Executing {len(task_plan.get('tasks', []))} tasks")
+            
+            # Create task graph
+            graph = TaskGraph()
+            
+            # Add tasks to graph
+            for task_def in task_plan.get('tasks', []):
+                # Validate task definition
+                task_type = TaskType(task_def['type'])
+                
+                # For tool_call tasks, ensure tool_name is provided
+                if task_type == TaskType.TOOL_CALL:
+                    tool_name = task_def.get('tool_name')
+                    if not tool_name or tool_name == 'None':
+                        raise ValueError(f"Task {task_def['id']} is type 'tool_call' but missing 'tool_name' field")
+                    if tool_name not in AVAILABLE_TOOLS:
+                        raise ValueError(f"Task {task_def['id']} references unknown tool: {tool_name}")
+                
+                task = Task(
+                    task_id=task_def['id'],
+                    task_type=task_type,
+                    query=task_def.get('query'),
+                    dependencies=set(task_def.get('dependencies', [])),
+                    tool_name=task_def.get('tool_name'),
+                    tool_args=task_def.get('tool_args', {}),
+                    metadata=task_def.get('metadata', {})
+                )
+                graph.add_task(task)
+            
+            # Execute task graph
+            all_results = {}
+            iteration = 0
+            max_iterations = 10  # Prevent infinite loops
+            
+            while not graph.is_complete() and iteration < max_iterations:
+                iteration += 1
+                ready_tasks = graph.get_ready_tasks()
+                
+                if not ready_tasks:
+                    # No ready tasks but graph not complete - check for failures
+                    graph.mark_skipped_tasks()
+                    break
+                
+                console.print(f"🔄 Iteration {iteration}: {len(ready_tasks)} ready tasks")
+                
+                # Execute ready tasks
+                for task in ready_tasks:
+                    console.print(f"▶️  Executing {task.task_type.value}: {task.task_id}")
+                    
+                    try:
+                        graph.mark_task_status(task.task_id, TaskStatus.RUNNING)
+                        result = await self._execute_task(task, all_results)
+                        graph.mark_task_status(task.task_id, TaskStatus.COMPLETED, result=result)
+                        all_results[task.task_id] = result
+                        console.print(f"✅ Task {task.task_id} completed")
+                        
+                    except Exception as e:
+                        logger.error(f"Task {task.task_id} failed: {e}")
+                        graph.mark_task_status(task.task_id, TaskStatus.FAILED, error=str(e))
+            
+            # Generate final answer from all results
+            combined_context = self._combine_task_results(all_results)
+            
+            answer_result = self.answerer(
+                question=question,
+                context=combined_context
+            )
+            
+            # Compile response with agentic metadata
+            summary = graph.get_summary()
+            response = {
+                "question": question,
+                "answer": answer_result.answer,
+                "confidence": answer_result.confidence,
+                "citations": answer_result.citations,
+                "query_metadata": {
+                    "execution_mode": "agentic",
+                    "tasks_completed": summary.get("completed", 0),
+                    "tasks_failed": summary.get("failed", 0),
+                    "tasks_skipped": summary.get("skipped", 0),
+                    "total_iterations": iteration,
+                    "task_plan": task_plan
+                }
+            }
+            
+            console.print(f"✅ [green]Agentic plan completed[/green] ({summary['completed']} tasks, confidence: {answer_result.confidence})")
+            return response
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error in agentic planning: {e}")
+            console.print(f"❌ [red]Invalid task plan JSON, falling back to traditional mode[/red]")
+            return await self._execute_traditional_query(question)
+        except ValueError as e:
+            logger.error(f"Task plan validation error: {e}")
+            console.print(f"❌ [red]Invalid task plan structure, falling back to traditional mode[/red]")
+            return await self._execute_traditional_query(question)
+        except Exception as e:
+            logger.error(f"Error in agentic planning: {e}")
+            console.print(f"❌ [red]Agentic planning failed, falling back to traditional mode[/red]")
+            return await self._execute_traditional_query(question)
+    
+    async def _execute_task(self, task: Task, previous_results: Dict[str, Any]) -> Any:
+        """Execute a single task based on its type."""
+        if task.task_type == TaskType.ATOMIC_QUERY:
+            # Execute database query
+            classification = self.classifier(question=task.query)
+            retrieval_plan = self.retriever(
+                question=task.query,
+                query_type=classification.query_type
+            )
+            context = await self._retrieve_context(classification.query_type, retrieval_plan)
+            
+            if 'retrieval_error' in context.metadata:
+                raise Exception(f"Query execution failed: {context.metadata['retrieval_error']}")
+            
+            return {
+                "context": context,
+                "query_type": classification.query_type,
+                "search_strategy": retrieval_plan.search_strategy
+            }
+            
+        elif task.task_type == TaskType.TOOL_CALL:
+            # Execute external tool
+            tool_function = AVAILABLE_TOOLS.get(task.tool_name)
+            if not tool_function:
+                raise ValueError(f"Unknown tool: {task.tool_name}")
+            
+            # Add default email for literature search if not provided
+            if task.tool_name == "literature_search" and "email" not in task.tool_args:
+                task.tool_args["email"] = "researcher@example.com"  # Default email
+            
+            # Enhance literature search queries with biological context from previous results
+            if task.tool_name == "literature_search":
+                enhanced_query = self._enhance_literature_query(task.tool_args.get("query", ""), previous_results)
+                task.tool_args["query"] = enhanced_query
+            
+            result = tool_function(**task.tool_args)
+            return {"tool_result": result, "tool_name": task.tool_name}
+            
+        elif task.task_type == TaskType.AGGREGATE:
+            # Combine results from dependencies
+            combined_data = []
+            for dep_id in task.dependencies:
+                if dep_id in previous_results:
+                    combined_data.append(previous_results[dep_id])
+            
+            return {"aggregated_results": combined_data}
+        
+        else:
+            raise ValueError(f"Unknown task type: {task.task_type}")
+    
+    def _enhance_literature_query(self, original_query: str, previous_results: Dict[str, Any]) -> str:
+        """
+        Enhance literature search queries with biological context from previous database results.
+        Prioritizes PFAM domains and biological terms that are publication-friendly.
+        """
+        # Extract biological terms from previous results
+        pfam_domains = set()
+        domain_descriptions = set()
+        organism_names = set()
+        
+        for task_id, result in previous_results.items():
+            if "context" in result:
+                context = result["context"]
+                structured_data = context.structured_data
+                
+                for item in structured_data:
+                    # Extract PFAM accessions (highly citable)
+                    pfam_accessions = item.get('pfam_accessions', []) or item.get('pfam_accession', [])
+                    if pfam_accessions:
+                        if isinstance(pfam_accessions, list):
+                            pfam_domains.update(acc for acc in pfam_accessions if acc and acc != 'None')
+                        else:
+                            if pfam_accessions != 'None':
+                                pfam_domains.add(pfam_accessions)
+                    
+                    # Extract domain descriptions (publication-friendly)
+                    descriptions = item.get('domain_descriptions', []) or item.get('ko_description', '')
+                    if descriptions:
+                        if isinstance(descriptions, list):
+                            for desc in descriptions:
+                                if desc and desc != 'None' and len(desc) > 10:
+                                    # Extract key biological terms
+                                    desc_lower = desc.lower()
+                                    if any(term in desc_lower for term in ['transport', 'receptor', 'permease', 'channel', 'pump']):
+                                        domain_descriptions.add(desc.split('.')[0])  # Remove trailing details
+                        elif descriptions != 'None' and len(descriptions) > 10:
+                            descriptions_lower = descriptions.lower()
+                            if any(term in descriptions_lower for term in ['transport', 'receptor', 'permease', 'channel', 'pump']):
+                                domain_descriptions.add(descriptions.split('.')[0])
+                    
+                    # Extract organism context for specificity
+                    protein_id = item.get('protein_id', '')
+                    if protein_id and '_FULL_' in protein_id:
+                        # Extract organism from protein ID structure
+                        parts = protein_id.split('_FULL_')
+                        if len(parts) > 1:
+                            organism_part = parts[1].split('_')[0]
+                            if organism_part in ['Acidovorax', 'Gammaproteobacteria', 'Burkholderiales']:
+                                organism_names.add(organism_part)
+        
+        # Build enhanced query
+        query_parts = []
+        
+        # Start with original query terms (cleaned)
+        base_query = original_query.replace('recent[dp]', '').strip()
+        if base_query:
+            query_parts.append(base_query)
+        
+        # Add PFAM domains (most publication-relevant)
+        if pfam_domains:
+            pfam_list = list(pfam_domains)[:3]  # Limit to top 3 to avoid overly long queries
+            pfam_query = ' OR '.join(f'"{pfam}"' for pfam in pfam_list)
+            query_parts.append(f"({pfam_query})")
+        
+        # Add functional descriptions (biology-focused)
+        if domain_descriptions:
+            desc_list = list(domain_descriptions)[:2]  # Limit to avoid query length issues
+            for desc in desc_list:
+                # Clean up descriptions for PubMed
+                clean_desc = desc.replace('_', ' ').replace('-', ' ')
+                if len(clean_desc.split()) <= 4:  # Only short, focused terms
+                    query_parts.append(f'"{clean_desc}"')
+        
+        # Add organism context if relevant
+        if organism_names:
+            org_name = list(organism_names)[0]  # Just one for specificity
+            if org_name != 'Gammaproteobacteria':  # Too broad
+                query_parts.append(org_name)
+        
+        # Add temporal constraint for recent papers
+        query_parts.append('("2020"[Date - Publication] : "2024"[Date - Publication])')
+        
+        # Combine query parts with AND logic
+        enhanced_query = ' AND '.join(query_parts)
+        
+        # Fallback to original if enhancement fails
+        if len(enhanced_query) > 200 or not pfam_domains:  # Too long or no good terms
+            return f"{base_query} AND heme AND transport AND bacteria"
+        
+        logger.info(f"Enhanced literature query: {enhanced_query}")
+        return enhanced_query
+    
+    def _combine_task_results(self, all_results: Dict[str, Any]) -> str:
+        """Combine results from all tasks into context for final answer generation."""
+        context_parts = []
+        
+        # Separate different types of results for better organization
+        database_results = []
+        tool_results = []
+        aggregation_results = []
+        
+        for task_id, result in all_results.items():
+            if "context" in result:
+                # Database query result
+                context = result["context"]
+                formatted_context = self._format_context(context)
+                database_results.append(f"=== Local Database: {task_id} ===\n{formatted_context}")
+                
+            elif "tool_result" in result:
+                # Tool execution result
+                tool_result = result["tool_result"]
+                tool_name = result.get("tool_name", "unknown")
+                
+                # Truncate very long tool results to avoid overwhelming the LLM
+                if len(str(tool_result)) > 2000:
+                    tool_result_summary = str(tool_result)[:2000] + "\n\n[... Additional results truncated for context efficiency ...]"
+                else:
+                    tool_result_summary = str(tool_result)
+                
+                tool_results.append(f"=== External Literature: {tool_name} ({task_id}) ===\n{tool_result_summary}")
+                
+            elif "aggregated_results" in result:
+                # Aggregation result - these are less useful for final context
+                aggregation_results.append(f"=== Synthesis: {task_id} ===\nMultiple source integration completed")
+        
+        # Organize results with database first, then external sources
+        if database_results:
+            context_parts.extend(database_results)
+        if tool_results:
+            context_parts.extend(tool_results)
+        if aggregation_results:
+            context_parts.extend(aggregation_results)
+        
+        combined_context = "\n\n".join(context_parts) if context_parts else "No context available from task execution."
+        
+        # Add a summary header for better LLM processing
+        if len(all_results) > 1:
+            summary_header = f"MULTI-SOURCE ANALYSIS RESULTS ({len(all_results)} tasks completed):\n{'='*60}\n"
+            combined_context = summary_header + combined_context
+        
+        return combined_context
     
     async def _retrieve_context(self, query_type: str, retrieval_plan) -> GenomicContext:
         """Retrieve context based on query type and plan."""
@@ -876,10 +1499,18 @@ class GenomicRAG(dspy.Module):
                     # Skip domain positions unless specifically relevant for analysis
                     # (Positions are technical details that clutter LLM context unless needed)
                 
+                # Enhanced PFAM domain information (CRITICAL: This was missing!)
+                pfam_accessions = item.get('pfam_accessions', [])
+                if pfam_accessions and any(pfam_accessions):
+                    # Clean up PFAM accessions
+                    clean_pfam = [p for p in pfam_accessions if p and p != 'None']
+                    if clean_pfam:
+                        formatted_parts.append(f"  • PFAM Domains: {', '.join(clean_pfam)}")
+                
                 # Enhanced KEGG functional information
                 # Handle both legacy field names and Neo4j field names
                 kegg_id = item.get('kegg_functions') or item.get('ko.id')
-                kegg_desc = item.get('kegg_descriptions') or item.get('ko.description')
+                kegg_desc = item.get('kegg_descriptions') or item.get('ko.description') or item.get('function_desc')
                 
                 # Convert single values to lists for consistent processing
                 if kegg_id and not isinstance(kegg_id, list):
@@ -897,6 +1528,11 @@ class GenomicRAG(dspy.Module):
                             descriptions = [d for d in kegg_desc if d and d != 'None']
                             if descriptions:
                                 formatted_parts.append(f"    - Details: {', '.join(descriptions)}")
+                elif kegg_desc and any(kegg_desc):
+                    # Handle case where we have function description but no KEGG ID
+                    descriptions = [d for d in kegg_desc if d and d != 'None']
+                    if descriptions:
+                        formatted_parts.append(f"  • Function: {', '.join(descriptions)}")
                 
                 # Handle new neighbor analysis format from DSPy queries
                 neighbors = item.get('neighbors', [])
@@ -989,7 +1625,7 @@ class GenomicRAG(dspy.Module):
                 
                 # Enhanced genomic neighborhood analysis using detailed_neighbors
                 if item.get('detailed_neighbors'):
-                    neighbors = [n for n in item['detailed_neighbors'] if n and n.get('protein_id')]
+                    neighbors = [n for n in item['detailed_neighbors'] if n and n.get('neighbor_id')]
                     if neighbors:
                         # Analyze functional themes
                         target_gene = {
@@ -1021,78 +1657,89 @@ class GenomicRAG(dspy.Module):
                         functional_analysis = _analyze_neighbor_functions(scaffold_neighbors)
                         formatted_neighbors = _format_neighbor_context(neighbors, target_gene)
                         
-                        # Count upstream vs downstream
+                        # Calculate intergenic distances and strand relationships
                         if item.get('gene_start'):
                             target_pos = int(item['gene_start'])
-                            upstream_count = sum(1 for n in neighbors if n.get('position') and n['position'] < target_pos)
-                            downstream_count = len(neighbors) - upstream_count
+                            target_strand = item.get('gene_strand')
+                            
+                            # Process neighbors with distance calculations
+                            neighbor_analysis = []
+                            for neighbor in neighbors:
+                                neighbor_start = neighbor.get('neighbor_start')
+                                neighbor_strand = neighbor.get('neighbor_strand')
+                                neighbor_id = neighbor.get('neighbor_id', '')
+                                neighbor_function = neighbor.get('neighbor_function') or neighbor.get('neighbor_domain') or 'unknown function'
+                                
+                                if neighbor_start:
+                                    try:
+                                        distance = abs(int(neighbor_start) - target_pos)
+                                        direction = 'upstream' if int(neighbor_start) < target_pos else 'downstream'
+                                        
+                                        # Determine strand compatibility
+                                        same_strand = str(neighbor_strand) == str(target_strand)
+                                        strand_info = f"same strand" if same_strand else f"opposite strand"
+                                        
+                                        # Classify proximity for biological interpretation
+                                        if distance < 200:
+                                            proximity = "close" if same_strand else "close_opposite"
+                                            operon_status = "likely co-transcribed" if same_strand else "separate regulation"
+                                        elif distance < 500:
+                                            proximity = "proximal" if same_strand else "proximal_opposite"
+                                            operon_status = "possible operon" if same_strand else "separate regulation"
+                                        else:
+                                            proximity = "distal"
+                                            operon_status = "separate regulation"
+                                        
+                                        neighbor_analysis.append({
+                                            'id': neighbor_id,
+                                            'distance': distance,
+                                            'direction': direction,
+                                            'strand': neighbor_strand,
+                                            'same_strand': same_strand,
+                                            'strand_info': strand_info,
+                                            'proximity': proximity,
+                                            'operon_status': operon_status,
+                                            'function': neighbor_function
+                                        })
+                                    except (ValueError, TypeError):
+                                        continue
+                            
+                            # Sort by distance for reporting
+                            neighbor_analysis.sort(key=lambda x: x['distance'])
+                            
+                            upstream_count = sum(1 for n in neighbor_analysis if n['direction'] == 'upstream')
+                            downstream_count = len(neighbor_analysis) - upstream_count
                             
                             formatted_parts.append(f"  • Genomic Neighborhood Analysis:")
-                            formatted_parts.append(f"    - {len(neighbors)} proteins within 5kb ({upstream_count} upstream, {downstream_count} downstream)")
+                            formatted_parts.append(f"    - {len(neighbor_analysis)} proteins within 5kb ({upstream_count} upstream, {downstream_count} downstream)")
                             
-                            # Show detailed neighbor information
-                            if formatted_neighbors:
-                                upstream_neighbors = [n for n in formatted_neighbors if n['direction'] == 'upstream']
-                                downstream_neighbors = [n for n in formatted_neighbors if n['direction'] == 'downstream']
-                                
-                                if upstream_neighbors:
-                                    formatted_parts.append(f"    \n    Upstream Neighbors:")
-                                    for neighbor in upstream_neighbors[:2]:  # Show top 2 upstream
-                                        short_id, _ = _format_protein_id(neighbor['protein_id'])
-                                        formatted_parts.append(f"    • {short_id} ({_safe_format_int(neighbor['distance'])}bp upstream, strand {neighbor['strand']}):")
-                                        
-                                        # Show all PFAM domains
-                                        pfam_domains = [d for d in neighbor.get('pfam_id', []) if d and d != 'None']
-                                        if pfam_domains:
-                                            formatted_parts.append(f"      - PFAM: {', '.join(pfam_domains)}")
-                                        
-                                        # Show all functions
-                                        descriptions = neighbor.get('pfam_description', []) + neighbor.get('kegg_descriptions', [])
-                                        descriptions = [d for d in descriptions if d and d != 'None']
-                                        if descriptions:
-                                            formatted_parts.append(f"      - Function: {', '.join(descriptions)}")
-                                        
-                                        # Show KEGG orthologs
-                                        kegg_ko = [k for k in neighbor.get('kegg_ko', []) if k and k != 'None']
-                                        if kegg_ko:
-                                            formatted_parts.append(f"      - KEGG: {', '.join(kegg_ko[:2])}")
-                                
-                                if downstream_neighbors:
-                                    formatted_parts.append(f"    \n    Downstream Neighbors:")
-                                    for neighbor in downstream_neighbors[:2]:  # Show top 2 downstream
-                                        short_id, _ = _format_protein_id(neighbor['protein_id'])
-                                        formatted_parts.append(f"    • {short_id} ({_safe_format_int(neighbor['distance'])}bp downstream, strand {neighbor['strand']}):")
-                                        
-                                        # Show all PFAM domains
-                                        pfam_domains = [d for d in neighbor.get('pfam_id', []) if d and d != 'None']
-                                        if pfam_domains:
-                                            formatted_parts.append(f"      - PFAM: {', '.join(pfam_domains)}")
-                                        
-                                        # Show all functions  
-                                        descriptions = neighbor.get('pfam_description', []) + neighbor.get('kegg_descriptions', [])
-                                        descriptions = [d for d in descriptions if d and d != 'None']
-                                        if descriptions:
-                                            formatted_parts.append(f"      - Function: {', '.join(descriptions)}")
-                                        
-                                        # Show KEGG orthologs
-                                        kegg_ko = [k for k in neighbor.get('kegg_ko', []) if k and k != 'None']
-                                        if kegg_ko:
-                                            formatted_parts.append(f"      - KEGG: {', '.join(kegg_ko[:2])}")
+                            # Report close neighbors with operon analysis
+                            close_neighbors = [n for n in neighbor_analysis if n['proximity'] in ['close', 'close_opposite']]
+                            if close_neighbors:
+                                formatted_parts.append(f"    \n    Close Neighbors (0-200bp):")
+                                for neighbor in close_neighbors[:3]:
+                                    short_id = neighbor['id'].split('_')[-1] if '_' in neighbor['id'] else neighbor['id']
+                                    formatted_parts.append(f"    • {short_id}: {neighbor['distance']}bp {neighbor['direction']}, {neighbor['strand_info']}")
+                                    formatted_parts.append(f"      - Status: {neighbor['operon_status']}")
+                                    formatted_parts.append(f"      - Function: {neighbor['function'][:60]}")
                             
-                            # Add biological context summary
-                            formatted_parts.append(f"    \n    Biological Context:")
+                            # Report proximal neighbors
+                            proximal_neighbors = [n for n in neighbor_analysis if n['proximity'] in ['proximal', 'proximal_opposite']]
+                            if proximal_neighbors:
+                                formatted_parts.append(f"    \n    Proximal Neighbors (200-500bp):")
+                                for neighbor in proximal_neighbors[:2]:
+                                    short_id = neighbor['id'].split('_')[-1] if '_' in neighbor['id'] else neighbor['id']
+                                    formatted_parts.append(f"    • {short_id}: {neighbor['distance']}bp {neighbor['direction']}, {neighbor['strand_info']}")
+                                    formatted_parts.append(f"      - Function: {neighbor['function'][:60]}")
                             
-                            if functional_analysis.get('dominant_theme'):
-                                theme = functional_analysis['dominant_theme'].replace('_', ' ').title()
-                                formatted_parts.append(f"    • Functional theme: {theme}")
-                            
-                            if functional_analysis.get('themes'):
-                                themes = functional_analysis['themes']
-                                active_themes = [k.replace('_', ' ').title() for k, v in themes.items() if v > 0]
-                                if active_themes:
-                                    formatted_parts.append(f"    • Neighborhood functions: {', '.join(active_themes[:3])}")
+                            # Summary of operon potential
+                            likely_operonic = sum(1 for n in close_neighbors if n['operon_status'] == 'likely co-transcribed')
+                            if likely_operonic > 0:
+                                formatted_parts.append(f"    \n    Operon Analysis: {likely_operonic} gene(s) likely co-transcribed (same strand, <200bp)")
+                            else:
+                                formatted_parts.append(f"    \n    Operon Analysis: No evidence for co-transcription (no same-strand close neighbors)")
                         else:
-                            formatted_parts.append(f"  • Genomic Neighborhood: {len(neighbors)} proteins within 5kb")
+                            formatted_parts.append(f"  • Genomic Neighborhood: {len(neighbors)} proteins (coordinates not available for distance analysis)")
                 
         # Handle general structured data that doesn't match specific patterns
         if context.structured_data and not any(['p.id' in str(item) or 'protein_id' in str(item) for item in context.structured_data]):

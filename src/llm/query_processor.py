@@ -386,11 +386,12 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
         similar_results = await self._find_similar_by_embedding(query_embedding, limit=limit+5)
         
         # Filter out self-similarity and very high similarity (likely identical)
+        # For cosine similarity: 1.0 = identical, values closer to 1.0 are more similar
         filtered_results = []
         for result in similar_results:
             if (result['protein_id'] != protein_id and 
-                result['distance'] > 0.001 and  # Exclude nearly identical
-                result['similarity'] < 0.999):  # Exclude near-perfect matches
+                result['distance'] > 0.001 and  # Exclude nearly identical (cosine distance)
+                result['similarity'] < 0.999):  # Exclude near-perfect matches (cosine similarity)
                 filtered_results.append(result)
                 if len(filtered_results) >= limit:
                     break
@@ -399,15 +400,19 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
     
     async def _find_similar_by_embedding(self, embedding: np.ndarray, limit: int = 10) -> List[Dict[str, Any]]:
         """Find proteins similar to a given embedding."""
-        results = self.table.search(embedding).limit(limit).to_pandas()
+        # Use cosine distance which is proper for sequence embeddings
+        results = self.table.search(embedding).metric("cosine").limit(limit).to_pandas()
         
+        # Convert cosine distance to cosine similarity
+        # Cosine distance = 1 - cosine similarity, so similarity = 1 - distance
+        # This gives proper values in range [-1, 1] where 1 = identical
         return [
             {
                 "protein_id": row['protein_id'],
                 "genome_id": row['genome_id'],
                 "sequence_length": row['sequence_length'],
                 "distance": row['_distance'],
-                "similarity": 1.0 - row['_distance']  # Convert distance to similarity
+                "similarity": float(1.0 - row['_distance'])  # Cosine distance to cosine similarity
             }
             for _, row in results.iterrows()
         ]
