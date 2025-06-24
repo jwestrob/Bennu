@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   code-interpreter:
     build:
@@ -12,9 +10,6 @@ services:
       - MAX_EXECUTION_TIME=30
       - MAX_MEMORY_MB=512
       - MAX_OUTPUT_SIZE=1048576  # 1MB
-    volumes:
-      # Mount temporary directory for file operations (read-only host)
-      - /tmp/code_interpreter_sessions:/app/sessions:rw
     security_opt:
       - no-new-privileges:true
       - seccomp:unconfined  # Required for gVisor
@@ -52,7 +47,3 @@ networks:
     ipam:
       config:
         - subnet: 172.20.0.0/16
-
-volumes:
-  code_interpreter_sessions:
-    driver: local
