@@ -20,20 +20,40 @@ console = Console()
 
 class Neo4jBulkLoader:
     """Bulk load Neo4j database using neo4j-admin import."""
-    
-    def __init__(self, csv_dir: Path, neo4j_home: Path = None, database_name: str = "neo4j"):
+
+    def __init__(
+        self,
+        csv_dir: Path,
+        neo4j_home: Path | None = None,
+        database_name: str = "neo4j",
+        host: str = "localhost",
+        port: int = 7687,
+        username: str = "neo4j",
+        password: str = "your_new_password",
+    ):
         self.csv_dir = csv_dir
         self.database_name = database_name
-        
-        # Auto-detect Neo4j home from homebrew installation
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.uri = f"bolt://{host}:{port}"
+
         if neo4j_home is None:
-            neo4j_home = self._detect_neo4j_home()
-        
+            try:
+                neo4j_home = self._detect_neo4j_home()
+            except FileNotFoundError:
+                neo4j_home = None
+
         self.neo4j_home = neo4j_home
-        self.neo4j_admin = neo4j_home / "bin" / "neo4j-admin"
-        self.neo4j_ctl = neo4j_home / "bin" / "neo4j"
-        
-        console.print(f"Neo4j home: {self.neo4j_home}")
+        self.local_install = bool(neo4j_home and Path(neo4j_home).exists())
+        if self.local_install:
+            self.neo4j_admin = neo4j_home / "bin" / "neo4j-admin"
+            self.neo4j_ctl = neo4j_home / "bin" / "neo4j"
+            console.print(f"Neo4j home: {self.neo4j_home}")
+        else:
+            console.print("Neo4j home not found locally - assuming remote host")
+
         console.print(f"CSV directory: {self.csv_dir}")
     
     def _detect_neo4j_home(self) -> Path:
@@ -72,37 +92,45 @@ class Neo4jBulkLoader:
         start_time = time.time()
         
         with Progress(console=console) as progress:
-            task = progress.add_task("Bulk importing to Neo4j...", total=6)
+            if self.local_install:
+                total_steps = 6
+            else:
+                total_steps = 3
+            task = progress.add_task("Bulk importing to Neo4j...", total=total_steps)
             
             # Step 1: Validate CSV files
             progress.update(task, description="Validating CSV files...")
             csv_files = self._validate_csv_files()
             progress.advance(task)
             
-            # Step 2: Stop Neo4j
-            progress.update(task, description="Stopping Neo4j...")
-            self._stop_neo4j()
-            progress.advance(task)
-            
-            # Step 3: Backup/clear existing database
-            progress.update(task, description="Preparing database...")
-            self._prepare_database()
-            progress.advance(task)
-            
-            # Step 4: Run bulk import
-            progress.update(task, description="Running bulk import...")
-            import_stats = self._run_bulk_import(csv_files)
-            progress.advance(task)
-            
-            # Step 5: Start Neo4j
-            progress.update(task, description="Starting Neo4j...")
-            self._start_neo4j()
-            progress.advance(task)
-            
-            # Step 6: Create constraints and indexes
-            progress.update(task, description="Creating constraints/indexes...")
-            self._create_constraints_and_indexes()
-            progress.advance(task)
+            if self.local_install:
+                progress.update(task, description="Stopping Neo4j...")
+                self._stop_neo4j()
+                progress.advance(task)
+
+                progress.update(task, description="Preparing database...")
+                self._prepare_database()
+                progress.advance(task)
+
+                progress.update(task, description="Running bulk import...")
+                import_stats = self._run_bulk_import(csv_files)
+                progress.advance(task)
+
+                progress.update(task, description="Starting Neo4j...")
+                self._start_neo4j()
+                progress.advance(task)
+
+                progress.update(task, description="Creating constraints/indexes...")
+                self._create_constraints_and_indexes()
+                progress.advance(task)
+            else:
+                progress.update(task, description="Running remote import...")
+                import_stats = self._run_remote_import(csv_files)
+                progress.advance(task)
+
+                progress.update(task, description="Creating constraints/indexes...")
+                self._create_constraints_and_indexes()
+                progress.advance(task)
         
         total_time = time.time() - start_time
         
@@ -131,46 +159,55 @@ class Neo4jBulkLoader:
     
     def _stop_neo4j(self):
         """Stop Neo4j server."""
+        if not self.local_install:
+            console.print("Neo4j is remote; skipping stop")
+            return
+
         console.print("Stopping Neo4j server...")
         try:
-            result = subprocess.run([str(self.neo4j_ctl), "stop"], 
+            result = subprocess.run([str(self.neo4j_ctl), "stop"],
                                   capture_output=True, text=True, timeout=30)
             if result.returncode != 0 and "not running" not in result.stdout:
                 console.print(f"[yellow]Warning: {result.stdout}[/yellow]")
         except subprocess.TimeoutExpired:
             console.print("[yellow]Neo4j stop timed out, proceeding anyway[/yellow]")
-        
-        # Wait a moment for complete shutdown
+
         time.sleep(2)
     
     def _start_neo4j(self):
         """Start Neo4j server."""
+        if not self.local_install:
+            console.print("Neo4j is remote; skipping start")
+            return
+
         console.print("Starting Neo4j server...")
-        result = subprocess.run([str(self.neo4j_ctl), "start"], 
+        result = subprocess.run([str(self.neo4j_ctl), "start"],
                               capture_output=True, text=True, timeout=60)
-        
+
         if result.returncode != 0:
             raise RuntimeError(f"Failed to start Neo4j: {result.stderr}")
-        
-        # Wait for Neo4j to be ready
+
         console.print("Waiting for Neo4j to be ready...")
         max_wait = 30
-        for i in range(max_wait):
+        for _ in range(max_wait):
             try:
-                result = subprocess.run([str(self.neo4j_ctl), "status"], 
+                result = subprocess.run([str(self.neo4j_ctl), "status"],
                                       capture_output=True, text=True, timeout=5)
                 if result.returncode == 0 and "running" in result.stdout:
                     console.print("✓ Neo4j is ready")
                     return
-            except:
+            except Exception:
                 pass
             time.sleep(1)
-        
+
         raise RuntimeError("Neo4j failed to start within 30 seconds")
     
     def _prepare_database(self):
         """Prepare database for bulk import."""
-        # For neo4j-admin import, we need to delete the existing database
+        if not self.local_install:
+            console.print("Neo4j is remote; skipping database directory cleanup")
+            return
+
         db_dir = self.neo4j_home / "data" / "databases" / self.database_name
         if db_dir.exists():
             console.print(f"Removing existing database: {db_dir}")
@@ -232,8 +269,31 @@ class Neo4jBulkLoader:
         
         console.print(f"✓ Import successful!")
         console.print(f"Import output: {result.stdout}")
-        
+
         return {"import_output": result.stdout}
+
+    def _run_remote_import(self, csv_files: List[Path]) -> Dict[str, Any]:
+        """Load data using the Neo4j bolt protocol for remote servers."""
+        console.print("Running remote import via bolt protocol...")
+        try:
+            from .neo4j_legacy_loader import Neo4jLoader
+        except Exception as e:
+            raise RuntimeError(f"Remote import requires neo4j driver: {e}")
+
+        loader = Neo4jLoader(
+            uri=self.uri,
+            user=self.username,
+            password=self.password,
+            database=self.database_name,
+        )
+        try:
+            loader.clear_database()
+            loader.create_constraints_and_indexes()
+            loader.load_csv_data(self.csv_dir)
+        finally:
+            loader.close()
+
+        return {"import_mode": "remote"}
     
     def _create_constraints_and_indexes(self):
         """Create constraints and indexes after import."""
@@ -244,7 +304,7 @@ class Neo4jBulkLoader:
             console.print("[yellow]Warning: neo4j driver not available, skipping constraints[/yellow]")
             return
         
-        driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "your_new_password"))
+        driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
         
         constraints = [
             "CREATE CONSTRAINT genome_id IF NOT EXISTS FOR (g:Genome) REQUIRE g.id IS UNIQUE",
@@ -269,17 +329,37 @@ class Neo4jBulkLoader:
 
 def main():
     """Main execution function."""
-    csv_dir = Path("data/stage05_kg/csv")
-    
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Neo4j bulk CSV loader")
+    parser.add_argument("--csv-dir", type=Path, default=Path("data/stage05_kg/csv"))
+    parser.add_argument("--neo4j-home", type=Path, default=None)
+    parser.add_argument("--host", default="localhost")
+    parser.add_argument("--port", type=int, default=7687)
+    parser.add_argument("--user", default="neo4j")
+    parser.add_argument("--password", default="your_new_password")
+    parser.add_argument("--database", default="neo4j")
+    args = parser.parse_args()
+
+    csv_dir = args.csv_dir
+
     if not csv_dir.exists():
         console.print(f"[red]CSV directory not found: {csv_dir}[/red]")
         console.print("Run rdf_to_csv.py first to generate CSV files")
         return 1
-    
+
     try:
-        loader = Neo4jBulkLoader(csv_dir)
+        loader = Neo4jBulkLoader(
+            csv_dir,
+            neo4j_home=args.neo4j_home,
+            database_name=args.database,
+            host=args.host,
+            port=args.port,
+            username=args.user,
+            password=args.password,
+        )
         stats = loader.bulk_import()
-        
+
         console.print(f"\n[bold green]✓ Bulk import completed successfully![/bold green]")
         console.print(f"Import time: {stats['import_time_seconds']:.2f} seconds")
         console.print(f"CSV files processed: {stats['csv_files_processed']}")
@@ -293,3 +373,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

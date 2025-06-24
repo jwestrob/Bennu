@@ -64,7 +64,7 @@ python run_esm2_m4_max.py
 python -m src.cli build --skip-tax
 
 # Load knowledge graph into Neo4j database
-python load_neo4j.py
+python -m src.build_kg.neo4j_bulk_loader --csv-dir data/stage05_kg/csv --neo4j-home /path/to/neo4j
 
 # Query the knowledge graph with LLM-powered insights
 python -m src.cli ask "What metabolic pathways are present in Escherichia coli?"
