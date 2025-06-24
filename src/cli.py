@@ -193,7 +193,6 @@ def build(
             stage = stages[stage_num]
             console.print(f"\n[bold green]Stage {stage_num}: {stage['name']}[/bold green]")
             
-            # TODO: Add stage output checking and skip logic
             stage_output_dir = output_dir / f"stage{stage_num:02d}_{stage['name'].lower().replace(' ', '_').replace('/', '_')}"
             if not force and stage_output_dir.exists():
                 console.print(f"[yellow]Stage {stage_num} output exists, skipping (use --force to overwrite)[/yellow]")
@@ -215,9 +214,6 @@ def build(
         
         console.print("\n[bold green]Pipeline completed successfully![/bold green]")
         
-        # TODO: Generate summary report
-        # TODO: Build knowledge graph from results
-        # TODO: Create FAISS indices
         
     except KeyboardInterrupt:
         console.print("\n[yellow]Pipeline interrupted by user[/yellow]")
