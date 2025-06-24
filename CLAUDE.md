@@ -222,10 +222,24 @@ data/
 
 ### **IMPORTANT: No Helper Scripts in Root Directory**
 **Always use the proper pipeline instead of creating temporary helper scripts in the root directory.** 
+
+**File Organization Rules:**
+- **NO test scripts, demos, or temporary files in the root directory**
 - Use `python -m src.build_kg.rdf_builder` for knowledge graph generation
 - Use `python -m src.build_kg.neo4j_legacy_loader` for database loading
+- Place test scripts in `src/tests/` with proper module structure
+- Place demo scripts in `src/tests/demo/` or similar organized location
+- Use `python -m src.tests.demo.script_name` for execution with proper imports
 - Modify existing modules in `src/` as needed rather than creating one-off scripts
-- This maintains workflow integrity and prevents fragmentation
+
+**Examples of Proper Organization:**
+- ✅ `src/tests/demo/test_agentic_demo.py` - Demo scripts in organized test structure
+- ✅ `src/tests/integration/test_full_pipeline.py` - Integration tests
+- ✅ `python -m src.tests.demo.test_agentic_demo` - Proper execution with module path
+- ❌ `test_something.py` in root - Clutters repository and breaks import paths
+- ❌ `demo.py` in root - Poor organization and maintenance issues
+
+This maintains workflow integrity, prevents repository fragmentation, and ensures proper Python module resolution.
 
 ## Recent Major Developments: Complete System Integration ✅
 
@@ -300,6 +314,217 @@ heme-transport related protein' pending additional evidence."
 - **Apple Silicon Optimization**: ~85 proteins/second ESM2 processing
 
 This represents a complete transformation from a basic bioinformatics pipeline to an intelligent genomic AI platform.
+
+## Recent Agentic RAG v2.0 Integration (June 2025) ✅
+
+**🎉 COMPLETED**: Full agentic capabilities integrated into the genomic RAG system with intelligent multi-stage query processing and enhanced biological analysis.
+
+### Successfully Implemented:
+
+#### 1. **Agentic Task Graph System** ✅
+- **Location**: Integrated into `src/llm/rag_system.py`
+- **Components**: 
+  - `TaskGraph` class with DAG-based execution
+  - `Task` dataclass with dependency management
+  - `TaskStatus` and `TaskType` enums for proper state management
+- **Capabilities**:
+  - Dependency resolution and parallel task execution
+  - Status tracking: PENDING → RUNNING → COMPLETED/FAILED/SKIPPED
+  - Automatic task skipping when dependencies fail
+  - Summary statistics and completion detection
+
+#### 2. **Multi-Stage Semantic Search** ✅
+- **Stage 1**: Neo4j finds proteins with specific functions (e.g., "heme transporters")
+- **Stage 2**: LanceDB similarity search using those proteins as seeds
+- **Cosine Similarity**: Proper protein embedding comparisons (0.95+ = functional equivalence)
+- **Result Integration**: Combines structural annotations with sequence similarity analysis
+- **Benefits**: Real embedding similarities instead of LLM hallucinations
+
+#### 3. **Enhanced DSPy Planning Agent** ✅
+- **Intelligent Routing**: Automatic selection between traditional vs agentic modes
+- **Query Classification**: Determines complexity and tool requirements
+- **Fallback Mechanisms**: Graceful degradation when agentic planning fails
+- **Backward Compatibility**: Existing query patterns continue to work seamlessly
+
+#### 4. **External Tool Integration** ✅
+- **Literature Search Tool**: PubMed integration with PFAM-aware query enhancement
+- **Biological Context**: Extracts PFAM domains from database results for targeted literature searches
+- **Tool Manifest**: `AVAILABLE_TOOLS` dictionary for easy expansion
+- **Graceful Degradation**: Functions when external dependencies unavailable
+
+#### 5. **Enhanced Functional Annotation Display** ✅
+- **PFAM Domain Integration**: Displays domain accessions (PF01594.21, Peripla_BP_2, etc.)
+- **KEGG Function Mapping**: Shows ortholog assignments and pathway context
+- **Biological Interpretation**: Professional genomic analysis with proper domain citations
+- **Context Formatting**: Rich annotation data properly formatted for LLM analysis
+
+#### 6. **Comprehensive Testing Suite** ✅
+- **Test Coverage**: 12+ tests across multiple test classes
+- **Validation Scripts**: Debug tools for query analysis and context inspection
+- **Integration Testing**: End-to-end workflow validation with real data
+- **File Organization**: Proper module structure with demo scripts in `src/tests/demo/`
+
+### Architecture Overview:
+
+```
+Enhanced GenomicRAG Flow:
+┌─────────────────┐
+│ User Query      │
+└─────────┬───────┘
+          │
+    ┌─────▼─────┐
+    │ PlannerAgent │ ◄── NEW: Intelligent routing decision
+    └─────┬─────┘
+          │
+    ┌─────▼─────┐
+    │ Traditional│     OR     ┌──────────┐
+    │ Mode       │            │ Agentic  │ ◄── NEW: Multi-step execution
+    │ (existing) │            │ Mode     │
+    └─────┬─────┘            └─────┬────┘
+          │                        │
+          │                  ┌─────▼─────┐
+          │                  │TaskGraph  │ ◄── NEW: DAG-based planning
+          │                  │Execution  │
+          │                  └─────┬─────┘
+          │                        │
+          │                  ┌─────▼─────┐
+          │                  │External   │ ◄── NEW: Tool integration
+          │                  │Tools      │      (literature search)
+          │                  └─────┬─────┘
+          │                        │
+    ┌─────▼────────────────────────▼─────┐
+    │        Final Answer Generation     │
+    └────────────────────────────────────┘
+```
+
+### Enhanced Query Capabilities:
+
+#### **Professional Genomic Analysis** 🧬
+The system now provides sophisticated biological interpretation with:
+- **Proper PFAM domain citations**: PF01594.21, PF13407, etc.
+- **KEGG pathway mapping**: K07224 (HmuT), K02014 (ABC Fe heme permease) 
+- **Operon prediction**: Same-strand proximity analysis for co-transcription
+- **Genomic neighborhood analysis**: Distance calculations and biological significance
+- **Protein similarity networks**: ESM2 cosine similarities (0.95+ = functional equivalence)
+
+#### **Multi-Stage Query Processing** 🔄
+1. **Functional Similarity Searches**: "Find proteins similar to heme transporters"
+   - Stage 1: Neo4j finds annotated heme transporters
+   - Stage 2: LanceDB similarity search using those as seeds
+   - Result: Real embedding similarities, not hallucinations
+
+2. **Literature Integration**: "What does recent research say about CRISPR proteins?"
+   - Extracts PFAM domains from database results
+   - Constructs targeted PubMed queries
+   - Integrates literature findings with local genomic data
+
+3. **Intelligent Routing**: System automatically chooses traditional vs agentic execution
+   - Simple queries: Fast local database path
+   - Complex queries: Multi-step orchestration with external tools
+   - Fallback mechanisms: Graceful degradation ensures reliability
+
+#### **Enhanced Biological Intelligence** 🧠
+**Before**: "This protein is likely involved in a metabolic pathway"
+**After**: "PF13407 periplasmic-binding + PF01032 permease domains exactly match bacterial heme ABC transporter architecture (KEGG K07224/K02014). Gene index difference = 1; estimated ≤50 bp separation ⇒ likely co-transcribed operon core."
+
+## Next Steps for Agentic Enhancement 🚀
+
+### Phase 2: Code Interpreter Integration (High Priority)
+**Objective**: Add secure code execution capabilities for data analysis and visualization
+
+**Implementation Plan**:
+1. **Secure Code Interpreter Service** 
+   - **Framework**: FastAPI service with gVisor containerization
+   - **Security**: Run as non-root, drop all capabilities, read-only filesystem
+   - **Networking**: Disabled by default with strict resource limits
+   - **Session Management**: Stateful sessions for iterative analysis
+   - **Testing Requirements**: 
+     - Security isolation tests
+     - Resource limit enforcement tests
+     - Session state persistence tests
+     - Error boundary tests
+
+2. **Integration with Task Graph**
+   - Add `code_interpreter` to `AVAILABLE_TOOLS`
+   - Implement secure communication between RAG system and service
+   - Add code execution task type to `TaskType` enum
+   - **Testing Requirements**:
+     - Tool execution interface tests
+     - Security validation tests
+     - Multi-step workflows with code execution
+     - Error propagation tests
+
+### Phase 3: Advanced Agent Capabilities (Medium Priority)
+**Objective**: Add specialized agents for error repair and knowledge gap filling
+
+**Components to Implement**:
+1. **TaskRepairAgent**: Fix failed queries with corrected syntax/logic
+2. **KnowledgeGapAgent**: Identify missing information and formulate tool calls
+3. **Enhanced Error Recovery**: Retry mechanisms with intelligent modifications
+
+**Testing Requirements for Each Agent**:
+- Unit tests for agent decision making
+- Integration tests with task graph
+- Error scenarios and recovery paths
+- Performance impact assessment
+
+### Phase 4: Production Readiness (Medium Priority)
+**Objective**: Scale system for production deployment
+
+**Implementation Areas**:
+1. **Performance Optimization**
+   - Task execution parallelization
+   - Tool call batching and caching
+   - Resource usage monitoring
+2. **Production Deployment**
+   - Containerized service deployment
+   - Load balancing and auto-scaling
+   - Comprehensive logging and monitoring
+3. **User Interface Enhancements**
+   - Real-time progress tracking
+   - Task execution visualization
+   - Interactive debugging capabilities
+
+### Phase 5: Advanced Research Integration (Future Work)
+**Objective**: Autonomous knowledge graph enhancement
+
+**Features to Develop**:
+1. **Symbiotic KG-Researcher Loop**: Autonomous literature mining to fill knowledge gaps
+2. **User-in-the-Loop Tools**: Interactive clarification when queries are ambiguous
+3. **Multi-modal Integration**: Image analysis, document processing, etc.
+
+## Development Guidelines for Future Work
+
+### 🧪 **Mandatory Testing Protocol**
+**CRITICAL**: Every component must be fully tested before integration
+
+1. **Test-Driven Development**: Write tests FIRST, then implement
+2. **Component Isolation**: Test each component independently with mocks
+3. **Integration Testing**: Test component interactions thoroughly
+4. **Error Path Testing**: Test failure scenarios and recovery mechanisms
+5. **Performance Testing**: Validate resource usage and execution times
+6. **Security Testing**: Validate isolation and access controls (especially for code execution)
+
+### 📋 **Implementation Checklist for Each New Feature**
+- [ ] Design specification with clear objectives
+- [ ] Unit tests written and failing (TDD approach)
+- [ ] Component implementation
+- [ ] Unit tests passing
+- [ ] Integration tests written and passing
+- [ ] Error handling tests
+- [ ] Performance validation
+- [ ] Documentation updated
+- [ ] Smoke tests passing
+- [ ] Security review (if applicable)
+
+### 🔄 **Quality Gates**
+- **No component integration without 100% test coverage**
+- **All tests must pass before committing**
+- **Backward compatibility must be maintained**
+- **Performance impact must be measured and acceptable**
+- **Security implications must be evaluated and mitigated**
+
+This systematic approach ensures that each enhancement builds reliably on the solid foundation we've established with Agentic RAG v2.0.
 
 ## Recent System Improvements ✅
 
