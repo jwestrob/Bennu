@@ -366,6 +366,15 @@ class TestBuildKnowledgeGraphFromPipeline:
         with open(protein_file_b, 'w') as f:
             f.write(">genome_B_001 ribosomal protein\nMATTKLRQVK\n")
 
+    def create_mock_quast_reports(self, stage01_dir):
+        """Create minimal QUAST report files."""
+        genomes_dir = stage01_dir / "genomes"
+        for genome_id in ["genome_A", "genome_B"]:
+            gdir = genomes_dir / genome_id
+            gdir.mkdir(parents=True, exist_ok=True)
+            report = gdir / "report.tsv"
+            report.write_text("# contigs\t10\nN50\t5000\n")
+
     @patch('src.build_kg.rdf_builder.process_astra_results')
     def test_build_knowledge_graph_from_pipeline_complete(self, mock_process_astra, temp_dir):
         """Test complete knowledge graph building from pipeline."""
@@ -474,3 +483,30 @@ class TestBuildKnowledgeGraphFromPipeline:
         
         with pytest.raises(FileNotFoundError):
             build_knowledge_graph_from_pipeline(stage03_dir, stage04_dir, output_dir)
+
+    @patch('src.build_kg.rdf_builder.process_astra_results')
+    def test_build_knowledge_graph_includes_quast_metrics(self, mock_process_astra, temp_dir):
+        """Quality metrics from QUAST should be written to RDF."""
+        stage03_dir = temp_dir / "stage03"
+        stage04_dir = temp_dir / "stage04"
+        stage01_dir = temp_dir / "stage01_quast"
+        output_dir = temp_dir / "out"
+
+        stage03_dir.mkdir()
+        stage04_dir.mkdir()
+        stage01_dir.mkdir()
+
+        self.create_mock_prodigal_manifest(stage03_dir)
+        self.create_mock_protein_files(stage03_dir)
+        self.create_mock_quast_reports(stage01_dir)
+
+        mock_process_astra.return_value = {'pfam_domains': [], 'kofam_functions': []}
+
+        result = build_knowledge_graph_from_pipeline(stage03_dir, stage04_dir, output_dir)
+
+        kg_file = output_dir / "knowledge_graph.ttl"
+        g = Graph()
+        g.parse(kg_file, format='turtle')
+
+        metrics_uri = GENOME['genome_A/quality']
+        assert (metrics_uri, KG.quast_n50, Literal(5000, datatype=XSD.integer)) in g

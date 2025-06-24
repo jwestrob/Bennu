@@ -16,6 +16,10 @@ from rdflib.namespace import RDF, RDFS, XSD
 from src.build_kg.annotation_processors import process_astra_results
 from src.build_kg.functional_enrichment import add_functional_enrichment_to_pipeline
 from src.build_kg.pathway_integration import integrate_pathways
+from importlib import import_module
+
+# Import QUAST parser dynamically since module name starts with a digit
+parse_quast_report = import_module("src.ingest.01_run_quast").parse_quast_report
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +79,23 @@ PFAM = Namespace("http://pfam.xfam.org/family/")
 KO = Namespace("http://www.genome.jp/kegg/ko/")
 PROV = Namespace("http://www.w3.org/ns/prov#")
 
+# Metrics extracted from QUAST reports
+QUAST_METRIC_KEYS = [
+    "contigs",
+    "total_length",
+    "largest_contig",
+    "n50",
+    "n75",
+    "gc_content",
+    "n_count",
+    "n_per_100_kbp",
+    "contigs_1000bp",
+    "contigs_5000bp",
+    "contigs_10000bp",
+    "l50",
+    "l75",
+]
+
 
 class GenomeKGBuilder:
     """Builder for genome knowledge graph RDF triples."""
@@ -103,7 +124,8 @@ class GenomeKGBuilder:
             (KG.DomainAnnotation, "Protein domain annotation instance"),
             (KG.FunctionalAnnotation, "Functional annotation"),
             (KG.KEGGOrtholog, "KEGG Orthologous group"),
-            (KG.Domain, "Protein domain family (PFAM)")
+            (KG.Domain, "Protein domain family (PFAM)"),
+            (KG.QualityMetrics, "Assembly quality metrics"),
         ]
         
         properties = [
@@ -112,8 +134,13 @@ class GenomeKGBuilder:
             (KG.hasDomain, "protein has domain"),
             (KG.hasFunction, "protein has function"),
             (KG.domainFamily, "domain belongs to family"),
-            (KG.hasQualityMetrics, "genome has quality metrics")
+            (KG.hasQualityMetrics, "genome has quality metrics"),
         ]
+
+        # Add properties for each QUAST metric
+        for metric in QUAST_METRIC_KEYS:
+            prop_uri = KG[f"quast_{metric}"]
+            properties.append((prop_uri, f"QUAST metric {metric}"))
         
         for class_uri, label in classes:
             self.graph.add((class_uri, RDF.type, RDFS.Class))
@@ -312,7 +339,7 @@ class GenomeKGBuilder:
             raise
 
 
-def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path, 
+def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
                                        output_dir: Path) -> Dict[str, Any]:
     """
     Build complete knowledge graph from pipeline results.
@@ -326,9 +353,12 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         Dict containing build statistics and output files
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Initialize builder
     builder = GenomeKGBuilder()
+
+    # Directory containing QUAST outputs (stage01)
+    quast_dir = stage03_dir.parent / "stage01_quast"
     
     # Load prodigal manifest to get genome/gene information
     prodigal_manifest_file = stage03_dir / "processing_manifest.json"
@@ -349,9 +379,18 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         genome_id = genome_result['genome_id']
         
         # Add genome entity
+        # Parse QUAST quality metrics if available
+        quast_report = quast_dir / "genomes" / genome_id / "report.tsv"
+        quality_metrics = {}
+        if quast_report.exists():
+            try:
+                quality_metrics = parse_quast_report(quast_report)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"Failed to parse QUAST metrics for {genome_id}: {e}")
+
         genome_data = {
             'genome_id': genome_id,
-            'quality_metrics': {}  # TODO: Load from QUAST results
+            'quality_metrics': quality_metrics
         }
         genome_uri = builder.add_genome_entity(genome_data)
         
