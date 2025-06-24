@@ -222,9 +222,44 @@ def literature_search(query: str, email: str, **kwargs) -> str:
         logger.error(f"Literature search failed: {e}")
         return f"Error: Literature search failed - {str(e)}"
 
+# Code interpreter tool (import at module level)
+async def code_interpreter_tool(code: str, session_id: str = None, timeout: int = 30, **kwargs) -> Dict[str, Any]:
+    """
+    Execute Python code using the secure code interpreter service.
+    
+    Args:
+        code: Python code to execute
+        session_id: Optional session ID for stateful execution
+        timeout: Execution timeout in seconds
+        **kwargs: Additional parameters (for compatibility)
+        
+    Returns:
+        Dictionary containing execution results
+    """
+    try:
+        from ..code_interpreter.client import code_interpreter_tool as execute_code
+        return await execute_code(code=code, session_id=session_id, timeout=timeout)
+    except ImportError:
+        return {
+            "success": False,
+            "error": "Code interpreter service not available",
+            "stdout": "",
+            "stderr": "",
+            "execution_time": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Code execution failed: {str(e)}",
+            "stdout": "",
+            "stderr": "",
+            "execution_time": 0
+        }
+
 # Tool manifest for the agent
 AVAILABLE_TOOLS = {
     "literature_search": literature_search,
+    "code_interpreter": code_interpreter_tool,
 }
 
 # ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
@@ -239,6 +274,8 @@ class PlannerAgent(dspy.Signature):
     
     WHEN TO USE AGENTIC PLANNING (requires_planning = true):
     - Literature search needed: "What does recent research say about X?"
+    - Code execution needed: "Plot the genomic neighborhood", "Calculate statistics", "Create a heatmap"
+    - Data analysis workflows: "Analyze protein similarities and visualize results"
     - Cross-reference analysis: "Compare our data with published studies"
     - Multi-step workflows: "Find X, then search literature about Y, then combine"
     
@@ -250,6 +287,7 @@ class PlannerAgent(dspy.Signature):
     
     AVAILABLE TOOLS:
     - literature_search: Search PubMed for scientific literature and papers
+    - code_interpreter: Execute Python code for data analysis, visualization, and calculations
     
     TASK TYPES:
     - atomic_query: Query the local knowledge graph for known facts
@@ -276,9 +314,16 @@ class PlannerAgent(dspy.Signature):
                 "dependencies": []
             },
             {
+                "id": "create_visualization",
+                "type": "tool_call",
+                "tool_name": "code_interpreter",
+                "tool_args": {"code": "import matplotlib.pyplot as plt\nimport numpy as np\n\n# Create example plot\nplt.figure(figsize=(10, 6))\nplt.plot([1, 2, 3, 4], [1, 4, 2, 3])\nplt.title('Data Analysis Results')\nplt.savefig('analysis_plot.png')\nprint('Plot saved as analysis_plot.png')"},
+                "dependencies": ["query_local_db"]
+            },
+            {
                 "id": "synthesize",
                 "type": "aggregate",
-                "dependencies": ["search_literature", "query_local_db"]
+                "dependencies": ["search_literature", "query_local_db", "create_visualization"]
             }
         ]
     }
