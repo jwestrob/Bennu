@@ -128,7 +128,7 @@ python run_tests.py --smoke
 python -m src.cli build
 
 # 2. Load knowledge graph into Neo4j
-python load_neo4j.py
+python -m src.build_kg.neo4j_bulk_loader --csv-dir data/stage05_kg/csv --neo4j-home /path/to/neo4j
 
 # 3. Ask biological questions
 python -m src.cli ask "What metabolic pathways are present in genome X?"
@@ -151,6 +151,18 @@ python run_esm2_m4_max.py
 # Run with Nextflow
 nextflow run main.nf -profile standard
 ```
+
+### Remote Neo4j Import
+
+Use the bulk loader to import CSV files into a remote database:
+
+```bash
+python scripts/remote_bulk_import.py \
+  --csv-dir data/stage05_kg/csv \
+  --host neo4j.example.com \
+  --user neo4j --password <password>
+```
+The script accepts `--port` and `--database` if your server uses non-default settings.
 
 ## 🧬 Example Biological Insights
 
