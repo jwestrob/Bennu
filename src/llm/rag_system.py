@@ -74,7 +74,8 @@ class ContextRetriever(dspy.Signature):
     - DomainAnnotation nodes: Use .id containing "/domain/DOMAIN_NAME/start-end", .bitscore for confidence
     - Protein nodes: Use .id property with "protein:" prefix, linked DIRECTLY via HASFUNCTION->KEGGOrtholog and HASDOMAIN->DomainAnnotation->DOMAINFAMILY->Domain
     - Gene nodes: Use .id, .startCoordinate, .endCoordinate, .strand, .lengthAA, .gcContent properties, linked via BELONGSTOGENOME->Genome and (p)-[:ENCODEDBY]->(g:Gene)
-    - Genome nodes: Use .id property
+    - Genome nodes: Use .id property, linked to QualityMetrics via HASQUALITYMETRICS relationship
+    - QualityMetrics nodes: Use QUAST properties: quast_contigs, quast_total_length, quast_largest_contig, quast_n50, quast_n75, quast_gc_content, quast_n_count, quast_n_per_100_kbp, quast_contigs_1000bp, quast_contigs_5000bp, quast_contigs_10000bp, quast_l50, quast_l75
     
     CRITICAL: 
     - Protein IDs must include "protein:" prefix. 
@@ -88,6 +89,7 @@ class ContextRetriever(dspy.Signature):
     4. Use OPTIONAL MATCH for KEGGOrtholog to include proteins without KEGG annotations
     5. Prioritize biological insights over technical metrics like bitscores
     6. FOR DOMAIN FAMILY SEARCHES: Use Domain.id CONTAINS 'DOMAIN_NAME' instead of Domain.description to find all variants (e.g., TPR_1, TPR_2, etc.)
+    7. CRITICAL: NEVER use exists() function - use "variable.property IS NOT NULL" instead
     
     SEMANTIC SEARCH GUIDANCE:
     - Use protein_search for: similarity queries, functional descriptions, protein names without specific IDs
@@ -100,6 +102,7 @@ class ContextRetriever(dspy.Signature):
     - Domain family search: MATCH (p:Protein)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WHERE dom.id CONTAINS 'TPR' MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN p.id, d.id, d.bitscore, dom.description, dom.pfamAccession, ko.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand, g.lengthAA
     - Function search: MATCH (ko:KEGGOrtholog) WHERE ko.description CONTAINS 'cyclase' MATCH (p:Protein)-[:HASFUNCTION]->(ko) RETURN ko.id, ko.description, collect(p.id)
     - Ribosomal protein search: MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'ribosom' AND toLower(ko.description) CONTAINS 'l15' MATCH (p:Protein)-[:HASFUNCTION]->(ko) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) RETURN ko.id, ko.description, p.id, g.startCoordinate, g.endCoordinate LIMIT 20
+    - Genome quality metrics: MATCH (genome:Genome {id: 'GENOME_ID'}) OPTIONAL MATCH (genome)-[:HASQUALITYMETRICS]->(qm:QualityMetrics) OPTIONAL MATCH (g:Gene)-[:BELONGSTOGENOME]->(genome) OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) RETURN genome.id, qm.quast_contigs, qm.quast_total_length, qm.quast_n50, qm.quast_gc_content, qm.quast_largest_contig, qm.quast_l50, count(DISTINCT g) as gene_count, count(DISTINCT p) as protein_count
     
     GENOMIC CONTEXT QUERIES (Neo4j + neighbor analysis):
     - CRITICAL: For context questions, ALWAYS include neighbor analysis on same scaffold/contig only
@@ -117,7 +120,7 @@ class ContextRetriever(dspy.Signature):
     
     question = dspy.InputField(desc="User's question")
     query_type = dspy.InputField(desc="Classified query type")
-    neo4j_query = dspy.OutputField(desc="Rich Cypher query traversing full relationship chains: Use DomainAnnotation->DOMAINFAMILY->Domain for descriptions, include OPTIONAL MATCH for KEGGOrtholog, prioritize functional annotations over technical metrics")
+    neo4j_query = dspy.OutputField(desc="Rich Cypher query traversing full relationship chains: Use DomainAnnotation->DOMAINFAMILY->Domain for descriptions, include OPTIONAL MATCH for KEGGOrtholog, prioritize functional annotations over technical metrics. IMPORTANT: Use only simple alphanumeric characters in alias names (no unicode symbols like ≥)")
     protein_search = dspy.OutputField(desc="Protein ID or description for semantic search (if needed)")
     requires_multi_stage = dspy.OutputField(desc="Boolean: true if this query needs multi-stage processing (keyword search → similarity expansion). Use for functional similarity questions like 'find proteins similar to heme transporters'")
     seed_proteins_for_similarity = dspy.OutputField(desc="Boolean: true if Neo4j results should be used as seeds for LanceDB similarity search in stage 2")
@@ -470,6 +473,33 @@ class GenomicRAG(dspy.Module):
         """Format context for LLM consumption with enhanced genomic intelligence and quantitative insights."""
         formatted_parts = []
         
+        # Safe formatting functions to handle string values from Neo4j
+        def _safe_format_int(val, default="N/A"):
+            """Safely format integer values (handles strings from Neo4j)."""
+            try:
+                if val is None or val == "N/A":
+                    return default
+                if isinstance(val, int):
+                    return f"{val:,}"
+                if isinstance(val, str):
+                    return f"{int(val):,}"
+                return default
+            except (ValueError, TypeError):
+                return default
+                
+        def _safe_format_float(val, precision=2, default="N/A"):
+            """Safely format float values (handles strings from Neo4j)."""
+            try:
+                if val is None or val == "N/A":
+                    return default
+                if isinstance(val, (int, float)):
+                    return f"{val:.{precision}f}"
+                if isinstance(val, str):
+                    return f"{float(val):.{precision}f}"
+                return default
+            except (ValueError, TypeError):
+                return default
+        
         def _format_protein_id(full_id: str) -> tuple[str, str]:
             """Format protein ID for display: (short_form, full_id)"""
             if not full_id or len(full_id) < 60:
@@ -633,23 +663,51 @@ class GenomicRAG(dspy.Module):
                         sample_size = item.get('_sample_size', 0)
                         
                         if is_sample and total_count > sample_size:
-                            formatted_parts.append(f"  • Total {domain_name} domains in dataset: {total_count:,} (showing {sample_size:,} representative examples)")
+                            formatted_parts.append(f"  • Total {domain_name} domains in dataset: {_safe_format_int(total_count)} (showing {_safe_format_int(sample_size)} representative examples)")
                         else:
-                            formatted_parts.append(f"  • Total {domain_name} domains found: {total_count:,}")
+                            formatted_parts.append(f"  • Total {domain_name} domains found: {_safe_format_int(total_count)}")
                         domain_total_shown = True
                         break
                 
-                # Then handle regular count fields (skip metadata fields)
+                # Then handle regular count fields and genome quality metrics
                 for item in context.structured_data:
                     for key, value in item.items():
                         if key.startswith('_'):  # Skip metadata fields
                             continue
-                        if 'protein' in key.lower() and ('count' in key.lower() or 'number' in key.lower()):
-                            formatted_parts.append(f"  • {key.replace('numberOfProteins', 'Total proteins')}: {value:,}")
+                        
+                        # Handle genome quality metrics specifically
+                        if key == 'total_length_bp':
+                            formatted_parts.append(f"  • Total genome length: {_safe_format_int(value)} bp")
+                        elif key == 'contig_count':
+                            formatted_parts.append(f"  • Contig count: {_safe_format_int(value)}")
+                        elif key == 'largest_contig_bp':
+                            formatted_parts.append(f"  • Largest contig: {_safe_format_int(value)} bp")
+                        elif key == 'n50':
+                            formatted_parts.append(f"  • N50: {_safe_format_int(value)} bp")
+                        elif key == 'n75':
+                            formatted_parts.append(f"  • N75: {_safe_format_int(value)} bp")
+                        elif key == 'gc_content':
+                            gc_val = _safe_format_float(value, precision=1)
+                            if gc_val != "N/A":
+                                try:
+                                    gc_percent = float(str(value)) * 100 if float(str(value)) <= 1.0 else float(str(value))
+                                    formatted_parts.append(f"  • GC content: {gc_percent:.1f}%")
+                                except:
+                                    formatted_parts.append(f"  • GC content: {gc_val}%")
+                        elif key == 'contigs_gt_1kbp':
+                            formatted_parts.append(f"  • Contigs ≥1kb: {_safe_format_int(value)}")
+                        elif key == 'contigs_gt_5kbp':
+                            formatted_parts.append(f"  • Contigs ≥5kb: {_safe_format_int(value)}")
+                        elif key == 'contigs_gt_10kbp':
+                            formatted_parts.append(f"  • Contigs ≥10kb: {_safe_format_int(value)}")
+                        
+                        # Handle regular count fields
+                        elif 'protein' in key.lower() and ('count' in key.lower() or 'number' in key.lower()):
+                            formatted_parts.append(f"  • {key.replace('numberOfProteins', 'Total proteins')}: {_safe_format_int(value)}")
                         elif 'domain' in key.lower() and 'count' in key.lower():
-                            formatted_parts.append(f"  • {key}: {value:,}")
+                            formatted_parts.append(f"  • {key}: {_safe_format_int(value)}")
                         elif key.endswith('_count') or key.startswith('count'):
-                            formatted_parts.append(f"  • {key.replace('_', ' ').title()}: {value:,}")
+                            formatted_parts.append(f"  • {key.replace('_', ' ').title()}: {_safe_format_int(value)}")
                     break  # Only process first item for counts to avoid repetition
             
             if is_domain_query:
@@ -692,9 +750,9 @@ class GenomicRAG(dspy.Module):
                     sample_size = first_item.get('_sample_size', len(domain_data))
                     
                     if is_sample and total_count > sample_size:
-                        formatted_parts.append(f"  • Total {domain_type} domains in dataset: {total_count:,} (showing {sample_size:,} representative examples)")
+                        formatted_parts.append(f"  • Total {domain_type} domains in dataset: {_safe_format_int(total_count)} (showing {_safe_format_int(sample_size)} representative examples)")
                     else:
-                        formatted_parts.append(f"  • Total {domain_type} domains found: {total_count:,}")
+                        formatted_parts.append(f"  • Total {domain_type} domains found: {_safe_format_int(total_count)}")
                     
                     # Sort domains by position instead of score
                     sorted_domains = domain_data
@@ -779,11 +837,11 @@ class GenomicRAG(dspy.Module):
                 if start != 'N/A' and end != 'N/A':
                     strand_symbol = "+" if str(strand) == "1" else "-" if str(strand) == "-1" else strand
                     
-                    # Calculate gene length in bp
+                    # Calculate gene length in bp using safe formatting
                     try:
-                        gene_length_bp = abs(int(end) - int(start)) + 1
-                        formatted_parts.append(f"  • Genomic Location: {start:,}-{end:,} bp (strand {strand_symbol})")
-                        formatted_parts.append(f"  • Gene Length: {gene_length_bp:,} bp")
+                        gene_length_bp = abs(int(str(end)) - int(str(start))) + 1
+                        formatted_parts.append(f"  • Genomic Location: {_safe_format_int(start)}-{_safe_format_int(end)} bp (strand {strand_symbol})")
+                        formatted_parts.append(f"  • Gene Length: {_safe_format_int(gene_length_bp)} bp")
                     except:
                         formatted_parts.append(f"  • Genomic Location: {start}-{end} bp (strand {strand_symbol})")
                     
@@ -981,7 +1039,7 @@ class GenomicRAG(dspy.Module):
                                     formatted_parts.append(f"    \n    Upstream Neighbors:")
                                     for neighbor in upstream_neighbors[:2]:  # Show top 2 upstream
                                         short_id, _ = _format_protein_id(neighbor['protein_id'])
-                                        formatted_parts.append(f"    • {short_id} ({neighbor['distance']:,}bp upstream, strand {neighbor['strand']}):")
+                                        formatted_parts.append(f"    • {short_id} ({_safe_format_int(neighbor['distance'])}bp upstream, strand {neighbor['strand']}):")
                                         
                                         # Show all PFAM domains
                                         pfam_domains = [d for d in neighbor.get('pfam_id', []) if d and d != 'None']
@@ -1003,7 +1061,7 @@ class GenomicRAG(dspy.Module):
                                     formatted_parts.append(f"    \n    Downstream Neighbors:")
                                     for neighbor in downstream_neighbors[:2]:  # Show top 2 downstream
                                         short_id, _ = _format_protein_id(neighbor['protein_id'])
-                                        formatted_parts.append(f"    • {short_id} ({neighbor['distance']:,}bp downstream, strand {neighbor['strand']}):")
+                                        formatted_parts.append(f"    • {short_id} ({_safe_format_int(neighbor['distance'])}bp downstream, strand {neighbor['strand']}):")
                                         
                                         # Show all PFAM domains
                                         pfam_domains = [d for d in neighbor.get('pfam_id', []) if d and d != 'None']
@@ -1113,7 +1171,7 @@ class GenomicRAG(dspy.Module):
                     end = item['end_coordinate']
                     strand = item.get('strand', '?')
                     strand_symbol = "+" if str(strand) == "1" else "-" if str(strand) == "-1" else strand
-                    formatted_parts.append(f"     Genomic Location: {start:,}-{end:,} bp (strand {strand_symbol})")
+                    formatted_parts.append(f"     Genomic Location: {_safe_format_int(start)}-{_safe_format_int(end)} bp (strand {strand_symbol})")
                 
                 # Show full ID if different from short ID (collapsed to save space)
                 if short_id != full_id:

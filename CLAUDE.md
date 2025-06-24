@@ -377,3 +377,10 @@ This data enables genomic context analysis, operon prediction, and regulatory el
 - **Components**: Containerized Neo4j + LanceDB + LLM microservices ready
 - **Scaling**: Test with larger datasets (>100K proteins)
 - **Monitoring**: Add comprehensive logging and performance metrics
+
+#### 4. **Domain Search Fallback Mechanism**
+- **Current**: DSPy prompts use Domain.id CONTAINS 'DOMAIN_NAME' for family searches to find variants (e.g., TPR_1, TPR_2, etc.)
+- **Improvement Needed**: Implement fallback logic where if Domain.description search fails, automatically retry with Domain.id search, and vice versa
+- **Benefits**: More robust domain family searches that can handle both exact family names and descriptive text queries
+- **Implementation**: Modify DSPy query generation to include retry logic for failed domain searches
+- **Priority**: Medium (enhances search robustness but current approach works for most cases)

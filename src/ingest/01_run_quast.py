@@ -203,8 +203,7 @@ def run_quast_single(genome_info: Dict[str, Any],
             "--no-html",  # Skip HTML report generation for faster processing
             "--no-icarus",  # Skip Icarus visualization
             "--no-snps",   # Skip SNP analysis
-            "--no-gc",     # Skip detailed GC analysis
-            "--fast"       # Use fast mode
+            "--no-plots"   # Skip plot generation for faster processing
         ]
         
         # Add reference if provided
