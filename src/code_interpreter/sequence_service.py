@@ -12,7 +12,24 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
-from ..build_kg.sequence_db import SequenceDatabase, get_default_sequence_db
+# Import sequence database directly for Docker environment
+import sys
+from pathlib import Path
+sys.path.append('/app/build_kg')
+
+try:
+    from sequence_db import SequenceDatabase
+except ImportError:
+    # Fallback for development environment
+    from ..build_kg.sequence_db import SequenceDatabase
+
+def get_default_sequence_db():
+    """Get default sequence database instance."""
+    db_path = Path("/app/sequences.db")
+    if db_path.exists():
+        return SequenceDatabase(db_path, read_only=True)  # Read-only for Docker mount
+    else:
+        raise FileNotFoundError(f"Sequence database not found at {db_path}")
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +45,10 @@ class SequenceInfo:
 class SequenceService:
     """Async service for protein sequence retrieval."""
     
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, read_only: bool = False):
         """Initialize sequence service."""
         if db_path:
-            self.db = SequenceDatabase(db_path)
+            self.db = SequenceDatabase(db_path, read_only=read_only)
         else:
             self.db = get_default_sequence_db()
         self._cache = {}  # Simple in-memory cache
