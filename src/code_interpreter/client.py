@@ -307,6 +307,395 @@ if positions:
         
         return await self.client.execute_code(plotting_code)
     
+    async def fetch_protein_sequences(self, protein_ids: List[str]) -> Dict[str, str]:
+        """
+        Fetch protein sequences from the sequence database.
+        
+        Args:
+            protein_ids: List of protein identifiers
+            
+        Returns:
+            Dict mapping protein_id to sequence
+        """
+        fetch_code = f"""
+# Fetch protein sequences from sequence database
+import sys
+sys.path.append('/app')
+
+try:
+    from sequence_service import fetch_sequences
+    import asyncio
+    
+    protein_ids = {protein_ids}
+    
+    # Fetch sequences
+    sequences = asyncio.run(fetch_sequences(protein_ids))
+    
+    print(f"Successfully fetched {{len(sequences)}} sequences out of {{len(protein_ids)}} requested")
+    
+    # Store in global variable for use in subsequent code
+    globals()['fetched_sequences'] = sequences
+    
+    # Show sample
+    for i, (protein_id, sequence) in enumerate(list(sequences.items())[:3]):
+        print(f"  {{protein_id}}: {{sequence[:50]}}...{{sequence[-10:]}}")
+        if i == 2 and len(sequences) > 3:
+            print(f"  ... and {{len(sequences) - 3}} more")
+            
+except Exception as e:
+    print(f"Error fetching sequences: {{e}}")
+    globals()['fetched_sequences'] = {{}}
+"""
+        
+        return await self.client.execute_code(fetch_code)
+    
+    async def analyze_amino_acid_composition_with_sequences(self, protein_groups: Dict[str, List[str]]) -> Dict[str, Any]:
+        """
+        Analyze amino acid composition for protein groups with automatic sequence fetching.
+        
+        Args:
+            protein_groups: Dict mapping group name to list of protein IDs
+            
+        Returns:
+            Analysis results with visualization
+        """
+        analysis_code = f"""
+# Amino acid composition analysis with automatic sequence fetching
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+import sys
+sys.path.append('/app')
+
+try:
+    from sequence_service import calculate_aa_composition
+    import asyncio
+    
+    protein_groups = {protein_groups}
+    
+    print("=== Amino Acid Composition Analysis ===")
+    
+    # Fetch sequences and calculate compositions for each group
+    all_compositions = {{}}
+    group_data = {{}}
+    
+    for group_name, protein_ids in protein_groups.items():
+        print(f"\\nProcessing group: {{group_name}} ({{len(protein_ids)}} proteins)")
+        
+        # Calculate amino acid compositions
+        compositions = asyncio.run(calculate_aa_composition(protein_ids))
+        all_compositions[group_name] = compositions
+        
+        if compositions:
+            # Convert to DataFrame for analysis
+            df = pd.DataFrame.from_dict(compositions, orient='index')
+            group_data[group_name] = df
+            
+            print(f"  Mean composition calculated for {{len(compositions)}} sequences")
+        else:
+            print(f"  No sequences found for group {{group_name}}")
+    
+    if len(group_data) < 2:
+        print("Error: Need at least 2 groups with sequences for comparison")
+    else:
+        # Statistical comparison
+        print("\\n=== Statistical Comparison ===")
+        
+        group_names = list(group_data.keys())
+        group1_name, group2_name = group_names[0], group_names[1]
+        group1_data = group_data[group1_name]
+        group2_data = group_data[group2_name]
+        
+        # Amino acids to analyze
+        amino_acids = ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 
+                      'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
+        
+        significant_differences = []
+        
+        for aa in amino_acids:
+            if aa in group1_data.columns and aa in group2_data.columns:
+                # Mann-Whitney U test (non-parametric)
+                stat, p_value = stats.mannwhitneyu(
+                    group1_data[aa].dropna(), 
+                    group2_data[aa].dropna(),
+                    alternative='two-sided'
+                )
+                
+                mean1 = group1_data[aa].mean()
+                mean2 = group2_data[aa].mean()
+                
+                if p_value < 0.05:
+                    significant_differences.append((aa, p_value, mean1, mean2))
+                    print(f"  {{aa}}: p={{p_value:.3f}} ({{group1_name}}: {{mean1:.3f}}, {{group2_name}}: {{mean2:.3f}})")
+        
+        # Create visualization
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        
+        # 1. Mean composition comparison
+        mean_compositions = pd.DataFrame({{
+            group1_name: group1_data.mean(),
+            group2_name: group2_data.mean()
+        }})
+        
+        mean_compositions.plot(kind='bar', ax=ax1, alpha=0.7)
+        ax1.set_title('Mean Amino Acid Composition Comparison')
+        ax1.set_ylabel('Frequency')
+        ax1.legend()
+        ax1.tick_params(axis='x', rotation=45)
+        
+        # 2. Significant differences heatmap
+        if significant_differences:
+            sig_data = pd.DataFrame(significant_differences, 
+                                  columns=['AA', 'p_value', f'{{group1_name}}_mean', f'{{group2_name}}_mean'])
+            sig_data = sig_data.set_index('AA')
+            
+            # Create heatmap of mean differences
+            diff_data = sig_data[[f'{{group1_name}}_mean', f'{{group2_name}}_mean']]
+            sns.heatmap(diff_data.T, annot=True, cmap='RdBu_r', center=0, ax=ax2)
+            ax2.set_title('Significant Differences (p < 0.05)')
+        else:
+            ax2.text(0.5, 0.5, 'No significant differences\\nfound (p < 0.05)', 
+                    ha='center', va='center', transform=ax2.transAxes)
+            ax2.set_title('Statistical Significance')
+        
+        # 3. Distribution comparison for most significant AA
+        if significant_differences:
+            most_sig_aa = min(significant_differences, key=lambda x: x[1])[0]
+            
+            ax3.hist(group1_data[most_sig_aa].dropna(), alpha=0.7, 
+                    label=f'{{group1_name}} (n={{len(group1_data)}})', bins=15)
+            ax3.hist(group2_data[most_sig_aa].dropna(), alpha=0.7, 
+                    label=f'{{group2_name}} (n={{len(group2_data)}})', bins=15)
+            ax3.set_title(f'Distribution: {{most_sig_aa}} (most significant)')
+            ax3.set_xlabel('Frequency')
+            ax3.set_ylabel('Count')
+            ax3.legend()
+        
+        # 4. Summary statistics table
+        ax4.axis('tight')
+        ax4.axis('off')
+        
+        summary_stats = []
+        for group_name, df in group_data.items():
+            summary_stats.append([
+                group_name,
+                len(df),
+                f"{{df.mean().mean():.3f}}",
+                f"{{df.std().mean():.3f}}",
+                len(significant_differences) if group_name == group1_name else "-"
+            ])
+        
+        table = ax4.table(cellText=summary_stats,
+                         colLabels=['Group', 'N', 'Mean AA Freq', 'Std AA Freq', 'Sig. Diff.'],
+                         cellLoc='center',
+                         loc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        ax4.set_title('Summary Statistics')
+        
+        plt.tight_layout()
+        plt.savefig('amino_acid_composition_analysis.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # Summary
+        print(f"\\n=== Analysis Summary ===")
+        print(f"Groups compared: {{', '.join(group_names)}}")
+        print(f"Total proteins analyzed: {{sum(len(df) for df in group_data.values())}}")
+        print(f"Significant differences (p < 0.05): {{len(significant_differences)}}")
+        
+        if significant_differences:
+            print("\\nMost significant amino acid differences:")
+            for aa, p_val, mean1, mean2 in sorted(significant_differences, key=lambda x: x[1])[:5]:
+                fold_change = mean2 / mean1 if mean1 > 0 else float('inf')
+                print(f"  {{aa}}: {{fold_change:.2f}}x enrichment, p={{p_val:.2e}}")
+        
+        print("\\nVisualization saved as: amino_acid_composition_analysis.png")
+
+except Exception as e:
+    print(f"Error in amino acid composition analysis: {{e}}")
+    import traceback
+    traceback.print_exc()
+"""
+        
+        return await self.client.execute_code(analysis_code)
+    
+    async def calculate_hydrophobicity_comparison(self, protein_groups: Dict[str, List[str]]) -> Dict[str, Any]:
+        """
+        Calculate and compare hydrophobicity profiles between protein groups.
+        
+        Args:
+            protein_groups: Dict mapping group name to list of protein IDs
+            
+        Returns:
+            Hydrophobicity analysis results
+        """
+        hydrophobicity_code = f"""
+# Hydrophobicity profile comparison
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+import sys
+sys.path.append('/app')
+
+try:
+    from sequence_service import calculate_hydrophobicity
+    import asyncio
+    
+    protein_groups = {protein_groups}
+    
+    print("=== Hydrophobicity Profile Analysis ===")
+    
+    # Calculate hydrophobicity for each group
+    group_hydrophobicity = {{}}
+    
+    for group_name, protein_ids in protein_groups.items():
+        print(f"\\nProcessing group: {{group_name}} ({{len(protein_ids)}} proteins)")
+        
+        hydrophobicity_scores = asyncio.run(calculate_hydrophobicity(protein_ids))
+        
+        if hydrophobicity_scores:
+            group_hydrophobicity[group_name] = list(hydrophobicity_scores.values())
+            mean_score = np.mean(list(hydrophobicity_scores.values()))
+            std_score = np.std(list(hydrophobicity_scores.values()))
+            print(f"  Mean hydrophobicity: {{mean_score:.3f}} ± {{std_score:.3f}}")
+        else:
+            print(f"  No sequences found for group {{group_name}}")
+            group_hydrophobicity[group_name] = []
+    
+    # Statistical comparison
+    if len(group_hydrophobicity) >= 2:
+        group_names = list(group_hydrophobicity.keys())
+        
+        print("\\n=== Statistical Comparison ===")
+        
+        # Pairwise comparisons
+        for i in range(len(group_names)):
+            for j in range(i + 1, len(group_names)):
+                group1, group2 = group_names[i], group_names[j]
+                scores1, scores2 = group_hydrophobicity[group1], group_hydrophobicity[group2]
+                
+                if len(scores1) > 0 and len(scores2) > 0:
+                    # Welch's t-test (assumes unequal variances)
+                    t_stat, p_value = stats.ttest_ind(scores1, scores2, equal_var=False)
+                    
+                    # Mann-Whitney U test (non-parametric alternative)
+                    u_stat, u_p_value = stats.mannwhitneyu(scores1, scores2, alternative='two-sided')
+                    
+                    # Effect size (Cohen's d)
+                    pooled_std = np.sqrt(((len(scores1) - 1) * np.var(scores1, ddof=1) + 
+                                        (len(scores2) - 1) * np.var(scores2, ddof=1)) / 
+                                       (len(scores1) + len(scores2) - 2))
+                    cohens_d = (np.mean(scores1) - np.mean(scores2)) / pooled_std if pooled_std > 0 else 0
+                    
+                    print(f"\\n{{group1}} vs {{group2}}:")
+                    print(f"  t-test: t={{t_stat:.3f}}, p={{p_value:.3f}}")
+                    print(f"  Mann-Whitney U: U={{u_stat:.1f}}, p={{u_p_value:.3f}}")
+                    print(f"  Effect size (Cohen's d): {{cohens_d:.3f}}")
+                    
+                    if p_value < 0.05:
+                        direction = "more hydrophobic" if np.mean(scores1) > np.mean(scores2) else "more hydrophilic"
+                        print(f"  → {{group1}} is significantly {{direction}} than {{group2}}")
+        
+        # Visualization
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        
+        # 1. Box plot comparison
+        box_data = []
+        box_labels = []
+        for group_name, scores in group_hydrophobicity.items():
+            if scores:
+                box_data.append(scores)
+                box_labels.append(f'{{group_name}}\\n(n={{len(scores)}})')
+        
+        ax1.boxplot(box_data, labels=box_labels)
+        ax1.set_title('Hydrophobicity Distribution by Group')
+        ax1.set_ylabel('Kyte-Doolittle Hydrophobicity Score')
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Histogram overlay
+        colors = ['blue', 'orange', 'green', 'red', 'purple']
+        for i, (group_name, scores) in enumerate(group_hydrophobicity.items()):
+            if scores:
+                ax2.hist(scores, alpha=0.6, label=f'{{group_name}} (n={{len(scores)}})', 
+                        color=colors[i % len(colors)], bins=20)
+        
+        ax2.set_title('Hydrophobicity Score Distribution')
+        ax2.set_xlabel('Kyte-Doolittle Score')
+        ax2.set_ylabel('Frequency')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # 3. Mean comparison with error bars
+        means = [np.mean(scores) if scores else 0 for scores in group_hydrophobicity.values()]
+        stds = [np.std(scores) if scores else 0 for scores in group_hydrophobicity.values()]
+        
+        bars = ax3.bar(range(len(group_names)), means, yerr=stds, 
+                      capsize=5, alpha=0.7, color=colors[:len(group_names)])
+        ax3.set_title('Mean Hydrophobicity by Group')
+        ax3.set_ylabel('Mean Kyte-Doolittle Score')
+        ax3.set_xticks(range(len(group_names)))
+        ax3.set_xticklabels(group_names, rotation=45)
+        ax3.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for i, (bar, mean, std) in enumerate(zip(bars, means, stds)):
+            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + std + 0.1,
+                    f'{{mean:.2f}}', ha='center', va='bottom')
+        
+        # 4. Summary statistics
+        ax4.axis('tight')
+        ax4.axis('off')
+        
+        summary_data = []
+        for group_name, scores in group_hydrophobicity.items():
+            if scores:
+                summary_data.append([
+                    group_name,
+                    len(scores),
+                    f"{{np.mean(scores):.3f}}",
+                    f"{{np.std(scores):.3f}}",
+                    f"{{np.min(scores):.3f}}",
+                    f"{{np.max(scores):.3f}}"
+                ])
+        
+        table = ax4.table(cellText=summary_data,
+                         colLabels=['Group', 'N', 'Mean', 'Std', 'Min', 'Max'],
+                         cellLoc='center',
+                         loc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        ax4.set_title('Hydrophobicity Statistics Summary')
+        
+        plt.tight_layout()
+        plt.savefig('hydrophobicity_comparison.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print("\\nVisualization saved as: hydrophobicity_comparison.png")
+        print("\\n=== Biological Interpretation ===")
+        
+        # Interpret results
+        for group_name, scores in group_hydrophobicity.items():
+            if scores:
+                mean_score = np.mean(scores)
+                if mean_score > 0.5:
+                    print(f"{{group_name}}: Hydrophobic proteins (score={{mean_score:.2f}}) - likely membrane-associated")
+                elif mean_score < -0.5:
+                    print(f"{{group_name}}: Hydrophilic proteins (score={{mean_score:.2f}}) - likely cytoplasmic/extracellular")
+                else:
+                    print(f"{{group_name}}: Mixed hydrophobicity (score={{mean_score:.2f}}) - diverse subcellular locations")
+
+except Exception as e:
+    print(f"Error in hydrophobicity analysis: {{e}}")
+    import traceback
+    traceback.print_exc()
+"""
+        
+        return await self.client.execute_code(hydrophobicity_code)
+
     async def calculate_statistics(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Perform statistical analysis on genomic data.
