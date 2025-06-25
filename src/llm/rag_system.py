@@ -17,6 +17,8 @@ from rich.console import Console
 
 from .config import LLMConfig
 from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor, QueryResult
+from .dsp_sig import NEO4J_SCHEMA
+from .sequence_tools import sequence_viewer, extract_protein_ids_from_analysis
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -276,6 +278,7 @@ except ImportError:
 AVAILABLE_TOOLS = {
     "literature_search": literature_search,
     "code_interpreter": code_interpreter_tool,
+    "sequence_viewer": sequence_viewer,
 }
 
 # ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
@@ -304,6 +307,7 @@ class PlannerAgent(dspy.Signature):
     AVAILABLE TOOLS:
     - literature_search: Search PubMed for scientific literature and papers
     - code_interpreter: Execute Python code for data analysis, visualization, and calculations
+    - sequence_viewer: Display raw protein sequences for detailed LLM biological analysis
     
     TASK TYPES:
     - atomic_query: Query the local knowledge graph for known facts
@@ -330,9 +334,16 @@ class PlannerAgent(dspy.Signature):
                 "dependencies": ["query_transport_proteins"]
             },
             {
+                "id": "view_sequences", 
+                "type": "tool_call",
+                "tool_name": "sequence_viewer",
+                "tool_args": {"protein_ids": [], "analysis_context": "amino acid composition analysis"},
+                "dependencies": ["analyze_composition"]
+            },
+            {
                 "id": "synthesize_results",
-                "type": "aggregate",
-                "dependencies": ["query_transport_proteins", "analyze_composition"]
+                "type": "aggregate", 
+                "dependencies": ["query_transport_proteins", "analyze_composition", "view_sequences"]
             }
         ]
     }
@@ -402,99 +413,35 @@ class QueryClassifier(dspy.Signature):
 
 class ContextRetriever(dspy.Signature):
     """Generate database queries to retrieve relevant genomic context.
+
+    MANDATORY QUERY TEMPLATE FOR TRANSPORT PROTEINS:
     
-    AVAILABLE DATABASE SCHEMA:
-    - Labels: Protein, KEGGOrtholog, Domain, DomainAnnotation, Gene, Genome, QualityMetrics
-    - Relationships: HASFUNCTION, HASDOMAIN, ENCODEDBY, DOMAINFAMILY
-    - Description Fields: KEGGOrtholog.description, Domain.description (search these for keywords)
-    
-    UNAVAILABLE (DO NOT USE): GO, CellularComponent, Sequence nodes, HAS_GO, LOCALIZED_TO, HAS_SEQUENCE relationships
-    
-    MANDATORY QUERY TEMPLATES - CHOOSE ONE AND ADAPT:
-    
-    TEMPLATE A - GENOMIC CONTEXT WITH NEIGHBORS (for operons, gene clusters, neighborhood analysis):
-    ```
-    // Search ALL available description fields for keywords
-    MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS '{search_term}'
-    MATCH (p:Protein)-[:HASFUNCTION]->(ko)
-    MATCH (p)-[:ENCODEDBY]->(g:Gene)
-    OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
-    WITH p, g, ko, dom, split(g.id, '_scaffold_')[0] + '_scaffold_' + split(split(g.id, '_scaffold_')[1], '_')[0] as scaffold_id
-    OPTIONAL MATCH (g2:Gene) 
-    WHERE g2.id STARTS WITH scaffold_id 
-      AND abs(toInteger(g.startCoordinate) - toInteger(g2.startCoordinate)) < 5000 
-      AND g.id <> g2.id
-    OPTIONAL MATCH (g2)<-[:ENCODEDBY]-(p2:Protein)
-    OPTIONAL MATCH (p2)-[:HASFUNCTION]->(ko2:KEGGOrtholog)
-    OPTIONAL MATCH (p2)-[:HASDOMAIN]->(d2:DomainAnnotation)-[:DOMAINFAMILY]->(dom2:Domain)
-    RETURN p.id as protein_id, g.id as gene_id, g.startCoordinate as gene_start, 
-           g.endCoordinate as gene_end, g.strand as gene_strand, g.lengthAA as gene_length_aa,
-           ko.description as function_desc, collect(DISTINCT dom.pfamAccession) as pfam_accessions,
-           collect(DISTINCT {neighbor_id: p2.id, neighbor_gene: g2.id, neighbor_start: g2.startCoordinate, 
-                            neighbor_end: g2.endCoordinate, neighbor_strand: g2.strand, 
-                            neighbor_function: ko2.description, neighbor_domain: dom2.description}) as detailed_neighbors
-    ORDER BY g.startCoordinate
-    ```
-    
-    TEMPLATE B - FUNCTIONAL ANNOTATION SEARCH (search all description fields):
-    ```
-    // Search KEGG functional annotations
-    MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS '{search_term}'
+    MATCH (ko:KEGGOrtholog) 
+    WHERE toLower(ko.description) CONTAINS 'transport'
     MATCH (p:Protein)-[:HASFUNCTION]->(ko)
     OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
     OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
-    RETURN p.id as protein_id, ko.id as ko_id, ko.description as ko_description,
-           g.startCoordinate as start_coordinate, g.endCoordinate as end_coordinate, g.strand,
-           collect(DISTINCT dom.pfamAccession) as pfam_accessions
-    
-    UNION
-    
-    // Search PFAM domain descriptions  
-    MATCH (dom:Domain) WHERE toLower(dom.description) CONTAINS '{search_term}'
-    MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)
-    OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
-    OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
-    RETURN p.id as protein_id, ko.id as ko_id, ko.description as ko_description,
-           g.startCoordinate as start_coordinate, g.endCoordinate as end_coordinate, g.strand,
-           collect(DISTINCT dom.pfamAccession) as pfam_accessions
-    ```
-    
-    CYPHER SYNTAX RULES:
-    - NEVER wrap UNION subqueries in parentheses - this is invalid Cypher syntax
-    - LIMIT and ORDER BY apply to the entire UNION result, not individual parts
-    - Keep UNION queries at the same indentation level
-    
-    TEMPLATE C - DOMAIN FAMILY SEARCH (search domain IDs and descriptions):
-    ```
-    MATCH (p:Protein)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) 
-    WHERE dom.id CONTAINS '{domain_name}' OR toLower(dom.description) CONTAINS '{domain_name}'
-    MATCH (p)-[:ENCODEDBY]->(g:Gene)
-    OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
-    RETURN p.id as protein_id, d.id as domain_annotation_id, dom.description as domain_description,
-           g.startCoordinate as gene_start, g.endCoordinate as gene_end, g.strand as gene_strand,
-           ko.description as function_description
-    ```
+    RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
+           g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
+           collect(DISTINCT dom.id) AS pfam_accessions
+    LIMIT 3
     
     CRITICAL RULES:
-    1. SEARCH ALL description fields (KEGGOrtholog.description, Domain.description) for maximum coverage
-    2. Use UNION queries to combine results from different annotation types
-    3. NEVER reference GO, CellularComponent, Sequence nodes, or non-existent relationships
-    4. Use toLower() for case-insensitive matching on ALL description searches
-    5. Include gene coordinates when available (Gene nodes exist, sequence data does not)
-    6. If user asks for data we don't have (GO terms, sequences), acknowledge limitation
-    7. NEVER wrap UNION subqueries in parentheses - invalid Cypher syntax
-    8. LIMIT and ORDER BY go at the very end, after the complete UNION
+    - Node labels: Protein, KEGGOrtholog, Gene, Domain, DomainAnnotation (ONLY these exist)
+    - Relationships: HASFUNCTION, ENCODEDBY, HASDOMAIN, DOMAINFAMILY (ALL UPPERCASE)
+    - Properties: p.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand
+    - DO NOT use: Function, f.name, f.kegg_id, p.accession, g.start, g.end, exists()
+    - USE: ko.description IS NOT NULL (not exists())
+    
+    For transport proteins, copy the template above EXACTLY with only the search term changed.
     """
     
     question = dspy.InputField(desc="User's question")
     query_type = dspy.InputField(desc="Classified query type")
-    template_choice = dspy.OutputField(desc="Choose: 'A' for genomic context with neighbors, 'B' for simple protein search, 'C' for domain search")
-    search_terms = dspy.OutputField(desc="Extract key search terms from the question (e.g., 'heme transport', 'GGDEF', 'cyclase')")
-    neo4j_query = dspy.OutputField(desc="Complete Cypher query using the chosen template with search terms substituted. MUST include gene coordinates and detailed_neighbors for Template A")
-    protein_search = dspy.OutputField(desc="Protein ID or description for semantic search (if needed)")
-    requires_multi_stage = dspy.OutputField(desc="Boolean: true if query asks for 'proteins similar to X' where X is a functional description (like 'heme transporters'). This triggers Stage 1: Neo4j finds proteins with function X, then Stage 2: LanceDB similarity search using those proteins as seeds.")
-    seed_proteins_for_similarity = dspy.OutputField(desc="Boolean: true if requires_multi_stage is true and we need to use Neo4j results as seeds for LanceDB similarity search")
-    search_strategy = dspy.OutputField(desc="How to combine the results")
+    search_terms = dspy.OutputField(desc="Extract key search terms from the question (e.g., 'transport', 'ABC', 'permease')")
+    neo4j_query = dspy.OutputField(desc="Complete Cypher query copying the mandatory template above exactly, only changing the search term in ko.description CONTAINS")
+    requires_multi_stage = dspy.OutputField(desc="Boolean: true if query asks for 'proteins similar to X' where X is a functional description")
+    search_strategy = dspy.OutputField(desc="Description of search approach")
 
 
 class GenomicAnswerer(dspy.Signature):
@@ -503,7 +450,7 @@ class GenomicAnswerer(dspy.Signature):
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data including domain descriptions, KEGG functions, and quantitative metrics")
     answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) If NO relevant data was retrieved, clearly state 'We don't have that kind of information in our database' and explain what data IS available, 2) Ground all statements in specific data points (coordinates, counts, IDs) when data exists, 3) For sequence-based analyses, acknowledge that raw sequences are available in a separate database that can be accessed via code execution, 4) Prioritize analysis of proximal neighbors vs distal ones when genomic context is available, 5) Calculate and report specific distances between genes when coordinate data exists, 6) Use specific protein/domain names from the actual retrieved data, 7) Organize response logically: Data Availability → Genomic Context → Functional Analysis → Biological Significance. CRITICAL: Be honest about data limitations and clearly explain what analyses are possible vs not possible with available data.")
-    confidence = dspy.OutputField(desc="Confidence level with reasoning: 'high - complete genomic context + literature support', 'medium - good genomic data but limited literature', 'low - minimal data available', 'none - no relevant data found in database'")
+    confidence = dspy.OutputField(desc="Confidence level with reasoning based on data quality for the specific query: 'high - complete data available for all requested analyses', 'medium - partial data available, some gaps in requested information', 'low - minimal data available, significant limitations', 'none - no relevant data found in database'. Only mention literature if literature search was actually performed as part of the analysis.")
     citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, code interpreter sessions, PubMed search terms used, or 'None - no data retrieved' if appropriate")
 
 
@@ -630,6 +577,7 @@ class GenomicRAG(dspy.Module):
         
         # Step 2: Generate retrieval strategy
         retrieval_plan = self.retriever(
+            db_schema=NEO4J_SCHEMA,
             question=question,
             query_type=classification.query_type
         )
@@ -817,6 +765,7 @@ class GenomicRAG(dspy.Module):
             # Execute database query
             classification = self.classifier(question=task.query)
             retrieval_plan = self.retriever(
+                db_schema=NEO4J_SCHEMA,
                 question=task.query,
                 query_type=classification.query_type
             )
@@ -856,6 +805,57 @@ class GenomicRAG(dspy.Module):
                 if self.code_interpreter_session_id:
                     task.tool_args["session_id"] = self.code_interpreter_session_id
                     logger.debug(f"Using persistent session: {self.code_interpreter_session_id}")
+            
+            # Auto-populate sequence viewer with protein IDs from previous results
+            elif task.tool_name == "sequence_viewer":
+                current_protein_ids = task.tool_args.get("protein_ids")
+                logger.debug(f"🔬 Sequence viewer task - current protein_ids: {current_protein_ids}")
+                
+                # Check if protein_ids contains unresolved template variables
+                needs_auto_population = (
+                    not current_protein_ids or 
+                    (isinstance(current_protein_ids, str) and current_protein_ids.startswith("${")) or
+                    (isinstance(current_protein_ids, list) and len(current_protein_ids) == 1 and 
+                     isinstance(current_protein_ids[0], str) and current_protein_ids[0].startswith("${"))
+                )
+                
+                if needs_auto_population:
+                    logger.info("🔍 Auto-populating sequence viewer with protein IDs from previous results")
+                    
+                    # Extract protein IDs from code interpreter results
+                    protein_ids = []
+                    for task_id, result in previous_results.items():
+                        if "tool_result" in result and result.get("tool_name") == "code_interpreter":
+                            code_output = result["tool_result"].get("stdout", "")
+                            extracted_ids = extract_protein_ids_from_analysis(code_output)
+                            protein_ids.extend(extracted_ids)
+                        
+                        # Extract from atomic query results
+                        elif "context" in result:
+                            context = result["context"]
+                            
+                            # Handle GenomicContext with structured_data
+                            if hasattr(context, 'structured_data'):
+                                for item in context.structured_data:
+                                    pid = item.get('protein_id', '')
+                                    if pid:
+                                        protein_ids.append(pid)
+                            # Handle QueryResult object wrapped in context
+                            elif hasattr(context, 'results'):
+                                for item in context.results:
+                                    pid = item.get('protein_id', '')
+                                    if pid:
+                                        protein_ids.append(pid)
+                    
+                    # Remove duplicates and limit
+                    unique_ids = list(dict.fromkeys(protein_ids))[:5]
+                    
+                    # Log auto-population results for debugging
+                    logger.info(f"🔍 Auto-population found {len(unique_ids)} protein IDs")
+                    
+                    task.tool_args["protein_ids"] = unique_ids
+                    logger.info(f"✅ Auto-populated sequence viewer with {len(unique_ids)} protein IDs")
+                    logger.debug(f"🧬 Final protein IDs for sequence viewer: {unique_ids}")
             
             # Handle both sync and async tool functions
             if asyncio.iscoroutinefunction(tool_function):
@@ -1174,13 +1174,29 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 tool_result = result["tool_result"]
                 tool_name = result.get("tool_name", "unknown")
                 
-                # Truncate very long tool results to avoid overwhelming the LLM
-                if len(str(tool_result)) > 2000:
-                    tool_result_summary = str(tool_result)[:2000] + "\n\n[... Additional results truncated for context efficiency ...]"
+                # Handle different tool types with appropriate formatting
+                if tool_name == "sequence_viewer":
+                    # For sequence viewer, use the formatted display directly without truncation
+                    if isinstance(tool_result, dict) and "formatted_display" in tool_result:
+                        tool_result_summary = tool_result["formatted_display"]
+                        tool_results.append(f"=== Protein Sequences: {task_id} ===\n{tool_result_summary}")
+                    else:
+                        tool_result_summary = str(tool_result)
+                        tool_results.append(f"=== Protein Sequences: {task_id} ===\n{tool_result_summary}")
+                elif tool_name == "literature_search":
+                    # For literature search, truncate long results
+                    if len(str(tool_result)) > 2000:
+                        tool_result_summary = str(tool_result)[:2000] + "\n\n[... Additional results truncated for context efficiency ...]"
+                    else:
+                        tool_result_summary = str(tool_result)
+                    tool_results.append(f"=== External Literature: {tool_name} ({task_id}) ===\n{tool_result_summary}")
                 else:
-                    tool_result_summary = str(tool_result)
-                
-                tool_results.append(f"=== External Literature: {tool_name} ({task_id}) ===\n{tool_result_summary}")
+                    # For other tools, truncate if too long
+                    if len(str(tool_result)) > 2000:
+                        tool_result_summary = str(tool_result)[:2000] + "\n\n[... Additional results truncated for context efficiency ...]"
+                    else:
+                        tool_result_summary = str(tool_result)
+                    tool_results.append(f"=== External Tool: {tool_name} ({task_id}) ===\n{tool_result_summary}")
                 
             elif "aggregated_results" in result:
                 # Aggregation result - these are less useful for final context
@@ -1241,6 +1257,7 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                         enhanced_query,
                         query_type="cypher"
                     )
+                    
                 
                 # Check for Neo4j query errors
                 if 'error' in neo4j_result.metadata:
@@ -1742,8 +1759,8 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 
                 # Enhanced genomic coordinates with quantitative context
                 # Handle both legacy field names and Neo4j field names
-                start = item.get('gene_start') or item.get('g.startCoordinate', 'N/A')
-                end = item.get('gene_end') or item.get('g.endCoordinate', 'N/A')
+                start = item.get('gene_start') or item.get('start_coordinate') or item.get('g.startCoordinate', 'N/A')
+                end = item.get('gene_end') or item.get('end_coordinate') or item.get('g.endCoordinate', 'N/A')
                 strand = item.get('gene_strand') or item.get('g.strand', 'N/A')
                 
                 if start != 'N/A' and end != 'N/A':
@@ -1798,8 +1815,8 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 
                 # Enhanced KEGG functional information
                 # Handle both legacy field names and Neo4j field names
-                kegg_id = item.get('kegg_functions') or item.get('ko.id')
-                kegg_desc = item.get('kegg_descriptions') or item.get('ko.description') or item.get('function_desc')
+                kegg_id = item.get('kegg_functions') or item.get('ko_id') or item.get('ko.id')
+                kegg_desc = item.get('kegg_descriptions') or item.get('ko_description') or item.get('ko.description') or item.get('function_desc')
                 
                 # Convert single values to lists for consistent processing
                 if kegg_id and not isinstance(kegg_id, list):
