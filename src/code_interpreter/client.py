@@ -743,7 +743,7 @@ print("\\nAnalysis complete!")
 async def code_interpreter_tool(
     code: str,
     session_id: Optional[str] = None,
-    timeout: int = 30,
+    timeout: int = 300,
     service_url: str = "http://localhost:8000"
 ) -> Dict[str, Any]:
     """

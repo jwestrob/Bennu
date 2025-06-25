@@ -257,6 +257,22 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
         }
 
 # Tool manifest for the agent
+# Conditional import of code interpreter to avoid dependency issues
+try:
+    from ..code_interpreter.client import code_interpreter_tool
+    CODE_INTERPRETER_AVAILABLE = True
+except ImportError:
+    logger.warning("Code interpreter not available - missing dependencies")
+    async def code_interpreter_tool(*args, **kwargs):
+        return {
+            "success": False,
+            "error": "Code interpreter service is not available",
+            "stdout": "",
+            "stderr": "",
+            "execution_time": 0
+        }
+    CODE_INTERPRETER_AVAILABLE = False
+
 AVAILABLE_TOOLS = {
     "literature_search": literature_search,
     "code_interpreter": code_interpreter_tool,
@@ -297,36 +313,41 @@ class PlannerAgent(dspy.Signature):
     CRITICAL: If requires_planning is true, you MUST provide a valid JSON task plan.
     If requires_planning is false, set task_plan to "N/A".
     
-    EXAMPLE TASK PLAN JSON:
+    EXAMPLE TASK PLAN JSON (KEEP SIMPLE TO AVOID ESCAPING ISSUES):
     {
         "tasks": [
             {
-                "id": "search_literature",
-                "type": "tool_call",
-                "tool_name": "literature_search",
-                "tool_args": {"query": "CRISPR proteins", "email": "researcher@example.com"},
-                "dependencies": []
-            },
-            {
-                "id": "query_local_db", 
+                "id": "query_transport_proteins",
                 "type": "atomic_query",
-                "query": "MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'heme transport' MATCH (p:Protein)-[:HASFUNCTION]->(ko) MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WITH p, g, ko, dom, split(g.id, '_scaffold_')[0] + '_scaffold_' + split(split(g.id, '_scaffold_')[1], '_')[0] as scaffold_id OPTIONAL MATCH (g2:Gene) WHERE g2.id STARTS WITH scaffold_id AND abs(toInteger(g.startCoordinate) - toInteger(g2.startCoordinate)) < 5000 AND g.id <> g2.id OPTIONAL MATCH (g2)<-[:ENCODEDBY]-(p2:Protein) OPTIONAL MATCH (p2)-[:HASFUNCTION]->(ko2:KEGGOrtholog) RETURN p.id as protein_id, g.startCoordinate as gene_start, g.endCoordinate as gene_end, g.strand as gene_strand, ko.description as function_desc, collect(dom.pfamAccession) as pfam_accessions, collect(DISTINCT {neighbor_id: p2.id, neighbor_start: g2.startCoordinate, neighbor_strand: g2.strand, neighbor_function: ko2.description}) as neighbors",
+                "query": "Find transport proteins using KEGG annotations",
                 "dependencies": []
             },
             {
-                "id": "create_visualization",
+                "id": "analyze_composition",
                 "type": "tool_call",
                 "tool_name": "code_interpreter",
-                "tool_args": {"code": "import matplotlib.pyplot as plt\nimport numpy as np\n\n# Create example plot\nplt.figure(figsize=(10, 6))\nplt.plot([1, 2, 3, 4], [1, 4, 2, 3])\nplt.title('Data Analysis Results')\nplt.savefig('analysis_plot.png')\nprint('Plot saved as analysis_plot.png')"},
-                "dependencies": ["query_local_db"]
+                "tool_args": {"code": "# Access sequence database and analyze amino acid composition"},
+                "dependencies": ["query_transport_proteins"]
             },
             {
-                "id": "synthesize",
+                "id": "synthesize_results",
                 "type": "aggregate",
-                "dependencies": ["search_literature", "query_local_db", "create_visualization"]
+                "dependencies": ["query_transport_proteins", "analyze_composition"]
             }
         ]
     }
+    
+    CRITICAL DEPENDENCY RULES:
+    1. code_interpreter tasks MUST depend on atomic_query tasks that provide protein data
+    2. aggregate tasks MUST depend on ALL tasks they need to synthesize
+    3. NEVER run code_interpreter and atomic_query tasks in parallel - code needs data first
+    4. Use sequential dependencies: query → analyze → synthesize
+    
+    JSON FORMATTING RULES:
+    - Keep code snippets SHORT in tool_args to avoid escaping issues
+    - Use simple descriptions for queries instead of full Cypher
+    - DSPy will expand simple descriptions into proper queries
+    - NEVER include complex code with quotes/backslashes in JSON
     """
     
     user_query = dspy.InputField(desc="User query about genomic data")
@@ -382,10 +403,18 @@ class QueryClassifier(dspy.Signature):
 class ContextRetriever(dspy.Signature):
     """Generate database queries to retrieve relevant genomic context.
     
+    AVAILABLE DATABASE SCHEMA:
+    - Labels: Protein, KEGGOrtholog, Domain, DomainAnnotation, Gene, Genome, QualityMetrics
+    - Relationships: HASFUNCTION, HASDOMAIN, ENCODEDBY, DOMAINFAMILY
+    - Description Fields: KEGGOrtholog.description, Domain.description (search these for keywords)
+    
+    UNAVAILABLE (DO NOT USE): GO, CellularComponent, Sequence nodes, HAS_GO, LOCALIZED_TO, HAS_SEQUENCE relationships
+    
     MANDATORY QUERY TEMPLATES - CHOOSE ONE AND ADAPT:
     
-    TEMPLATE A - GENOMIC CONTEXT WITH NEIGHBORS (for heme transport, operons, gene clusters):
+    TEMPLATE A - GENOMIC CONTEXT WITH NEIGHBORS (for operons, gene clusters, neighborhood analysis):
     ```
+    // Search ALL available description fields for keywords
     MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS '{search_term}'
     MATCH (p:Protein)-[:HASFUNCTION]->(ko)
     MATCH (p)-[:ENCODEDBY]->(g:Gene)
@@ -407,8 +436,9 @@ class ContextRetriever(dspy.Signature):
     ORDER BY g.startCoordinate
     ```
     
-    TEMPLATE B - SIMPLE PROTEIN SEARCH (for counts, basic info):
+    TEMPLATE B - FUNCTIONAL ANNOTATION SEARCH (search all description fields):
     ```
+    // Search KEGG functional annotations
     MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS '{search_term}'
     MATCH (p:Protein)-[:HASFUNCTION]->(ko)
     OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
@@ -416,24 +446,44 @@ class ContextRetriever(dspy.Signature):
     RETURN p.id as protein_id, ko.id as ko_id, ko.description as ko_description,
            g.startCoordinate as start_coordinate, g.endCoordinate as end_coordinate, g.strand,
            collect(DISTINCT dom.pfamAccession) as pfam_accessions
+    
+    UNION
+    
+    // Search PFAM domain descriptions  
+    MATCH (dom:Domain) WHERE toLower(dom.description) CONTAINS '{search_term}'
+    MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)
+    OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+    OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+    RETURN p.id as protein_id, ko.id as ko_id, ko.description as ko_description,
+           g.startCoordinate as start_coordinate, g.endCoordinate as end_coordinate, g.strand,
+           collect(DISTINCT dom.pfamAccession) as pfam_accessions
     ```
     
-    TEMPLATE C - DOMAIN FAMILY SEARCH:
+    CYPHER SYNTAX RULES:
+    - NEVER wrap UNION subqueries in parentheses - this is invalid Cypher syntax
+    - LIMIT and ORDER BY apply to the entire UNION result, not individual parts
+    - Keep UNION queries at the same indentation level
+    
+    TEMPLATE C - DOMAIN FAMILY SEARCH (search domain IDs and descriptions):
     ```
     MATCH (p:Protein)-[:HASDOMAIN]->(d:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) 
-    WHERE dom.id CONTAINS '{domain_name}'
+    WHERE dom.id CONTAINS '{domain_name}' OR toLower(dom.description) CONTAINS '{domain_name}'
     MATCH (p)-[:ENCODEDBY]->(g:Gene)
     OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
     RETURN p.id as protein_id, d.id as domain_annotation_id, dom.description as domain_description,
-           g.startCoordinate as gene_start, g.endCoordinate as gene_end, g.strand as gene_strand
+           g.startCoordinate as gene_start, g.endCoordinate as gene_end, g.strand as gene_strand,
+           ko.description as function_description
     ```
     
     CRITICAL RULES:
-    1. ALWAYS use Template A for questions about transport, operons, gene clusters, neighborhoods
-    2. ALWAYS include detailed_neighbors collection for genomic context
-    3. SUBSTITUTE {search_term} or {domain_name} with actual search terms
-    4. Gene coordinates (startCoordinate, endCoordinate, strand) are MANDATORY
-    5. Use toLower() for case-insensitive matching
+    1. SEARCH ALL description fields (KEGGOrtholog.description, Domain.description) for maximum coverage
+    2. Use UNION queries to combine results from different annotation types
+    3. NEVER reference GO, CellularComponent, Sequence nodes, or non-existent relationships
+    4. Use toLower() for case-insensitive matching on ALL description searches
+    5. Include gene coordinates when available (Gene nodes exist, sequence data does not)
+    6. If user asks for data we don't have (GO terms, sequences), acknowledge limitation
+    7. NEVER wrap UNION subqueries in parentheses - invalid Cypher syntax
+    8. LIMIT and ORDER BY go at the very end, after the complete UNION
     """
     
     question = dspy.InputField(desc="User's question")
@@ -452,9 +502,9 @@ class GenomicAnswerer(dspy.Signature):
     
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data including domain descriptions, KEGG functions, and quantitative metrics")
-    answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) Ground all statements in specific data points (coordinates, counts, IDs) and quantify relationships where possible, 2) Prioritize analysis of proximal neighbors vs distal ones except when there is an obvious functional relationship between the protein of interest and the distal neighbor, 3) Calculate and report specific distances between genes, identifying potential co-transcription based on SAME STRAND + proximity (<200bp = likely co-transcribed, 200-500bp same strand = possible operon, different strands = separate regulation), 4) Consider strand orientation and gene order for operon/cluster identification, 5) Use specific protein/domain names from the data, 6) Organize response logically: Genomic Location → Functional Context → Neighborhood Analysis → Biological Significance. FORBIDDEN: Language lacking description or analysis; avoid fluff language.")
-    confidence = dspy.OutputField(desc="Confidence level with reasoning: 'high - complete genomic context + literature support', 'medium - good genomic data but limited literature', 'low - minimal data available'")
-    citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, PubMed search terms used")
+    answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) If NO relevant data was retrieved, clearly state 'We don't have that kind of information in our database' and explain what data IS available, 2) Ground all statements in specific data points (coordinates, counts, IDs) when data exists, 3) For sequence-based analyses, acknowledge that raw sequences are available in a separate database that can be accessed via code execution, 4) Prioritize analysis of proximal neighbors vs distal ones when genomic context is available, 5) Calculate and report specific distances between genes when coordinate data exists, 6) Use specific protein/domain names from the actual retrieved data, 7) Organize response logically: Data Availability → Genomic Context → Functional Analysis → Biological Significance. CRITICAL: Be honest about data limitations and clearly explain what analyses are possible vs not possible with available data.")
+    confidence = dspy.OutputField(desc="Confidence level with reasoning: 'high - complete genomic context + literature support', 'medium - good genomic data but limited literature', 'low - minimal data available', 'none - no relevant data found in database'")
+    citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, code interpreter sessions, PubMed search terms used, or 'None - no data retrieved' if appropriate")
 
 
 class GenomicRAG(dspy.Module):
@@ -476,6 +526,9 @@ class GenomicRAG(dspy.Module):
         self.neo4j_processor = Neo4jQueryProcessor(config)
         self.lancedb_processor = LanceDBQueryProcessor(config)
         self.hybrid_processor = HybridQueryProcessor(config)
+        
+        # Persistent session ID for code interpreter continuity
+        self.code_interpreter_session_id = None
         
         # Configure DSPy LLM
         self._configure_dspy()
@@ -622,12 +675,23 @@ class GenomicRAG(dspy.Module):
         console.print("🤖 [bold cyan]Using agentic planning path[/bold cyan]")
         
         try:
-            # Parse the task plan
+            # Parse the task plan with improved error handling
             task_plan_json = planning_result.task_plan
             if isinstance(task_plan_json, str):
                 if not task_plan_json.strip():
                     raise ValueError("Empty task plan provided")
-                task_plan = json.loads(task_plan_json)
+                
+                # Clean up common JSON formatting issues from LLM output
+                cleaned_json = task_plan_json.strip()
+                
+                # Try parsing the JSON with better error handling
+                try:
+                    task_plan = json.loads(cleaned_json)
+                except json.JSONDecodeError as e:
+                    # Log the problematic JSON for debugging
+                    logger.error(f"JSON parse error at position {e.pos}: {e.msg}")
+                    logger.error(f"Problematic JSON snippet: {cleaned_json[max(0, e.pos-50):e.pos+50]}")
+                    raise e
             else:
                 task_plan = task_plan_json
                 
@@ -683,12 +747,20 @@ class GenomicRAG(dspy.Module):
                 
                 console.print(f"🔄 Iteration {iteration}: {len(ready_tasks)} ready tasks")
                 
+                # Debug: Log task dependencies
+                for task in ready_tasks:
+                    if task.dependencies:
+                        logger.debug(f"Task {task.task_id} depends on: {list(task.dependencies)}")
+                    else:
+                        logger.debug(f"Task {task.task_id} has no dependencies")
+                
                 # Execute ready tasks
                 for task in ready_tasks:
                     console.print(f"▶️  Executing {task.task_type.value}: {task.task_id}")
                     
                     try:
                         graph.mark_task_status(task.task_id, TaskStatus.RUNNING)
+                        logger.debug(f"Passing previous_results with {len(all_results)} completed tasks to {task.task_id}")
                         result = await self._execute_task(task, all_results)
                         graph.mark_task_status(task.task_id, TaskStatus.COMPLETED, result=result)
                         all_results[task.task_id] = result
@@ -774,7 +846,28 @@ class GenomicRAG(dspy.Module):
                 enhanced_query = self._enhance_literature_query(task.tool_args.get("query", ""), previous_results)
                 task.tool_args["query"] = enhanced_query
             
-            result = tool_function(**task.tool_args)
+            # Enhance code interpreter with sequence database access and context
+            elif task.tool_name == "code_interpreter":
+                # Always enhance code interpreter with sequence database access
+                enhanced_code = self._enhance_code_interpreter(task.tool_args.get("code", ""), previous_results)
+                task.tool_args["code"] = enhanced_code
+                
+                # Use persistent session for continuity across queries
+                if self.code_interpreter_session_id:
+                    task.tool_args["session_id"] = self.code_interpreter_session_id
+                    logger.debug(f"Using persistent session: {self.code_interpreter_session_id}")
+            
+            # Handle both sync and async tool functions
+            if asyncio.iscoroutinefunction(tool_function):
+                result = await tool_function(**task.tool_args)
+            else:
+                result = tool_function(**task.tool_args)
+            
+            # Capture session ID from code interpreter for persistence
+            if task.tool_name == "code_interpreter" and "session_id" in result:
+                self.code_interpreter_session_id = result["session_id"]
+                logger.info(f"Code interpreter session persisted: {self.code_interpreter_session_id}")
+            
             return {"tool_result": result, "tool_name": task.tool_name}
             
         elif task.task_type == TaskType.AGGREGATE:
@@ -880,6 +973,185 @@ class GenomicRAG(dspy.Module):
         
         logger.info(f"Enhanced literature query: {enhanced_query}")
         return enhanced_query
+    
+    def _enhance_code_interpreter(self, original_code: str, previous_results: Dict[str, Any]) -> str:
+        """
+        Enhance code interpreter tasks with sequence database access and protein IDs from previous results.
+        Usually perform analysis on retrieved sequence(s); can perform direct analysis of sequence data 
+        if number of sequences is low and it feels appropriate and/or the user requests.
+        """
+        # Extract protein IDs from previous results
+        protein_ids = set()
+        
+        for task_id, result in previous_results.items():
+            if "context" in result:
+                context = result["context"]
+                structured_data = context.structured_data
+                
+                for item in structured_data:
+                    # Extract protein IDs (already cleaned in context formatting)
+                    protein_id = item.get('protein_id', '')
+                    if protein_id:
+                        protein_ids.add(protein_id)
+        
+        # Create enhanced code with sequence database setup
+        if protein_ids:
+            protein_list = list(protein_ids)[:10]  # Limit to first 10 for performance and stability
+            
+            protein_ids_code = '\n'.join([f'    "{pid}",' for pid in protein_list])
+            enhanced_code = f"""
+# Sequence Database Setup for Genomic Analysis
+import sys
+sys.path.append('/app')
+sys.path.append('/app/build_kg')
+from sequence_db import SequenceDatabase
+
+# Common imports for analysis (available globally)
+from collections import Counter, defaultdict, OrderedDict
+import collections
+import json
+import re
+import statistics
+import itertools
+
+# Check if biopython is available
+if 'bio_available' in globals() and bio_available:
+    print("✅ Biopython is available for sequence analysis")
+else:
+    print("⚠️  Biopython not available - basic sequence analysis only")
+
+# Initialize sequence database
+db = SequenceDatabase('/app/sequences.db', read_only=True)
+
+# Protein IDs from previous query results
+protein_ids = [
+{protein_ids_code}
+]
+
+# Get protein sequences (strip 'protein:' prefix if present)
+clean_protein_ids = [pid.replace('protein:', '') if pid.startswith('protein:') else pid for pid in protein_ids]
+sequences = db.get_sequences(clean_protein_ids)
+print(f"Retrieved {{len(sequences)}} sequences out of {{len(protein_ids)}} requested")
+
+# Variable aliases for compatibility with different code patterns
+proteins = sequences  # For code that expects 'proteins' variable
+protein_sequences = sequences  # For code that expects 'protein_sequences' variable
+
+print(f"✅ Enhanced code setup complete! Database has {{len(sequences)}} sequences ready for analysis.")
+
+# Robust amino acid composition analysis template
+if sequences:
+    print("\\n=== AMINO ACID COMPOSITION ANALYSIS ===")
+    analyzed_count = 0
+    for protein_id, sequence in sequences.items():
+        if analyzed_count >= 3:  # Limit to first 3 as requested
+            break
+        analyzed_count += 1
+        
+        print(f"\\nProtein {{analyzed_count}}: {{protein_id[:50]}}...")
+        print(f"Length: {{len(sequence)}} amino acids")
+        
+        if len(sequence) > 0:
+            # Calculate amino acid composition with safe scoping
+            aa_counts = Counter(sequence)
+            total_aa = len(sequence)
+            
+            # Top 5 most frequent amino acids
+            top_aa = aa_counts.most_common(5)
+            print("Top 5 amino acids:")
+            for aa, count in top_aa:
+                freq = count / total_aa
+                print(f"  {{aa}}: {{freq:.3f}} ({{count}} residues)")
+            
+            # Transport protein properties - explicit calculation to avoid scoping issues
+            hydrophobic_aa = ['A', 'V', 'L', 'I', 'M', 'F', 'W', 'Y', 'P']
+            charged_aa = ['R', 'K', 'D', 'E']
+            polar_aa = ['S', 'T', 'N', 'Q', 'H', 'C']
+            
+            hydrophobic_count = sum(aa_counts.get(aa, 0) for aa in hydrophobic_aa)
+            charged_count = sum(aa_counts.get(aa, 0) for aa in charged_aa)
+            polar_count = sum(aa_counts.get(aa, 0) for aa in polar_aa)
+            
+            print(f"Hydrophobic: {{hydrophobic_count/total_aa:.3f}} ({{hydrophobic_count}} residues)")
+            print(f"Charged: {{charged_count/total_aa:.3f}} ({{charged_count}} residues)")
+            print(f"Polar: {{polar_count/total_aa:.3f}} ({{polar_count}} residues)")
+            
+            # Sequence insights
+            print(f"N-terminus (first 20): {{sequence[:20]}}")
+            if len(sequence) > 20:
+                print(f"C-terminus (last 20): {{sequence[-20:]}}")
+            
+            # Membrane protein prediction
+            if hydrophobic_count/total_aa > 0.4:
+                print("✓ High hydrophobic content - likely membrane protein")
+            
+            # Signal sequence check
+            if sequence.startswith('M'):
+                print("✓ Starts with methionine (typical start codon)")
+        else:
+            print("❌ Empty sequence")
+else:
+    print("❌ No sequences available for analysis")
+
+# Original user analysis code (if any):
+{original_code}
+"""
+        else:
+            # No protein IDs available from previous results
+            enhanced_code = f"""
+# Sequence Database Setup for Genomic Analysis
+import sys
+sys.path.append('/app')
+sys.path.append('/app/build_kg')
+from sequence_db import SequenceDatabase
+
+# Common imports for analysis (available globally)
+from collections import Counter, defaultdict, OrderedDict
+import collections
+import json
+import re
+import statistics
+import itertools
+
+# Check if biopython is available
+if 'bio_available' in globals() and bio_available:
+    print("✅ Biopython is available for sequence analysis")
+else:
+    print("⚠️  Biopython not available - basic sequence analysis only")
+
+# Initialize sequence database
+db = SequenceDatabase('/app/sequences.db', read_only=True)
+
+print("❌ No protein IDs available from previous query results")
+print("This indicates a task coordination issue - the database query task may not have completed")
+
+# Get database statistics for context
+stats = db.get_statistics()
+print(f"Database contains {{stats['total_sequences']}} total sequences across {{stats['unique_genomes']}} genomes")
+
+# Original analysis code (will likely fail without protein IDs):
+{original_code}
+"""
+        
+        logger.info(f"Enhanced code interpreter with {len(protein_list) if protein_ids else 0} protein IDs (limited from {len(protein_ids)} total)")
+        if protein_ids:
+            logger.debug(f"Protein IDs found: {list(protein_ids)[:3]}...")  # Log first 3 IDs
+        else:
+            logger.warning("No protein IDs found in previous results - code interpreter may not have sequence access")
+            logger.debug(f"Previous results structure: {list(previous_results.keys())}")
+            # Log what's actually in the previous results for debugging
+            for task_id, result in previous_results.items():
+                if isinstance(result, dict):
+                    logger.debug(f"Task {task_id}: {list(result.keys())}")
+                    if 'context' in result:
+                        context = result['context']
+                        if hasattr(context, 'structured_data'):
+                            logger.debug(f"  - structured_data: {len(context.structured_data)} items")
+                        else:
+                            logger.debug(f"  - context type: {type(context)}")
+                else:
+                    logger.debug(f"Task {task_id}: {type(result)}")
+        return enhanced_code
     
     def _combine_task_results(self, all_results: Dict[str, Any]) -> str:
         """Combine results from all tasks into context for final answer generation."""
@@ -1168,34 +1440,6 @@ class GenomicRAG(dspy.Module):
             except (ValueError, TypeError):
                 return default
         
-        def _format_protein_id(full_id: str) -> tuple[str, str]:
-            """Format protein ID for display: (short_form, full_id)"""
-            if not full_id or len(full_id) < 60:
-                return full_id, full_id
-            
-            # Extract meaningful short form from prodigal format
-            # Example: protein:RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_66
-            if 'scaffold_' in full_id:
-                # Extract organism and scaffold info
-                parts = full_id.split('_')
-                if len(parts) >= 6:
-                    # Find organism type and scaffold
-                    organism_idx = None
-                    for i, part in enumerate(parts):
-                        if part in ['Acidovorax', 'Gammaproteobacteria', 'OD1', 'Muproteobacteria', 'Nomurabacteria']:
-                            organism_idx = i
-                            break
-                    
-                    if organism_idx and 'scaffold' in full_id:
-                        scaffold_part = '_'.join([p for p in parts if 'scaffold' in p or (p.isdigit() and len(p) <= 3)])
-                        organism = parts[organism_idx]
-                        sample = parts[organism_idx + 1] if organism_idx + 1 < len(parts) else 'unknown'
-                        short_form = f"{organism}_{sample}_{scaffold_part}"
-                        return short_form, full_id
-            
-            # Fallback: show first 30 + last 20 chars
-            return f"{full_id[:30]}...{full_id[-20:]}", full_id
-        
         def _analyze_neighbor_functions(neighbors: list) -> dict:
             """Analyze functional themes in genomic neighborhood."""
             if not neighbors:
@@ -1441,8 +1685,8 @@ class GenomicRAG(dspy.Module):
                     # Example domains
                     formatted_parts.append(f"\n  Example {domain_type} domains:")
                     for i, d in enumerate(sorted_domains[:3], 1):
-                        short_id, full_id = _format_protein_id(d['protein_id'])
-                        formatted_parts.append(f"    {i}. Protein: {short_id}")
+                        protein_id = d['protein_id'].replace('protein:', '') if d['protein_id'].startswith('protein:') else d['protein_id']
+                        formatted_parts.append(f"    {i}. Protein: {protein_id}")
                         formatted_parts.append(f"       Position: {d['position']} aa")
             
             # Handle protein-specific information with enhanced genomic context
@@ -1463,11 +1707,14 @@ class GenomicRAG(dspy.Module):
                                 unique_proteins[protein_id][key] = value
             
             for i, (protein_id, item) in enumerate(list(unique_proteins.items())[:2]):  # Show max 2 proteins
-                short_id, full_id = _format_protein_id(protein_id)
+                # Clean protein ID (remove 'protein:' prefix if present)
+                clean_protein_id = protein_id.replace('protein:', '') if protein_id.startswith('protein:') else protein_id
                 
-                # Extract gene ID (protein ID without 'protein:' prefix)
-                gene_id = protein_id.replace('protein:', '') if protein_id.startswith('protein:') else protein_id
-                short_gene_id, full_gene_id = _format_protein_id(gene_id)
+                # Store clean protein ID for sequence database lookups
+                item['protein_id'] = clean_protein_id
+                
+                # Use clean protein ID for display
+                gene_id = clean_protein_id
                 
                 # Extract genome name from protein ID structure
                 # Example: protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_...
@@ -1489,10 +1736,7 @@ class GenomicRAG(dspy.Module):
                                 contig_id = '_'.join(parts[:-1])  # Remove last field
                 
                 formatted_parts.append(f"\nProtein {i+1}:")
-                formatted_parts.append(f"  • Protein: {short_id}")
-                formatted_parts.append(f"    Full ID: {full_id}")
-                formatted_parts.append(f"  • Gene: {short_gene_id}")
-                formatted_parts.append(f"    Full ID: {full_gene_id}")
+                formatted_parts.append(f"  • Protein ID: {clean_protein_id}")
                 formatted_parts.append(f"  • Genome: {genome_id}")
                 formatted_parts.append(f"  • Contig: {contig_id}")
                 
@@ -1824,9 +2068,9 @@ class GenomicRAG(dspy.Module):
             for i, item in enumerate(context.semantic_data[:3]):  # Show top 3 similar proteins
                 similarity = item.get('similarity', 0)
                 protein_id = item.get('protein_id', 'Unknown')
-                short_id, full_id = _format_protein_id(protein_id)
+                clean_protein_id = protein_id.replace('protein:', '') if protein_id.startswith('protein:') else protein_id
                 
-                formatted_parts.append(f"  {i+1}. {short_id} (ESM2 similarity: {similarity:.3f})")
+                formatted_parts.append(f"  {i+1}. {clean_protein_id} (ESM2 similarity: {similarity:.3f})")
                 formatted_parts.append(f"     Genome: {item.get('genome_id', 'Unknown')}")
                 
                 # Add biological interpretation of similarity scores with enhanced context
@@ -1865,9 +2109,7 @@ class GenomicRAG(dspy.Module):
                     strand_symbol = "+" if str(strand) == "1" else "-" if str(strand) == "-1" else strand
                     formatted_parts.append(f"     Genomic Location: {_safe_format_int(start)}-{_safe_format_int(end)} bp (strand {strand_symbol})")
                 
-                # Show full ID if different from short ID (collapsed to save space)
-                if short_id != full_id:
-                    formatted_parts.append(f"     [Full ID: {full_id}]")
+                # Note: Full protein ID is already displayed above
         
         return "\n".join(formatted_parts) if formatted_parts else "No relevant genomic context found."
     

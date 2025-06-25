@@ -18,11 +18,18 @@ logger = logging.getLogger(__name__)
 class SequenceDatabase:
     """SQLite database for protein sequence storage and retrieval."""
     
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, read_only: bool = False):
         """Initialize sequence database connection."""
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._create_tables()
+        self.read_only = read_only
+        
+        # Only create tables if database doesn't exist and not read-only
+        if not read_only and not self.db_path.exists():
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._create_tables()
+        elif not read_only:
+            # Database exists, just ensure schema is up to date
+            self._create_tables()
     
     def _create_tables(self):
         """Create database schema if it doesn't exist."""

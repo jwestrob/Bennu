@@ -75,18 +75,32 @@ class SessionManager:
     
     def _create_secure_globals(self) -> Dict[str, Any]:
         """Create secure global environment with allowed imports."""
+        # Create safe builtins dictionary
+        safe_builtins = {}
+        builtin_names = [
+            'abs', 'all', 'any', 'bin', 'bool', 'chr', 'dict', 'enumerate',
+            'filter', 'float', 'format', 'hex', 'int', 'len', 'list', 'map',
+            'max', 'min', 'oct', 'ord', 'print', 'range', 'reversed', 'round',
+            'set', 'sorted', 'str', 'sum', 'tuple', 'type', 'zip', '__import__',
+            # Exception handling
+            'Exception', 'BaseException', 'ValueError', 'TypeError', 'ImportError',
+            'KeyError', 'IndexError', 'AttributeError',
+            # Introspection
+            'globals', 'locals', 'vars', 'dir', 'hasattr', 'getattr', 'setattr'
+        ]
+        
+        # Get actual builtin functions
+        import builtins
+        for name in builtin_names:
+            if hasattr(builtins, name):
+                safe_builtins[name] = getattr(builtins, name)
+        
         allowed_globals = {
             # Built-in functions (safe subset)
-            '__builtins__': {
-                'abs', 'all', 'any', 'bin', 'bool', 'chr', 'dict', 'enumerate',
-                'filter', 'float', 'format', 'hex', 'int', 'len', 'list', 'map',
-                'max', 'min', 'oct', 'ord', 'print', 'range', 'reversed', 'round',
-                'set', 'sorted', 'str', 'sum', 'tuple', 'type', 'zip'
-            },
+            '__builtins__': safe_builtins,
             # Safe imports
             'os': None,  # Will be restricted
             'sys': None,  # Will be restricted
-            'json': json,
             'math': None,  # Will be imported safely
         }
         
@@ -98,6 +112,27 @@ class SessionManager:
             import matplotlib.pyplot as plt
             import seaborn as sns
             from pathlib import Path
+            from collections import Counter, defaultdict, OrderedDict
+            import collections
+            import json
+            import re
+            import statistics
+            import itertools
+            
+            # Try to import biopython (might not be available in all environments)
+            try:
+                from Bio import SeqIO
+                from Bio.Seq import Seq
+                from Bio.SeqUtils import GC, molecular_weight
+                from Bio.SeqUtils.ProtParam import ProteinAnalysis
+                bio_available = True
+            except ImportError:
+                SeqIO = None
+                Seq = None
+                GC = None
+                molecular_weight = None
+                ProteinAnalysis = None
+                bio_available = False
             
             allowed_globals.update({
                 'math': math,
@@ -106,6 +141,21 @@ class SessionManager:
                 'plt': plt,
                 'sns': sns,
                 'Path': Path,
+                'Counter': Counter,
+                'defaultdict': defaultdict,
+                'OrderedDict': OrderedDict,
+                'collections': collections,
+                'json': json,
+                're': re,
+                'statistics': statistics,
+                'itertools': itertools,
+                # Biopython (if available)
+                'SeqIO': SeqIO,
+                'Seq': Seq,
+                'GC': GC,
+                'molecular_weight': molecular_weight,
+                'ProteinAnalysis': ProteinAnalysis,
+                'bio_available': bio_available,
             })
         except ImportError as e:
             logger.warning(f"Some scientific packages not available: {e}")

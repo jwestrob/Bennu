@@ -10,6 +10,11 @@ services:
       - MAX_EXECUTION_TIME=30
       - MAX_MEMORY_MB=512
       - MAX_OUTPUT_SIZE=1048576  # 1MB
+    volumes:
+      # Mount sequence database and services
+      - ../../data/sequences.db:/app/sequences.db:ro
+      - ../build_kg:/app/build_kg:ro
+      - ./sequence_service.py:/app/sequence_service.py:ro
     security_opt:
       - no-new-privileges:true
       - seccomp:unconfined  # Required for gVisor

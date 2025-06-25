@@ -92,7 +92,11 @@ class SequenceDatabaseBuilder:
             tuple: (protein_id, sequence, genome_id, source_file)
         """
         genome_id = self.extract_genome_id_from_path(fasta_path)
-        source_file = str(fasta_path.relative_to(Path.cwd()))
+        try:
+            source_file = str(fasta_path.relative_to(Path.cwd()))
+        except ValueError:
+            # Handle absolute paths or paths outside working directory
+            source_file = str(fasta_path)
         
         try:
             with open(fasta_path, 'r') as handle:
