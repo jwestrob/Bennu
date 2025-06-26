@@ -9,10 +9,12 @@ import re
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-# Import sequence database
+# Import sequence database and Neo4j query processor
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from build_kg.sequence_db import SequenceDatabase
+from llm.query_processor import Neo4jQueryProcessor
+from llm.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -20,19 +22,21 @@ async def sequence_viewer(
     protein_ids: List[str], 
     analysis_context: str = "",
     max_proteins: int = 5,
-    include_metadata: bool = True
+    include_metadata: bool = True,
+    include_genomic_context: bool = True
 ) -> Dict[str, Any]:
     """
-    Fetch and format protein sequences for LLM biological analysis.
+    Fetch and format protein sequences for LLM biological analysis with genomic neighborhood context.
     
     Args:
         protein_ids: List of protein IDs to display (with or without 'protein:' prefix)
         analysis_context: Previous analysis results for context
         max_proteins: Maximum number of sequences to display
         include_metadata: Whether to include organism/function metadata
+        include_genomic_context: Whether to retrieve genomic neighborhood context from Neo4j
         
     Returns:
-        Dict with formatted sequences, metadata, and analysis suggestions
+        Dict with formatted sequences, metadata, genomic context, and analysis suggestions
     """
     logger.info(f"🧬 Sequence viewer called with {len(protein_ids)} protein IDs")
     logger.debug(f"Raw protein IDs received: {protein_ids}")
@@ -60,6 +64,37 @@ async def sequence_viewer(
         # Retrieve sequences
         sequences = db.get_sequences(clean_ids)
         logger.info(f"📊 Retrieved {len(sequences)} sequences from database")
+        
+        # Retrieve genomic neighborhood context from Neo4j if requested
+        genomic_contexts = {}
+        if include_genomic_context and sequences:
+            logger.info(f"🗺️ Retrieving genomic neighborhood context for {len(sequences)} proteins")
+            try:
+                config = LLMConfig()
+                neo4j_processor = Neo4jQueryProcessor(config)
+                
+                for protein_id in sequences.keys():
+                    # Ensure protein ID has the correct prefix for Neo4j
+                    neo4j_protein_id = f"protein:{protein_id}" if not protein_id.startswith("protein:") else protein_id
+                    
+                    # Query Neo4j for comprehensive protein info including neighborhood
+                    neo4j_result = await neo4j_processor.process_query(
+                        query=neo4j_protein_id,
+                        query_type="protein_info"
+                    )
+                    
+                    if neo4j_result.results:
+                        genomic_contexts[protein_id] = neo4j_result.results[0]
+                        logger.debug(f"✅ Retrieved genomic context for {protein_id}")
+                    else:
+                        logger.debug(f"⚠️ No genomic context found for {protein_id}")
+                        
+                logger.info(f"📊 Retrieved genomic context for {len(genomic_contexts)} proteins")
+                
+            except Exception as e:
+                logger.error(f"❌ Error retrieving genomic context: {e}")
+                # Continue without genomic context
+                pass
         
         if not sequences:
             logger.warning(f"❌ No sequences found for any of {len(clean_ids)} protein IDs")
@@ -133,7 +168,63 @@ async def sequence_viewer(
                 f"Organism: {organism}",
                 f"Length: {length} amino acids",
                 f"Composition: {hydrophobic_pct:.1f}% hydrophobic, {charged_pct:.1f}% charged",
-                f"",
+                f""
+            ]
+            
+            # Add genomic context if available
+            if protein_id in genomic_contexts:
+                context = genomic_contexts[protein_id]
+                protein_section.extend([
+                    f"=== GENOMIC CONTEXT ===",
+                    f"Gene Position: {context.get('gene_start', 'N/A')}-{context.get('gene_end', 'N/A')} ({context.get('gene_strand', 'N/A')} strand)",
+                    f"Genome: {context.get('genome_id', 'N/A')}",
+                    f""
+                ])
+                
+                # Add functional annotations
+                kegg_functions = context.get('kegg_functions', [])
+                kegg_descriptions = context.get('kegg_descriptions', [])
+                if kegg_functions and kegg_descriptions:
+                    protein_section.extend([
+                        f"KEGG Functions:",
+                    ])
+                    for j, (ko_id, ko_desc) in enumerate(zip(kegg_functions, kegg_descriptions)):
+                        if ko_id and ko_desc:  # Skip empty entries
+                            protein_section.append(f"  • {ko_id}: {ko_desc}")
+                    protein_section.append(f"")
+                
+                # Add PFAM domains
+                domain_descriptions = context.get('domain_descriptions', [])
+                if domain_descriptions:
+                    protein_section.extend([
+                        f"PFAM Domains:",
+                    ])
+                    for domain_desc in domain_descriptions[:3]:  # Limit to 3 domains
+                        if domain_desc:  # Skip empty entries
+                            protein_section.append(f"  • {domain_desc}")
+                    protein_section.append(f"")
+                
+                # Add genomic neighborhood
+                neighbor_details = context.get('neighbor_details', [])
+                if neighbor_details:
+                    # Filter out empty neighbors and sort by distance
+                    valid_neighbors = [n for n in neighbor_details if n and n.get('neighbor_id') and n.get('distance')]
+                    if valid_neighbors:
+                        valid_neighbors.sort(key=lambda n: n.get('distance', 999999))
+                        
+                        protein_section.extend([
+                            f"Genomic Neighborhood (within 5kb):",
+                        ])
+                        for neighbor in valid_neighbors[:5]:  # Show closest 5 neighbors
+                            distance = neighbor.get('distance', 'N/A')
+                            direction = neighbor.get('direction', 'N/A')
+                            function = neighbor.get('function', 'Unknown function')
+                            if function and len(function) > 50:
+                                function = function[:47] + "..."
+                            protein_section.append(f"  • {distance}bp {direction}: {function}")
+                        protein_section.append(f"")
+            
+            protein_section.extend([
                 f"N-terminus (1-30): {sequence[:30]}",
                 f"C-terminus (-30): {sequence[-30:] if length > 30 else sequence}",
                 f"",
@@ -142,7 +233,7 @@ async def sequence_viewer(
                 f"",
                 f"{'='*60}",
                 f""
-            ]
+            ])
             
             formatted_output.extend(protein_section)
             
@@ -154,7 +245,8 @@ async def sequence_viewer(
                 "hydrophobic_percent": hydrophobic_pct,
                 "charged_percent": charged_pct,
                 "n_terminus": sequence[:30],
-                "c_terminus": sequence[-30:] if length > 30 else sequence
+                "c_terminus": sequence[-30:] if length > 30 else sequence,
+                "genomic_context": genomic_contexts.get(protein_id, {})
             }
         
         # Add analysis suggestions
@@ -178,13 +270,16 @@ async def sequence_viewer(
             "success": True,
             "sequences_found": len(sequences),
             "sequences_requested": len(clean_ids),
+            "genomic_contexts_found": len(genomic_contexts),
             "formatted_display": formatted_sequences,
             "sequence_data": sequence_data,
+            "genomic_contexts": genomic_contexts,
             "analysis_context": analysis_context,
             "analysis_suggestions": [
                 "Examine full sequences for conserved motifs and structural features",
                 "Compare hydrophobic regions for transmembrane helix prediction",
                 "Identify functional domains specific to transport proteins",
+                "Analyze genomic neighborhoods for functional clustering",
                 "Look for organism-specific sequence adaptations"
             ]
         }

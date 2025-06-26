@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src to path
 sys.path.append(str(Path(__file__).parent / "src"))
 
-from llm.annotation_tools import annotation_explorer, transport_classifier, transport_selector
+from llm.annotation_tools import annotation_explorer, functional_classifier, annotation_selector
 from llm.query_processor import Neo4jQueryProcessor
 from llm.config import LLMConfig
 
@@ -24,8 +24,8 @@ async def test_complete_workflow():
     print("\n📊 Step 1-3: Intelligent Annotation Discovery...")
     
     exploration_result = await annotation_explorer(["KEGG", "PFAM"], "transport", 50)
-    classification_result = await transport_classifier(exploration_result["annotation_catalog"])
-    selection_result = await transport_selector(classification_result["classification"], selection_count=3)
+    classification_result = await functional_classifier(exploration_result["annotation_catalog"], "transport")
+    selection_result = await annotation_selector(classification_result["classification"], "transport", selection_count=3)
     
     selected_annotations = selection_result["selected_annotations"]
     print(f"✅ Selected annotations: {selected_annotations}")

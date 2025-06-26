@@ -19,7 +19,7 @@ from .config import LLMConfig
 from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor, QueryResult
 from .dsp_sig import NEO4J_SCHEMA
 from .sequence_tools import sequence_viewer, extract_protein_ids_from_analysis
-from .annotation_tools import annotation_explorer, transport_classifier, transport_selector
+from .annotation_tools import annotation_explorer, functional_classifier, annotation_selector
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -281,8 +281,8 @@ AVAILABLE_TOOLS = {
     "code_interpreter": code_interpreter_tool,
     "sequence_viewer": sequence_viewer,
     "annotation_explorer": annotation_explorer,
-    "transport_classifier": transport_classifier,
-    "transport_selector": transport_selector,
+    "functional_classifier": functional_classifier,
+    "annotation_selector": annotation_selector,
 }
 
 # ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
@@ -455,7 +455,7 @@ class GenomicAnswerer(dspy.Signature):
     
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data including domain descriptions, KEGG functions, and quantitative metrics")
-    answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) If NO relevant data was retrieved, clearly state 'We don't have that kind of information in our database' and explain what data IS available, 2) Ground all statements in specific data points (coordinates, counts, IDs) when data exists, 3) For sequence-based analyses, acknowledge that raw sequences are available in a separate database that can be accessed via code execution, 4) Prioritize analysis of proximal neighbors vs distal ones when genomic context is available, 5) Calculate and report specific distances between genes when coordinate data exists, 6) Use specific protein/domain names from the actual retrieved data, 7) Organize response logically: Data Availability → Genomic Context → Functional Analysis → Biological Significance. CRITICAL: Be honest about data limitations and clearly explain what analyses are possible vs not possible with available data.")
+    answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) If NO relevant data was retrieved, clearly state 'We don't have that kind of information in our database' and explain what data IS available, 2) Ground all statements in specific data points (coordinates, counts, IDs) when data exists, 3) For sequence-based analyses, ANALYZE the provided amino acid sequences directly when available - examine length, composition, N/C termini, hydrophobic regions, and functional motifs, 4) When genomic neighborhood context is provided, analyze neighboring proteins and their functions to understand biological context, 5) Calculate and report specific distances between genes when coordinate data exists, 6) Use specific protein/domain names from the actual retrieved data, 7) Organize response logically: Data Availability → Genomic Context → Sequence Analysis → Functional Analysis → Biological Significance. CRITICAL: When protein sequences are provided in the context, ANALYZE them directly rather than referring to external databases.")
     confidence = dspy.OutputField(desc="Confidence level with reasoning based on data quality for the specific query: 'high - complete data available for all requested analyses', 'medium - partial data available, some gaps in requested information', 'low - minimal data available, significant limitations', 'none - no relevant data found in database'. Only mention literature if literature search was actually performed as part of the analysis.")
     citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, code interpreter sessions, PubMed search terms used, or 'None - no data retrieved' if appropriate")
 
