@@ -20,13 +20,103 @@ if DSPY_AVAILABLE:
     
     class GenomicQuery(dspy.Signature):
         """
-        Basic genomic question answering signature.
-        
-        TODO: Refine signature for genomic domain
+        Answers questions about genomics by generating and executing a Cypher query.
         """
         question = dspy.InputField(desc="Question about genomic data")
-        context = dspy.InputField(desc="Relevant genomic context information")
-        answer = dspy.OutputField(desc="Structured answer to the question")
+        context = dspy.InputField(desc="Relevant genomic context and schema information")
+        query = dspy.OutputField(desc="A Cypher query to retrieve the information.")
+
+    NEO4J_SCHEMA = """
+**Neo4j Graph Schema for Microbial Genomics**
+
+This document outlines the schema of the Neo4j knowledge graph. The graph is built from an RDF ontology, so node labels, properties, and relationships are derived from ontology classes and properties.
+
+**Node Labels and Properties:**
+
+*   **`Genome`**
+    *   Represents a single genome assembly.
+    *   **Properties:**
+        *   `id`: (String) Unique identifier for the genome (e.g., `Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960.contigs`).
+        *   `name`: (String) The name of the genome.
+        *   `total_length`: (Integer) Total length of the assembly in base pairs.
+        *   `n50`: (Integer) N50 metric for the assembly.
+        *   `num_contigs`: (Integer) Number of contigs in the assembly.
+        *   `completeness`: (Float) Estimated genome completeness percentage.
+        *   `contamination`: (Float) Estimated genome contamination percentage.
+
+*   **`Protein`**
+    *   Represents a protein sequence translated from a gene.
+    *   **Properties:**
+        *   `id`: (String) Unique identifier for the protein (e.g., `protein:PLM0_60_b1_sep16_scaffold_10001_curated_1`).
+        *   `length`: (String) The length of the amino acid sequence.
+        *   `proteinId`: (String) The protein identifier without prefix.
+    *   **Note**: Gene coordinates (start, end, strand) are on Gene nodes, accessible via ENCODEDBY relationship.
+
+*   **`Gene`**
+    *   Represents a protein-coding gene predicted from a genome.
+    *   **Properties:**
+        *   `id`: (String) Unique identifier for the gene (e.g., `gene:PLM0_60_b1_sep16_scaffold_10001_curated_1`).
+        *   `geneId`: (String) The gene identifier without prefix.
+        *   `startCoordinate`: (String) Start position of the gene on the contig.
+        *   `endCoordinate`: (String) End position of the gene on the contig.
+        *   `strand`: (String) Strand of the gene ('+1' or '-1').
+        *   `gcContent`: (String) GC content of the gene.
+        *   `lengthNt`: (String) Length in nucleotides.
+        *   `lengthAA`: (String) Length in amino acids.
+        *   `hasLocation`: (String) Location string format.
+
+*   **`Domain`**
+    *   Represents a protein domain from the PFAM database.
+    *   **Properties:**
+        *   `id`: (String) The PFAM accession ID (e.g., `PF00005.28`).
+        *   `description`: (String) A description of the PFAM domain.
+
+*   **`DomainAnnotation`**
+    *   Represents domain annotation hits on proteins.
+    *   **Properties:**
+        *   `id`: (String) Unique annotation identifier.
+
+*   **`KEGGOrtholog`**
+    *   Represents a KEGG Orthology (KO) group.
+    *   **Properties:**
+        *   `id`: (String) The KO identifier (e.g., `K02014`).
+        *   `description`: (String) A description of the KO group.
+
+**Relationships (ALL UPPERCASE):**
+
+*   `(:Protein)-[:ENCODEDBY]->(:Gene)`: Connects a protein to the gene that encodes it.
+*   `(:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(:Domain)`: Path to protein domains.
+*   `(:Protein)-[:HASFUNCTION]->(:KEGGOrtholog)`: Connects a protein to its KEGG function.
+*   `(:Gene)-[:BELONGSTOGENOME]->(:Genome)`: Connects a gene to the genome it belongs to.
+
+**CRITICAL QUERY PATTERNS FOR TRANSPORT PROTEINS:**
+
+**Pattern 1 - KEGG Transport Search (RECOMMENDED):**
+```cypher
+MATCH (ko:KEGGOrtholog) 
+WHERE toLower(ko.description) CONTAINS 'transport'
+MATCH (p:Protein)-[:HASFUNCTION]->(ko)
+OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
+RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
+       g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
+       collect(DISTINCT dom.id) AS pfam_accessions
+LIMIT 5
+```
+
+**Pattern 2 - PFAM Domain Search:**
+```cypher
+MATCH (dom:Domain) 
+WHERE toLower(dom.description) CONTAINS 'transport'
+MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)
+OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
+       g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
+       collect(DISTINCT dom.id) AS pfam_accessions
+LIMIT 5
+```
+"""
     
     
     class TaxonomicClassification(dspy.Signature):
