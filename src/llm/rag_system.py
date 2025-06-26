@@ -19,6 +19,7 @@ from .config import LLMConfig
 from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor, QueryResult
 from .dsp_sig import NEO4J_SCHEMA
 from .sequence_tools import sequence_viewer, extract_protein_ids_from_analysis
+from .annotation_tools import annotation_explorer, transport_classifier, transport_selector
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -279,6 +280,9 @@ AVAILABLE_TOOLS = {
     "literature_search": literature_search,
     "code_interpreter": code_interpreter_tool,
     "sequence_viewer": sequence_viewer,
+    "annotation_explorer": annotation_explorer,
+    "transport_classifier": transport_classifier,
+    "transport_selector": transport_selector,
 }
 
 # ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
@@ -297,6 +301,8 @@ class PlannerAgent(dspy.Signature):
     - Data analysis workflows: "Analyze protein similarities and visualize results"
     - Cross-reference analysis: "Compare our data with published studies"
     - Multi-step workflows: "Find X, then search literature about Y, then combine"
+    - Sequence analysis requests: "Find proteins and show me their sequences"
+    - Transport protein queries: "Find transport proteins" (requires intelligent annotation curation)
     
     WHEN TO USE TRADITIONAL MODE (requires_planning = false):
     - Simple counts: "How many proteins?"
@@ -363,7 +369,7 @@ class PlannerAgent(dspy.Signature):
     
     user_query = dspy.InputField(desc="User query about genomic data")
     requires_planning = dspy.OutputField(desc="Boolean: true if query needs multi-step agentic planning with external tools, false for simple direct queries using local data only")
-    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'.")
+    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'. FOR TRANSPORT PROTEIN QUERIES: Use 4-task intelligent annotation discovery: 1) annotation_explorer, 2) transport_classifier, 3) transport_selector, 4) sequence_viewer.")
     reasoning = dspy.OutputField(desc="Explanation of why planning is or isn't needed and the chosen strategy")
 
 @dataclass

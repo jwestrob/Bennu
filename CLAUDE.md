@@ -429,7 +429,55 @@ The system now provides sophisticated biological interpretation with:
 
 ## Next Steps for Agentic Enhancement 🚀
 
-### Phase 2: Code Interpreter Integration ✅ **COMPLETED**
+### Phase 2: Intelligent Annotation Discovery System 🧬 **IN PROGRESS**
+**Objective**: Solve the "ATP synthase problem" - enable biologically intelligent selection of annotations instead of naive text matching
+
+**The Problem**: 
+When users ask for "transport proteins," naive keyword searches return ATP synthase subunits (technically transport protons, but not what users want). Need LLM-powered annotation curation for biological accuracy.
+
+**Implementation Strategy**:
+1. **Annotation Space Exploration** 📊
+   - Query ALL available annotations from Neo4j (complete KEGG ortholog catalog, PFAM domains, pathways)
+   - Create comprehensive annotation inventories instead of limiting to initial protein hits
+   - Example: Get all ~2,609 KEGG orthologs, ~1,000+ PFAM domains for intelligent filtering
+
+2. **LLM-Powered Annotation Curation** 🧠
+   - Feed complete annotation catalogs to LLM for biological classification
+   - Curate by functional category: SUBSTRATE_TRANSPORT vs ENERGY_METABOLISM 
+   - Intelligent exclusion: Remove ATP synthase, respiratory complexes from "transport" searches
+   - Prioritize ABC transporters, permeases, channels for typical transport queries
+
+3. **Agentic Discovery Workflow** 🔄
+   ```
+   Phase 1: discover_annotation_space  → Get ALL KEGG/PFAM annotations
+   Phase 2: curate_transport_annotations → LLM classifies by biological function  
+   Phase 3: targeted_protein_discovery  → Query for proteins with curated annotations
+   Phase 4: diverse_example_selection   → Pick representative examples across mechanisms
+   ```
+
+4. **User Preference Integration** 🎯
+   - Extract user preferences from queries: "ABC transporters", "gram-positive bacteria", "sugar transporters"
+   - Pass preferences through classification and selection stages
+   - Default to diverse examples across transport mechanisms and organisms
+
+**Enhanced DSPy Tools**:
+- `annotation_explorer`: Comprehensive annotation space discovery
+- `transport_classifier`: Biological mechanism classification  
+- `transport_selector`: Diverse example selection with user preferences
+- `sequence_viewer`: Enhanced sequence analysis (already implemented)
+
+**Expected Results**:
+- **Before**: User asks for "transport proteins" → gets ATP synthase (energy metabolism)
+- **After**: User asks for "transport proteins" → gets ABC transporter, amino acid permease, ion channel
+- **Transparency**: "Excluded K02115 (ATP synthase) - energy metabolism, not substrate transport"
+
+**Performance Optimizations** (Future):
+- Cache annotation catalogs (they change infrequently)
+- Batch LLM calls for annotation processing
+- Progressive disclosure for large annotation sets
+- Reusable curated annotation lists
+
+### Phase 2 (Legacy): Code Interpreter Integration ✅ **COMPLETED**
 **Objective**: Add secure code execution capabilities for data analysis and visualization
 
 **✅ Successfully Implemented**:
