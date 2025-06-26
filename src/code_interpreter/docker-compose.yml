@@ -1,0 +1,54 @@
+services:
+  code-interpreter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MAX_EXECUTION_TIME=30
+      - MAX_MEMORY_MB=512
+      - MAX_OUTPUT_SIZE=1048576  # 1MB
+    volumes:
+      # Mount sequence database and services
+      - ../../data/sequences.db:/app/sequences.db:ro
+      - ../build_kg:/app/build_kg:ro
+      - ./sequence_service.py:/app/sequence_service.py:ro
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined  # Required for gVisor
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID  # Required for user switching
+      - SETGID  # Required for group switching
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+      - /app/sessions:rw,noexec,nosuid,size=50m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - code-interpreter-net
+
+  # Optional: gVisor runtime configuration
+  # Note: Requires gVisor (runsc) to be installed on the host
+  code-interpreter-gvisor:
+    extends:
+      service: code-interpreter
+    runtime: runsc  # gVisor runtime
+    profiles:
+      - gvisor  # Only start with --profile gvisor
+
+networks:
+  code-interpreter-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
