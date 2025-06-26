@@ -13,6 +13,7 @@ class RepairStrategy(Enum):
     INVALID_ENTITY_SUGGESTION = "invalid_entity_suggestion"
     RELATIONSHIP_MAPPING = "relationship_mapping"
     SCHEMA_VALIDATION = "schema_validation"
+    PARAMETER_SUBSTITUTION = "parameter_substitution"
     FALLBACK_MESSAGE = "fallback_message"
 
 
