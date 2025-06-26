@@ -687,6 +687,7 @@ class GenomicRAG(dspy.Module):
                 raise ValueError("Task plan contains no tasks")
             
             console.print(f"📋 Executing {len(task_plan.get('tasks', []))} tasks")
+            logger.info(f"🔍 DEBUG: Raw task plan from DSPy: {task_plan}")
             
             # Create task graph
             graph = TaskGraph()
@@ -842,25 +843,34 @@ class GenomicRAG(dspy.Module):
                     task.tool_args["session_id"] = self.code_interpreter_session_id
                     logger.debug(f"Using persistent session: {self.code_interpreter_session_id}")
             
+            # Resolve template variables in tool arguments
+            task.tool_args = self._resolve_template_variables(task.tool_args, previous_results)
+            
             # Auto-populate sequence viewer with protein IDs from previous results
-            elif task.tool_name == "sequence_viewer":
+            if task.tool_name == "sequence_viewer":
                 current_protein_ids = task.tool_args.get("protein_ids")
                 logger.debug(f"🔬 Sequence viewer task - current protein_ids: {current_protein_ids}")
+                logger.info(f"🔬 DEBUG: Full task.tool_args after template resolution: {task.tool_args}")
+                logger.info(f"🔬 DEBUG: task.tool_args type: {type(task.tool_args)}")
                 
                 # Check if protein_ids contains unresolved template variables
                 needs_auto_population = (
                     not current_protein_ids or 
-                    (isinstance(current_protein_ids, str) and current_protein_ids.startswith("${")) or
+                    (isinstance(current_protein_ids, str) and (current_protein_ids.startswith("${") or current_protein_ids.startswith("from "))) or
                     (isinstance(current_protein_ids, list) and len(current_protein_ids) == 1 and 
-                     isinstance(current_protein_ids[0], str) and current_protein_ids[0].startswith("${"))
+                     isinstance(current_protein_ids[0], str) and (current_protein_ids[0].startswith("${") or current_protein_ids[0].startswith("from ")))
                 )
                 
                 if needs_auto_population:
                     logger.info("🔍 Auto-populating sequence viewer with protein IDs from previous results")
+                    logger.info(f"🔍 DEBUG: previous_results keys: {list(previous_results.keys())}")
+                    logger.info(f"🔍 DEBUG: previous_results structure: {previous_results}")
                     
                     # Extract protein IDs from code interpreter results
                     protein_ids = []
                     for task_id, result in previous_results.items():
+                        logger.info(f"🔍 DEBUG: Processing task_id={task_id}, result type={type(result)}")
+                        logger.info(f"🔍 DEBUG: Result keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
                         if "tool_result" in result and result.get("tool_name") == "code_interpreter":
                             code_output = result["tool_result"].get("stdout", "")
                             extracted_ids = extract_protein_ids_from_analysis(code_output)
@@ -1476,6 +1486,45 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
             metadata=metadata,
             query_time=query_time
         )
+    
+    def _resolve_template_variables(self, tool_args: Dict[str, Any], previous_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve template variables in tool arguments using previous task results."""
+        resolved_args = {}
+        
+        for key, value in tool_args.items():
+            if isinstance(value, str) and value.startswith("from "):
+                # Extract task reference (e.g., "from query_central_metabolism_proteins")
+                task_ref = value.replace("from ", "").strip()
+                logger.info(f"🔧 Resolving template variable: {value} -> task_ref: {task_ref}")
+                
+                # Extract protein IDs from the referenced task
+                protein_ids = []
+                if task_ref in previous_results:
+                    result = previous_results[task_ref]
+                    logger.info(f"🔧 Found task result for {task_ref}: {type(result)}")
+                    
+                    if "context" in result:
+                        context = result["context"]
+                        
+                        # Handle GenomicContext with structured_data
+                        if hasattr(context, 'structured_data'):
+                            for item in context.structured_data:
+                                pid = item.get('protein_id', '')
+                                if pid:
+                                    protein_ids.append(pid)
+                        # Handle QueryResult object wrapped in context
+                        elif hasattr(context, 'results'):
+                            for item in context.results:
+                                pid = item.get('protein_id', '')
+                                if pid:
+                                    protein_ids.append(pid)
+                
+                logger.info(f"🔧 Resolved {len(protein_ids)} protein IDs: {protein_ids[:3]}...")
+                resolved_args[key] = protein_ids
+            else:
+                resolved_args[key] = value
+        
+        return resolved_args
     
     def _format_context(self, context: GenomicContext) -> str:
         """Format context for LLM consumption with enhanced genomic intelligence and quantitative insights."""
