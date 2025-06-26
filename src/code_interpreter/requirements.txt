@@ -2,6 +2,9 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
+# HTTP client for code interpreter communication (CRITICAL - was missing!)
+httpx==0.25.0
+
 # Data analysis and visualization
 numpy==1.24.3
 pandas==2.0.3
@@ -9,18 +12,123 @@ matplotlib==3.7.2
 seaborn==0.12.2
 scipy==1.11.1
 
-# Additional scientific computing
+# Advanced scientific computing
 scikit-learn==1.3.0
 plotly==5.17.0
+networkx==3.1
+
+# Machine learning and statistics
+statsmodels==0.14.0
+scikit-bio==0.5.8
+xgboost==1.7.6
 
 # Bioinformatics
 biopython==1.81
+pyvcf==0.6.8
+pysam==0.21.0
+
+# Sequence analysis
+logomaker==0.8
+pyhmmer==0.10.4
+
+# Phylogenetics and evolution  
+ete3==3.1.3
+dendropy==4.6.1
+
+# Genomics visualization
+pygenomeviz==0.4.2
+circos==0.1.0
+
+# Advanced data structures
+pyarrow==13.0.0
+polars==0.19.3
+
+# Network analysis and graph theory
+igraph==0.10.8
+graph-tool==2.45
+
+# Image processing and computer vision
+pillow==10.0.0
+opencv-python==4.8.1.78
+
+# Natural language processing
+nltk==3.8.1
+spacy==3.6.1
+
+# Geographic and spatial analysis
+geopandas==0.14.0
+shapely==2.0.2
+
+# Database connections
+sqlalchemy==2.0.21
+psycopg2-binary==2.9.7
+pymongo==4.5.0
+
+# Cache and performance
+redis==5.0.1
+lru-dict==1.2.0
+
+# Jupyter and interactive analysis
+jupyter==1.0.0
+ipywidgets==8.1.1
+jupyterlab==4.0.6
+
+# File format support
+h5py==3.9.0
+openpyxl==3.1.2
+xlsxwriter==3.1.9
 
 # Utilities
 pydantic==2.4.2
 rich==13.6.0
 requests==2.31.0
+click==8.1.7
+tqdm==4.66.1
+python-dateutil==2.8.2
 
-# Development and testing (optional)
+# Configuration and environment
+python-dotenv==1.0.0
+configparser==6.0.0
+
+# Parallel processing
+joblib==1.3.2
+dask[complete]==2023.9.2
+
+# Testing and development
 pytest==7.4.2
 pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Protein structure analysis
+pymol-open-source==2.5.0
+mdanalysis==2.6.1
+
+# Molecular dynamics and simulation
+openmm==8.0.0
+
+# Chemical informatics
+rdkit==2023.3.3
+
+# Time series analysis  
+prophet==1.1.5
+pmdarima==2.0.4
+
+# Web scraping and APIs
+beautifulsoup4==4.12.2
+scrapy==2.11.0
+
+# Crypto and security (for secure data handling)
+cryptography==41.0.7
+passlib==1.7.4
+
+# Memory profiling and optimization
+memory-profiler==0.61.0
+line-profiler==4.1.1
+
+# Documentation and reporting
+sphinx==7.2.6
+reportlab==4.0.6
+
+# Audio and signal processing (for genomic signal analysis)
+librosa==0.10.1
+pydub==0.25.1

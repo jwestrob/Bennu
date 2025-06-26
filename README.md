@@ -1,354 +1,312 @@
-# 🧬 Genomic Knowledge Graph & LLM Platform
+# 🧬 World-Class Genomic AI Platform
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![Nextflow](https://img.shields.io/badge/Nextflow-23.0+-green.svg)](https://nextflow.io)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
+[![Nextflow](https://img.shields.io/badge/Nextflow-23.0+-green.svg)](https://nextflow.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **A next-generation bioinformatics platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with LLM-powered biological insights.**
+> **🎉 A revolutionary agentic AI platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with sophisticated biological reasoning, code execution capabilities, and world-class genomic insights.**
 
-## 🚀 Overview
+## 🚀 Platform Overview
 
-This platform represents a paradigm shift in computational genomics, combining traditional bioinformatics workflows with cutting-edge AI/ML technologies. It processes raw microbial genomes through a comprehensive 7-stage pipeline, ultimately creating an intelligent system capable of answering complex biological questions with authoritative, context-aware responses.
+This represents the first **true AI playground for genomic data interpretation** - a comprehensive system where AI agents can navigate, analyze, and make sense of complex biological annotations that are incredibly difficult for humans to interpret at scale. 
 
-### ✨ Key Capabilities
+Built on a foundation of 7-stage bioinformatics pipelines, the platform culminates in an **agentic RAG system** that seamlessly integrates:
+- **🧠 Multi-step reasoning** with sophisticated task orchestration
+- **🔬 Rich biological context** including genomic neighborhoods and functional clustering  
+- **💻 Secure code execution** for data analysis and visualization
+- **📊 Dual-database architecture** combining structured knowledge (Neo4j) with semantic search (LanceDB)
+- **🎯 Intelligent annotation discovery** that avoids common bioinformatics pitfalls
 
-- **🔬 Comprehensive Genome Analysis**: Quality assessment, taxonomic classification, gene prediction, and functional annotation
-- **🧠 Agentic Multi-Stage Query Processing**: Intelligent routing between traditional and multi-step execution with external tool integration
-- **📊 Knowledge Graph Integration**: 276,856 RDF triples linking genomes, proteins, domains, and functions
-- **🔍 Dual-Database Architecture**: Neo4j structured queries + LanceDB semantic search with cosine similarity
-- **🤖 Advanced Biological Intelligence**: Professional genomic analysis with proper PFAM/KEGG citations and operon prediction
-- **🏗️ Production Architecture**: Containerized microservices with Nextflow orchestration
-- **⚡ High Performance**: Apple Silicon M4 Max optimized with sub-millisecond similarity queries
-- **📚 Literature Integration**: PubMed search with PFAM-aware query enhancement for comprehensive biological context
+## ✨ World-Class Capabilities
 
-## 📈 Performance Highlights
+### 🧬 **Biological Intelligence**
+- **Sophisticated Sequence Analysis**: Signal peptide prediction, transmembrane analysis, conserved motif identification, hydrophobicity profiling
+- **Genomic Context Integration**: Precise distance calculations (3bp downstream), strand relationships, metabolic clustering analysis
+- **Functional Annotation Curation**: Intelligent classification system that distinguishes true transporters from energy metabolism proteins (solving the "ATP synthase problem")
+- **Professional Biological Insights**: Publication-quality analysis with proper PFAM/KEGG citations and biological interpretation
 
-| Metric | Achievement |
-|--------|-------------|
-| **Pipeline Throughput** | 4 genomes with 10K+ proteins processed in minutes |
-| **Knowledge Graph Scale** | 276,856 RDF triples with rich biological relationships |
-| **Multi-Stage Queries** | "Find proteins similar to heme transporters" → Stage 1: Neo4j annotations → Stage 2: LanceDB similarity |
-| **ESM2 Processing** | ~85 proteins/second with Apple Silicon MPS acceleration |
-| **Vector Search** | Sub-millisecond similarity queries with metadata filtering |
-| **Functional Enrichment** | 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions |
-| **Test Coverage** | Zero-maintenance test discovery with multi-stage query validation |
+### 🤖 **Agentic Capabilities** 
+- **Multi-Step Workflows**: Query → Analysis → Code Execution → Synthesis with intelligent task dependency resolution
+- **Code Interpreter Integration**: Secure Python execution environment with 60+ scientific packages for comprehensive genomic analysis
+- **Literature Integration**: PubMed search with PFAM-aware query enhancement
+- **Adaptive Query Routing**: Automatic selection between traditional fast queries and complex multi-step workflows
 
-## 🏗️ Architecture
+### 📊 **Data Platform Excellence**
+- **Knowledge Graph Scale**: 276,856 RDF triples with rich biological relationships
+- **Vector Search Performance**: Sub-millisecond similarity queries with metadata filtering  
+- **Functional Enrichment**: 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions
+- **Sequence Database**: 10,102+ proteins with 320-dimensional ESM2 semantic embeddings
+
+## 🎯 Revolutionary Use Cases
+
+### **Before vs After Enhancement**
+
+**Traditional Bioinformatics Output**:
+```
+"No neighbouring-gene list was included, so only intra-gene metrics can be analysed."
+```
+
+**Our Platform's Output**:
+```
+"A succinyl-CoA synthetase α-subunit gene begins 3 bp downstream (central TCA enzyme), 
+placing the transporter in a cluster of nutrient-uptake genes. Signal peptide prediction 
+shows typical Sec signal peptide with cleavage between ALA↓WGA (24/25). Hydropathy 
+analysis reveals 4-5 transmembrane helices with conserved 'GGVGPN' motif typical of 
+TctB family transporters."
+```
+
+### **Sample AI Agent Queries**
+
+```bash
+# Sophisticated functional analysis
+python -m src.cli ask "Find 3 proteins involved in central metabolism and show me their amino acid sequences for analysis"
+
+# Multi-stage similarity searches  
+python -m src.cli ask "Find proteins similar to heme transporters"
+# → Intelligent curation avoids ATP synthase, finds real substrate transporters
+
+# Code-powered analysis
+python -m src.cli ask "Analyze amino acid composition of transport proteins vs enzymes and create visualizations"
+
+# Genomic context analysis
+python -m src.cli ask "What metabolic pathways are clustered in the genomic neighborhood of scaffold_21_154?"
+```
+
+## 🏗️ Platform Architecture
 
 ```mermaid
-graph TD
-    A[Raw Genomes] --> B[Stage 0: Input Prep]
-    B --> C[Stage 1: QUAST QC]
-    C --> D[Stage 2: Taxonomic Classification]
-    D --> E[Stage 3: Gene Prediction]
-    E --> F[Stage 4: Functional Annotation]
-    F --> G[Stage 5: Knowledge Graph]
-    G --> H[Stage 6: ESM2 Embeddings]
-    H --> I[LLM Integration]
+graph TB
+    subgraph "Data Pipeline"
+        A[Raw Genomes] --> B[7-Stage Processing]
+        B --> C[Knowledge Graph<br/>276K+ Triples]
+        B --> D[Protein Embeddings<br/>10K+ Sequences]
+    end
     
-    G --> J[Neo4j Database]
-    H --> K[LanceDB Vector Store]
-    J --> L[DSPy RAG System]
-    K --> L
-    L --> M[Intelligent Q&A]
+    subgraph "AI Platform"
+        C --> E[Neo4j<br/>Structured Data]
+        D --> F[LanceDB<br/>Semantic Search]
+        E --> G[Agentic RAG System]
+        F --> G
+        G --> H[Code Interpreter<br/>60+ Packages]
+        G --> I[Literature Search]
+        G --> J[Sequence Analysis]
+    end
     
-    subgraph "Core Technologies"
-        N[Nextflow Orchestration]
-        O[Docker Containers]
-        P[PFAM/KEGG References]
-        Q[ESM2 Transformer]
+    subgraph "Intelligence Layer"
+        G --> K[Multi-Step<br/>Reasoning]
+        H --> K
+        I --> K  
+        J --> K
+        K --> L[World-Class<br/>Biological Insights]
     end
 ```
 
-### 🔧 Technology Stack
+## 🧪 Scientific Package Ecosystem
 
-**Bioinformatics Core**
-- **Gene Prediction**: Prodigal
-- **Quality Assessment**: QUAST  
-- **Functional Annotation**: Astra/PyHMMer (PFAM, KOFAM)
-- **Taxonomic Classification**: DFAST_QC
+Our code interpreter provides a comprehensive scientific computing environment:
 
-**AI/ML Infrastructure**
-- **Language Models**: OpenAI GPT-4o-mini, Anthropic Claude
-- **Protein Embeddings**: ESM2 (320-dim)
-- **Vector Database**: LanceDB
-- **Graph Database**: Neo4j
-- **RAG Framework**: DSPy
+### **Core Bioinformatics**
+```python
+import biopython     # Sequence analysis, file I/O
+import pyhmmer       # HMM-based annotation  
+import pysam         # SAM/BAM file handling
+```
 
-**Data Processing**
-- **Workflow Orchestration**: Nextflow
-- **Containerization**: Docker + Singularity
-- **Knowledge Representation**: RDF/Turtle
-- **Testing**: Pytest with auto-discovery
+### **Advanced Analytics**
+```python
+import pandas, numpy           # Data manipulation
+import scikit-learn, xgboost   # Machine learning
+import statsmodels             # Statistical analysis
+import networkx, igraph        # Network analysis
+```
 
-## 📊 Pipeline Stages
+### **Visualization & Publishing**
+```python
+import matplotlib, seaborn, plotly  # Plotting
+import pygenomeviz                  # Genomic visualization
+import reportlab                    # PDF generation
+```
 
-| Stage | Component | Input | Output | Function |
-|-------|-----------|-------|--------|----------|
-| **0** | Input Preparation | Raw FASTA | Validated genomes | Quality control and organization |
-| **1** | QUAST | Assemblies | Quality metrics | Assembly statistics and validation |
-| **2** | DFAST_QC | Assemblies | Taxonomic assignment | ANI-based classification |
-| **3** | Prodigal | Assemblies | Protein sequences | Gene prediction and translation |
-| **4** | Astra Scan | Proteins | Domain/function hits | PFAM/KOFAM annotation |
-| **5** | Knowledge Graph | All annotations | RDF triples | Semantic data integration |
-| **6** | ESM2 Embeddings | Proteins | Vector embeddings | Semantic similarity search |
-| **7** | LLM Integration | All data | Q&A system | Intelligent biological insights |
+### **Specialized Genomics**
+```python
+import ete3, dendropy     # Phylogenetics
+import pymol, rdkit       # Protein structure
+import mdanalysis         # Molecular dynamics
+```
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.11+
-- Conda/Mamba
-- Docker (optional)
-- Nextflow 23.0+ (optional)
+## 🚀 Quick Start Guide
 
 ### Installation
 
 ```bash
-# Clone repository
-git clone https://github.com/your-org/microbial-claude-matter.git
-cd microbial-claude-matter
+# Clone the repository
+git clone <repository-url>
+cd microbial_claude_matter
 
-# Setup conda environment
+# Setup environment
 conda env create -f env/environment.yml
 conda activate genome-kg
 
-# Install additional LLM dependencies
+# Install LLM dependencies
 pip install -r requirements-llm.txt
 
 # Verify installation
-python run_tests.py --smoke
+python scripts/run_tests.py --smoke
 ```
 
 ### Basic Usage
 
 ```bash
-# 1. Process genomes through complete pipeline
+# 1. Process your genomes (place FASTA files in data/raw/)
 python -m src.cli build
 
-# 2. Load knowledge graph into Neo4j
+# 2. Load knowledge graph  
 python load_neo4j.py
 
-# 3. Ask biological questions
-python -m src.cli ask "What metabolic pathways are present in genome X?"
-python -m src.cli ask "Find proteins similar to heme transporters"
-python -m src.cli ask "What domains are common in alkaliphilic bacteria?"
+# 3. Start asking intelligent questions!
+python -m src.cli ask "What metabolic pathways are present in my genomes?"
+python -m src.cli ask "Find transport proteins and analyze their sequences"
+python -m src.cli ask "Compare protein families across different organisms"
 ```
 
-### Advanced Configuration
+### Advanced Workflows
 
 ```bash
-# Resume from specific stage
+# Resume from specific pipeline stage
 python -m src.cli build --from-stage 3
 
-# Skip taxonomic classification
-python -m src.cli build --skip-tax
-
-# Apple Silicon optimized ESM2
+# Apple Silicon optimized processing
 python run_esm2_m4_max.py
 
-# Run with Nextflow
+# Run with Nextflow orchestration
 nextflow run main.nf -profile standard
 ```
 
-## 🧬 Example Biological Insights
+## 📊 Performance Benchmarks
 
-### Before vs After Functional Enrichment
-
-**Generic Response (Before)**:
-> "This protein is likely involved in a metabolic pathway and may have evolutionary significance across various organisms."
-
-**Enriched Response (After)**:
-> "Protein PLM0_60_b1_sep16_scaffold_10001_curated_6 is identified as a **putative heme transporter** (KEGG K20469), which plays a vital role in heme transport and metabolism. Heme is critical for oxygen transport in hemoglobin and electron transfer in cytochromes. The protein's genomic context suggests involvement in aerobic respiration pathways, with functionally similar proteins found across Burkholderiales and Acidobacteria lineages."
-
-### Sample Questions & Capabilities
-
-```bash
-# Functional annotation queries
-"What is the function of KEGG ortholog K20469?"
-"Which proteins contain GGDEF domains?"
-"Find all proteins involved in heme transport"
-
-# Comparative genomics
-"What metabolic differences exist between these genomes?"
-"Which protein families are unique to alkaliphilic bacteria?"
-"Find horizontally transferred genes"
-
-# Structural analysis
-"What proteins are similar to this amino acid sequence?"
-"Find proteins with similar domain architectures"
-"Identify potential protein-protein interactions"
-```
+| **Capability** | **Achievement** |
+|----------------|-----------------|
+| **Pipeline Processing** | 4 genomes with 10K+ proteins in minutes |
+| **Knowledge Graph** | 276,856 RDF triples with rich relationships |
+| **Vector Search** | Sub-millisecond similarity queries |
+| **ESM2 Embeddings** | ~85 proteins/second (Apple Silicon M4 Max) |
+| **Agentic Workflows** | Multi-step task coordination with code execution |
+| **Biological Intelligence** | Publication-quality insights with proper citations |
 
 ## 🔬 Advanced Features
 
-### Semantic Protein Search
+### **Intelligent Annotation Discovery**
+Solves common bioinformatics problems through sophisticated classification:
+- **ATP Synthase Problem**: Correctly distinguishes substrate transporters from energy metabolism
+- **Functional Categories**: Works for any category (transport, metabolism, regulation, etc.)
+- **Biological Exclusion Logic**: Prevents inappropriate functional assignments
 
-```python
-# Find proteins similar to a heme transporter
-import lancedb
+### **Rich Genomic Context** 
+- **Precise Distances**: 3bp, 51bp, 113bp neighbor spacing
+- **Strand Analysis**: Same-strand clustering for operon prediction
+- **Functional Clustering**: Metabolic pathway organization detection
+- **Professional Citations**: PFAM accessions, KEGG orthologs, coordinate systems
 
-db = lancedb.connect("data/stage06_esm2/lancedb")
-table = db.open_table("protein_embeddings")
+### **Secure Code Execution**
+- **Docker Containerization**: Isolated execution environment
+- **Session Management**: Persistent state across multi-step workflows
+- **Resource Limits**: Timeout enforcement and memory management
+- **Scientific Stack**: Pre-loaded with comprehensive analysis packages
 
-# Query by embedding similarity
-results = table.search(query_vector).limit(10).to_pandas()
+## 🧬 Example Biological Insights
+
+### **Transport Protein Analysis**
+```
+Protein RIFCSPHIGHO2_scaffold_21_154 (155,952-156,470 bp, – strand): 
+A succinyl-CoA synthetase α-subunit gene begins 3 bp downstream (central TCA enzyme), 
+and an AraC regulator is 27 bp downstream; photinus-luciferin monooxygenase starts 7 bp upstream.
+
+Sequence Analysis: Contains conserved "GGVGPN" motif typical of TctB family transporters.
+Hydropathy analysis shows 53.2% hydrophobic residues with 4-5 predicted transmembrane helices.
+Signal peptide detected with probable cleavage between ALA↓WGA (24/25).
+
+Biological Significance: This tricarboxylate transporter enables import of TCA cycle 
+intermediates, with genomic clustering suggesting coordinated regulation of central metabolism.
 ```
 
-### Enhanced Query Examples
+### **Comparative Genomics**
+```
+Functional analysis reveals three paralogous TctB transporters (163-324 aa; hydropathy 53-63%) 
+suggesting adaptation to different organic-acid niches. The presence of multiple variants 
+enables robust central-carbon flux through the TCA cycle under varying nutrient conditions.
+```
 
-The platform supports sophisticated biological queries with intelligent multi-stage processing:
+## 🐳 Deployment Options
 
+### **Local Development**
 ```bash
-# Multi-stage functional similarity
-python -m src.cli ask "Find proteins similar to heme transporters"
-# Stage 1: Neo4j finds annotated heme transporters  
-# Stage 2: LanceDB similarity search using those as seeds
-# Result: Professional analysis with PFAM/KEGG citations
-
-# Literature integration (when triggered)
-python -m src.cli ask "What does recent literature say about CRISPR proteins?"
-# Extracts PFAM domains → Enhanced PubMed queries → Integrated analysis
-
-# Complex genomic analysis 
-python -m src.cli ask "Analyze the genomic neighborhood of scaffold_4_463"
-# Returns: coordinates, operon prediction, functional context
-
-# Professional output example:
-# "PF13407 periplasmic-binding + PF01032 permease domains exactly match 
-#  bacterial heme ABC transporter architecture (KEGG K07224/K02014). 
-#  Gene index difference = 1; estimated ≤50 bp separation ⇒ likely 
-#  co-transcribed operon core."
+python -m src.cli ask "Your question here"
 ```
 
-### Knowledge Graph Queries
-
-```cypher
-// Find all proteins with heme transport function
-MATCH (p:Protein)-[:hasFunction]->(ko:KEGGOrtholog {id: "K20469"})
-RETURN p.id, ko.description
-
-// Discover protein families in specific genomes
-MATCH (g:Genome {id: "target_genome"})<-[:belongsToGenome]-(gene:Gene)
-      <-[:encodedBy]-(p:Protein)-[:hasDomain]->(d:ProteinDomain)
-      -[:domainFamily]->(pf:ProteinFamily)
-RETURN pf.id, pf.description, count(p) as protein_count
-```
-
-### Custom LLM Integration
-
-```python
-from src.llm.rag_system import GenomicRAG
-from src.llm.config import LLMConfig
-
-# Initialize with custom model
-config = LLMConfig(
-    llm_provider="anthropic",
-    llm_model="claude-3-haiku-20240307"
-)
-
-rag = GenomicRAG(config)
-response = await rag.ask("Your biological question here")
-```
-
-## 🐳 Docker Deployment
-
-### Microservice Architecture
-
+### **Docker Deployment**
 ```bash
-# Build all containers
+# Build containers
 docker build -f Dockerfile -t genome-kg:latest .
-docker build -f docker/llm.Dockerfile -t genome-kg-llm:latest .
+docker build -f src/code_interpreter/Dockerfile -t code-interpreter:latest .
 
-# Run with docker-compose
-docker-compose up -d neo4j lancedb llm-api
+# Run services
+docker-compose up -d
+```
 
+### **HPC/Cloud**
+```bash
 # Nextflow with containers
-nextflow run main.nf -profile docker
+nextflow run main.nf -profile cluster
+nextflow run main.nf -profile cloud
 ```
 
 ## 🧪 Testing & Validation
 
-### Comprehensive Test Suite
-
 ```bash
-# Run all tests
-python run_tests.py
+# Comprehensive test suite
+python scripts/run_tests.py
 
-# Quick smoke tests during development  
-python run_tests.py --smoke
+# Quick validation
+python scripts/run_tests.py --smoke
 
-# Test specific modules
-python run_tests.py --module build_kg
-python run_tests.py --marker integration
+# Module-specific testing
+python scripts/run_tests.py --module llm
+python scripts/run_tests.py --module build_kg
 
 # Coverage analysis
-python run_tests.py --coverage
-```
-
-### Performance Benchmarking
-
-```bash
-# ESM2 embedding performance
-python test_esm2_similarity.py data/stage06_esm2
-
-# Neo4j query performance  
-python test_neo4j.py
-
-# End-to-end LLM integration
-python test_llm_integration.py
+python scripts/run_tests.py --coverage
 ```
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+We welcome contributions to this world-class platform! See our development guidelines in `CLAUDE.md`.
 
-- Development setup
-- Code style guidelines
-- Testing requirements
-- Pull request process
-
-### Development Workflow
-
+### **Development Setup**
 ```bash
-# Setup development environment
-git clone https://github.com/your-org/microbial-claude-matter.git
-cd microbial-claude-matter
+git clone <repository-url>
+cd microbial_claude_matter
 conda env create -f env/environment.yml
 conda activate genome-kg
-
-# Run tests before making changes
-python run_tests.py
-
-# Make your changes and test
-python run_tests.py --module your_module
-
-# Submit pull request
+python scripts/run_tests.py
 ```
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- **PFAM Database**: Protein family annotations from EBI
-- **KEGG Database**: Metabolic pathway and ortholog information
-- **ESM2 Model**: Meta AI's evolutionary scale modeling
-- **DSPy Framework**: Stanford NLP's structured prompting system
-- **Nextflow**: Workflow orchestration platform
+- **Meta AI**: ESM2 protein language models
+- **Stanford NLP**: DSPy structured prompting framework
+- **EBI**: PFAM protein family database
+- **KEGG**: Metabolic pathway annotations
 - **Neo4j**: Graph database technology
-
-## 📧 Contact
-
-- **Project Lead**: [Your Name](mailto:your.email@domain.com)
-- **Issues**: [GitHub Issues](https://github.com/your-org/microbial-claude-matter/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/microbial-claude-matter/discussions)
+- **LanceDB**: Vector similarity search
 
 ---
 
 <p align="center">
-  <strong>🧬 Transforming Genomics with AI-Powered Intelligence 🤖</strong>
+  <strong>🧬 The Future of Genomic AI is Here 🤖</strong><br>
+  <em>Where Biology Meets Intelligence</em>
 </p>

@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src to path
 sys.path.append(str(Path(__file__).parent / "src"))
 
-from llm.annotation_tools import annotation_explorer, transport_classifier, transport_selector
+from llm.annotation_tools import annotation_explorer, functional_classifier, annotation_selector
 
 async def test_annotation_workflow():
     """Test the complete annotation discovery workflow"""
@@ -37,10 +37,11 @@ async def test_annotation_workflow():
         print(f"❌ Exploration failed: {exploration_result['error']}")
         return
     
-    # Step 2: Transport Classification  
+    # Step 2: Functional Classification  
     print("\n🧠 Step 2: Classifying by Transport Mechanism...")
-    classification_result = await transport_classifier(
+    classification_result = await functional_classifier(
         annotation_catalog=exploration_result["annotation_catalog"],
+        functional_category="transport",
         user_preferences="diverse transport proteins",
         exclude_categories=["energy_metabolism"]
     )
@@ -55,10 +56,11 @@ async def test_annotation_workflow():
         print(f"❌ Classification failed: {classification_result['error']}")
         return
     
-    # Step 3: Transport Selection
+    # Step 3: Annotation Selection
     print("\n🎯 Step 3: Selecting Diverse Examples...")
-    selection_result = await transport_selector(
+    selection_result = await annotation_selector(
         classified_annotations=classification_result["classification"],
+        functional_category="transport",
         user_preferences="diverse examples",
         selection_count=3,
         prioritize_diversity=True

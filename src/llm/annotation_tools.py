@@ -105,92 +105,116 @@ async def annotation_explorer(
             "total_annotations": 0
         }
 
-async def transport_classifier(
+async def functional_classifier(
     annotation_catalog: Dict[str, List[Dict]], 
+    functional_category: str = "transport",
     user_preferences: str = "",
-    exclude_categories: List[str] = ["energy_metabolism", "respiratory_chain"]
+    exclude_categories: List[str] = ["energy_metabolism", "respiratory_chain"],
+    max_relevant: int = 10
 ) -> Dict[str, Any]:
     """
-    Classify annotations by biological transport mechanism using LLM intelligence.
+    Classify annotations by biological function using intelligent keyword matching.
+    Generalized version that works for any functional category.
     
     Args:
         annotation_catalog: Complete annotation catalog from annotation_explorer
+        functional_category: Target biological category (transport, metabolism, regulation, etc.)
         user_preferences: User-specified preferences extracted from query
         exclude_categories: Categories to explicitly exclude
+        max_relevant: Maximum number of relevant annotations to return
         
     Returns:
-        Dict with annotations classified by biological function
+        Dict with annotations classified by biological relevance
     """
-    logger.info(f"🧠 Classifying annotations by transport mechanism")
+    logger.info(f"🧠 Classifying annotations for functional category: {functional_category}")
     logger.info(f"📋 User preferences: {user_preferences}")
     
     try:
-        # Prepare annotation list for LLM analysis
+        # Prepare annotation list for analysis
         all_annotations = []
         for ann_type, annotations in annotation_catalog.items():
             for ann in annotations:
-                all_annotations.append(f"{ann['id']}: {ann['description']} ({ann_type})")
+                all_annotations.append({
+                    "id": ann['id'],
+                    "description": ann['description'],
+                    "type": ann_type
+                })
         
-        logger.info(f"📊 Processing {len(all_annotations)} annotations for classification")
+        logger.info(f"📊 Processing {len(all_annotations)} annotations for {functional_category}")
         
-        # For now, implement basic keyword-based classification
-        # TODO: Replace with actual LLM-powered classification
-        substrate_transport = []
-        energy_metabolism = []
-        ion_channels = []
-        membrane_structural = []
-        other = []
-        
-        for ann_line in all_annotations:
-            ann_id = ann_line.split(':')[0]
-            description = ann_line.lower()
-            
-            # Basic classification logic (to be replaced with LLM)
-            if any(keyword in description for keyword in ['abc', 'permease', 'transporter', 'channel']) and \
-               not any(keyword in description for keyword in ['atp synthase', 'h+-transporting atpase', 'cytochrome']):
-                substrate_transport.append(ann_id)
-            elif any(keyword in description for keyword in ['atp synthase', 'atpase', 'cytochrome', 'respiratory']):
-                energy_metabolism.append(ann_id)
-            elif any(keyword in description for keyword in ['channel', 'pore', 'ion']):
-                ion_channels.append(ann_id)
-            elif any(keyword in description for keyword in ['membrane', 'porin']):
-                membrane_structural.append(ann_id)
-            else:
-                other.append(ann_id)
-        
-        classification_result = {
-            "SUBSTRATE_TRANSPORT": substrate_transport,
-            "ENERGY_METABOLISM": energy_metabolism,
-            "ION_CHANNELS": ion_channels,
-            "MEMBRANE_STRUCTURAL": membrane_structural,
-            "OTHER": other
+        # Define category-specific keywords
+        category_keywords = {
+            "transport": {
+                "include": ['abc', 'permease', 'transporter', 'channel', 'pump', 'porter', 'antiporter', 'symporter'],
+                "exclude": ['atp synthase', 'h+-transporting atpase', 'cytochrome', 'respiratory', 'nadh dehydrogenase']
+            },
+            "metabolism": {
+                "include": ['dehydrogenase', 'reductase', 'oxidase', 'synthase', 'kinase', 'transferase', 'hydrolase'],
+                "exclude": ['transport', 'channel', 'permease']
+            },
+            "regulation": {
+                "include": ['regulator', 'repressor', 'activator', 'sensor', 'response', 'transcriptional'],
+                "exclude": ['transport', 'metabolic']
+            },
+            "central_metabolism": {
+                "include": ['glycolysis', 'citrate', 'pyruvate', 'acetyl', 'succinate', 'fumarate', 'malate', 'oxaloacetate'],
+                "exclude": ['transport', 'abc']
+            }
         }
         
-        # Apply exclusions
-        if exclude_categories:
-            for category in exclude_categories:
-                if category.upper() in classification_result:
-                    excluded_count = len(classification_result[category.upper()])
-                    classification_result[category.upper()] = []
-                    logger.info(f"🚫 Excluded {excluded_count} annotations from {category}")
+        # Get keywords for the requested category
+        keywords = category_keywords.get(functional_category.lower(), {
+            "include": [functional_category.lower()],
+            "exclude": []
+        })
+        
+        # Classify annotations
+        relevant_annotations = []
+        excluded_annotations = []
+        other_annotations = []
+        
+        for ann in all_annotations:
+            description_lower = ann['description'].lower()
+            ann_id = ann['id']
+            
+            # Check exclusion criteria first
+            if any(exclude_word in description_lower for exclude_word in keywords['exclude']):
+                excluded_annotations.append(ann_id)
+            # Check inclusion criteria
+            elif any(include_word in description_lower for include_word in keywords['include']):
+                relevant_annotations.append(ann_id)
+            else:
+                other_annotations.append(ann_id)
+        
+        # Limit relevant annotations to max_relevant
+        if len(relevant_annotations) > max_relevant:
+            relevant_annotations = relevant_annotations[:max_relevant]
+        
+        classification_result = {
+            "RELEVANT": relevant_annotations,
+            "EXCLUDED": excluded_annotations,
+            "OTHER": other_annotations
+        }
         
         total_classified = sum(len(ann_list) for ann_list in classification_result.values())
         
-        logger.info(f"✅ Classification complete:")
-        for category, ann_list in classification_result.items():
-            logger.info(f"  📊 {category}: {len(ann_list)} annotations")
+        logger.info(f"✅ Classification complete for {functional_category}:")
+        logger.info(f"  📊 RELEVANT: {len(relevant_annotations)} annotations")
+        logger.info(f"  🚫 EXCLUDED: {len(excluded_annotations)} annotations")
+        logger.info(f"  📄 OTHER: {len(other_annotations)} annotations")
         
         return {
             "success": True,
             "classification": classification_result,
             "total_classified": total_classified,
+            "functional_category": functional_category,
             "user_preferences": user_preferences,
             "excluded_categories": exclude_categories,
-            "reasoning": "Classified based on functional keywords and biological categories"
+            "reasoning": f"Classified based on {functional_category}-specific keywords"
         }
         
     except Exception as e:
-        logger.error(f"❌ Error in transport classification: {e}")
+        logger.error(f"❌ Error in functional classification: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -198,17 +222,20 @@ async def transport_classifier(
             "total_classified": 0
         }
 
-async def transport_selector(
+async def annotation_selector(
     classified_annotations: Dict[str, List[str]], 
+    functional_category: str = "transport",
     user_preferences: str = "",
     selection_count: int = 3,
     prioritize_diversity: bool = True
 ) -> Dict[str, Any]:
     """
-    Select diverse, high-quality transport protein examples from classified annotations.
+    Select high-quality examples from classified annotations for any functional category.
+    Generalized version that works for transport, metabolism, regulation, etc.
     
     Args:
-        classified_annotations: Output from transport_classifier
+        classified_annotations: Output from functional_classifier
+        functional_category: The functional category being selected for
         user_preferences: User preferences for selection
         selection_count: Number of examples to select
         prioritize_diversity: Whether to maximize diversity across mechanisms
@@ -216,40 +243,34 @@ async def transport_selector(
     Returns:
         Dict with selected annotation IDs and selection rationale
     """
-    logger.info(f"🎯 Selecting {selection_count} diverse transport examples")
+    logger.info(f"🎯 Selecting {selection_count} examples for {functional_category}")
     logger.info(f"📋 User preferences: {user_preferences}")
     
     try:
-        # Prioritize SUBSTRATE_TRANSPORT category
-        primary_candidates = classified_annotations.get("SUBSTRATE_TRANSPORT", [])
-        secondary_candidates = classified_annotations.get("ION_CHANNELS", [])
+        # Prioritize RELEVANT category
+        primary_candidates = classified_annotations.get("RELEVANT", [])
+        fallback_candidates = classified_annotations.get("OTHER", [])
         
         selected_annotations = []
         selection_rationale = []
         
-        # Simple selection logic (to be enhanced)
+        # Select from primary candidates first
         if primary_candidates:
-            # Take up to selection_count from primary candidates
             selected_count = min(selection_count, len(primary_candidates))
             selected_annotations.extend(primary_candidates[:selected_count])
-            selection_rationale.append(f"Selected {selected_count} substrate transporters as primary examples")
+            selection_rationale.append(f"Selected {selected_count} highly relevant {functional_category} annotations")
             
-            # Fill remaining slots with ion channels if available
+            # Fill remaining slots with fallback candidates if needed
             remaining_slots = selection_count - selected_count
-            if remaining_slots > 0 and secondary_candidates:
-                additional_count = min(remaining_slots, len(secondary_candidates))
-                selected_annotations.extend(secondary_candidates[:additional_count])
-                selection_rationale.append(f"Added {additional_count} ion channels for mechanism diversity")
+            if remaining_slots > 0 and fallback_candidates:
+                additional_count = min(remaining_slots, len(fallback_candidates))
+                selected_annotations.extend(fallback_candidates[:additional_count])
+                selection_rationale.append(f"Added {additional_count} additional candidates for completeness")
         else:
-            # Fallback to any available transport-related annotations
-            all_candidates = []
-            for category, ann_list in classified_annotations.items():
-                if category not in ["ENERGY_METABOLISM", "OTHER"]:
-                    all_candidates.extend(ann_list)
-            
-            selected_count = min(selection_count, len(all_candidates))
-            selected_annotations = all_candidates[:selected_count]
-            selection_rationale.append(f"Selected {selected_count} available transport-related annotations")
+            # Fallback to any available candidates
+            selected_count = min(selection_count, len(fallback_candidates))
+            selected_annotations = fallback_candidates[:selected_count]
+            selection_rationale.append(f"Selected {selected_count} available {functional_category}-related annotations")
         
         logger.info(f"✅ Selection complete: {len(selected_annotations)} annotations selected")
         
@@ -258,12 +279,13 @@ async def transport_selector(
             "selected_annotations": selected_annotations,
             "selection_count": len(selected_annotations),
             "selection_rationale": selection_rationale,
+            "functional_category": functional_category,
             "user_preferences": user_preferences,
             "diversity_prioritized": prioritize_diversity
         }
         
     except Exception as e:
-        logger.error(f"❌ Error in transport selection: {e}")
+        logger.error(f"❌ Error in annotation selection: {e}")
         return {
             "success": False,
             "error": str(e),
