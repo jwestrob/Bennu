@@ -564,13 +564,31 @@ class GenomicRAG(dspy.Module):
                 
         except Exception as e:
             logger.error(f"Error processing question: {e}")
-            return {
-                "question": question,
-                "answer": f"I encountered an error while processing your question: {str(e)}",
-                "confidence": "low",
-                "citations": "",
-                "error": str(e)
-            }
+            
+            # NEW: Check if this is a repairable error from query processor
+            repair_message = None
+            if hasattr(self.hybrid_processor, 'neo4j_processor') and hasattr(self.hybrid_processor.neo4j_processor, 'get_last_repair_result'):
+                repair_result = self.hybrid_processor.neo4j_processor.get_last_repair_result()
+                if repair_result and repair_result.success and repair_result.user_message:
+                    repair_message = repair_result.user_message
+                    logger.info(f"Using TaskRepairAgent message: {repair_message[:100]}...")
+            
+            if repair_message:
+                return {
+                    "question": question,
+                    "answer": repair_message,
+                    "confidence": "medium - error handled gracefully",
+                    "citations": "",
+                    "repair_info": "TaskRepairAgent provided helpful guidance"
+                }
+            else:
+                return {
+                    "question": question,
+                    "answer": f"I encountered an error while processing your question: {str(e)}",
+                    "confidence": "low",
+                    "citations": "",
+                    "error": str(e)
+                }
     
     async def _execute_traditional_query(self, question: str) -> Dict[str, Any]:
         """Execute traditional single-step query (backward compatibility)."""
