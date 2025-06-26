@@ -614,6 +614,17 @@ class GenomicRAG(dspy.Module):
         
         context = await self._retrieve_context(classification.query_type, retrieval_plan)
         
+        # NEW: Check for TaskRepairAgent messages first
+        if 'repair_message' in context.metadata:
+            logger.info("TaskRepairAgent provided helpful guidance - returning repair message")
+            return {
+                "question": question,
+                "answer": context.metadata['repair_message'],
+                "confidence": "medium - error handled gracefully by TaskRepairAgent",
+                "citations": "",
+                "repair_info": f"Repaired using strategy: {context.metadata.get('repair_strategy', 'unknown')}"
+            }
+        
         # Check for retrieval errors
         if 'retrieval_error' in context.metadata:
             raise Exception(f"Query execution failed: {context.metadata['retrieval_error']}")
@@ -1285,7 +1296,22 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 
                 # Check for Neo4j query errors
                 if 'error' in neo4j_result.metadata:
-                    raise Exception(f"Neo4j query failed: {neo4j_result.metadata['error']}")
+                    # NEW: Check if TaskRepairAgent provided a helpful message
+                    if 'repair_message' in neo4j_result.metadata:
+                        # Use the repair message instead of raising an exception
+                        logger.info(f"Using TaskRepairAgent repair message instead of error")
+                        return GenomicContext(
+                            structured_data=[],
+                            semantic_data=[],
+                            metadata={
+                                'repair_message': neo4j_result.metadata['repair_message'],
+                                'repair_strategy': neo4j_result.metadata.get('repair_strategy', 'unknown'),
+                                'query_time': time.time() - start_time
+                            },
+                            query_time=time.time() - start_time
+                        )
+                    else:
+                        raise Exception(f"Neo4j query failed: {neo4j_result.metadata['error']}")
                 
                 structured_data = neo4j_result.results
                 metadata['neo4j_execution_time'] = neo4j_result.execution_time
