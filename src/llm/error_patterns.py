@@ -50,6 +50,15 @@ class ErrorPatternRegistry:
                 repair_strategy=RepairStrategy.SCHEMA_VALIDATION,
                 confidence_threshold=0.7,
                 description="General Neo4j syntax errors"
+            ),
+            
+            # Parameter Missing Pattern
+            ErrorPattern(
+                pattern_type="parameter_missing",
+                regex_pattern=r"Neo\.ClientError\.Statement\.ParameterMissing.*Expected parameter\(s\): (\w+)",
+                repair_strategy=RepairStrategy.PARAMETER_SUBSTITUTION,
+                confidence_threshold=0.9,
+                description="Query uses parameters without providing values"
             )
         ]
     

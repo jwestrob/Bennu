@@ -432,13 +432,14 @@ class ContextRetriever(dspy.Signature):
            collect(DISTINCT dom.id) AS pfam_accessions
     LIMIT 3
     
-    CRITICAL RULES:
-    - Node labels: Protein, KEGGOrtholog, Gene, Domain, DomainAnnotation (ONLY these exist)
-    - Relationships: HASFUNCTION, ENCODEDBY, HASDOMAIN, DOMAINFAMILY (ALL UPPERCASE)
-    - Properties: p.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand
-    - DO NOT use: Function, f.name, f.kegg_id, p.accession, g.start, g.end, exists()
-    - USE: ko.description IS NOT NULL (not exists())
-    
+     CRITICAL RULES:
+     - Node labels: Protein, KEGGOrtholog, Gene, Domain, DomainAnnotation (ONLY these exist)
+     - Relationships: HASFUNCTION, ENCODEDBY, HASDOMAIN, DOMAINFAMILY (ALL UPPERCASE)
+     - Properties: p.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand
+     - DO NOT use: Function, f.name, f.kegg_id, p.accession, g.start, g.end, exists()
+     - USE: ko.description IS NOT NULL (not exists())
+     - NEVER use parameterized queries with $ symbols (e.g., $proteinIds) - always use literal values
+     - Instead of WHERE p.id IN $proteinIds use WHERE p.id IN ['id1', 'id2', 'id3']    
     For transport proteins, copy the template above EXACTLY with only the search term changed.
     """
     
