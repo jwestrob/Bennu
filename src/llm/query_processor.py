@@ -17,6 +17,8 @@ import h5py
 from rich.console import Console
 
 from .config import LLMConfig
+from .task_repair_agent import TaskRepairAgent
+from .repair_types import RepairResult
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -55,6 +57,8 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
     def __init__(self, config: LLMConfig):
         super().__init__(config)
         self.driver = None
+        self.task_repair_agent = TaskRepairAgent()
+        self.last_repair_result = None
         self._connect()
     
     def _connect(self):
@@ -77,6 +81,10 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             return True
         except:
             return False
+    
+    def get_last_repair_result(self) -> Optional[RepairResult]:
+        """Get the result of the last repair attempt."""
+        return self.last_repair_result
     
     async def process_query(self, query: str, query_type: str = "cypher", **kwargs) -> QueryResult:
         """Process Neo4j queries."""
@@ -113,12 +121,48 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             
         except Exception as e:
             logger.error(f"Neo4j query failed: {e}")
+            
+            # NEW: Attempt repair with TaskRepairAgent
+            repair_result = self.task_repair_agent.detect_and_repair(query, e)
+            self.last_repair_result = repair_result
+            
+            if repair_result.success and repair_result.repaired_query:
+                logger.info(f"TaskRepairAgent repaired query using: {repair_result.repair_strategy_used}")
+                try:
+                    # Retry with repaired query
+                    if query_type == "cypher":
+                        results = await self._execute_cypher(repair_result.repaired_query)
+                    else:
+                        results = await self._auto_query(repair_result.repaired_query)
+                    
+                    execution_time = time.time() - start_time
+                    return QueryResult(
+                        source="neo4j",
+                        query_type=query_type,
+                        results=results,
+                        metadata={
+                            "cypher_query": repair_result.repaired_query,
+                            "result_count": len(results),
+                            "repaired_by": str(repair_result.repair_strategy_used),
+                            "original_error": str(e)
+                        },
+                        execution_time=execution_time
+                    )
+                except Exception as retry_error:
+                    logger.error(f"Repaired query also failed: {retry_error}")
+            
+            # If repair failed or no repaired query, return error result
             execution_time = time.time() - start_time
+            error_metadata = {"error": str(e)}
+            if repair_result.success:
+                error_metadata["repair_message"] = repair_result.user_message
+                error_metadata["repair_strategy"] = str(repair_result.repair_strategy_used)
+            
             return QueryResult(
                 source="neo4j",
                 query_type=query_type,
                 results=[],
-                metadata={"error": str(e)},
+                metadata=error_metadata,
                 execution_time=execution_time
             )
     
