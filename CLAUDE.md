@@ -14,6 +14,20 @@ This is a next-generation genomic intelligence platform that transforms microbia
 - **High-confidence biological insights** using DSPy-powered RAG system
 - **Apple Silicon M4 Max optimization** (~85 proteins/second processing rate)
 
+## Environment Setup
+
+**CRITICAL: Always activate the conda environment before running any commands!**
+
+```bash
+# Activate the genome-kg conda environment (REQUIRED)
+source /Users/jacob/.pyenv/versions/miniconda3-latest/etc/profile.d/conda.sh && conda activate genome-kg
+
+# Verify environment is active (should show genome-kg)
+conda info --envs | grep '*'
+```
+
+**All commands below assume the `genome-kg` environment is activated.**
+
 ## Development Commands
 
 ### Testing
@@ -45,6 +59,9 @@ python scripts/run_tests.py --discover
 
 ### Pipeline Execution
 ```bash
+# IMPORTANT: Ensure genome-kg environment is activated first!
+# source /Users/jacob/.pyenv/versions/miniconda3-latest/etc/profile.d/conda.sh && conda activate genome-kg
+
 # Build knowledge graph from genomes in data/raw/
 python -m src.cli build
 
@@ -429,55 +446,35 @@ The system now provides sophisticated biological interpretation with:
 
 ## Next Steps for Agentic Enhancement 🚀
 
-### Phase 2: Intelligent Annotation Discovery System 🧬 **IN PROGRESS**
+### Phase 2: Intelligent Annotation Discovery System 🧬 ✅ **COMPLETED**
 **Objective**: Solve the "ATP synthase problem" - enable biologically intelligent selection of annotations instead of naive text matching
 
-**The Problem**: 
-When users ask for "transport proteins," naive keyword searches return ATP synthase subunits (technically transport protons, but not what users want). Need LLM-powered annotation curation for biological accuracy.
+**✅ Successfully Implemented**:
+1. **Generalized Annotation Discovery** ✅
+   - **Replaced**: Transport-specific `transport_classifier` and `transport_selector` (too narrow)
+   - **With**: Universal `functional_classifier` and `annotation_selector`
+   - **Capabilities**: Works for **any functional category** (transport, metabolism, regulation, central_metabolism)
+   - **Intelligence**: Keyword-based classification with biological exclusion logic
 
-**Implementation Strategy**:
-1. **Annotation Space Exploration** 📊
-   - Query ALL available annotations from Neo4j (complete KEGG ortholog catalog, PFAM domains, pathways)
-   - Create comprehensive annotation inventories instead of limiting to initial protein hits
-   - Example: Get all ~2,609 KEGG orthologs, ~1,000+ PFAM domains for intelligent filtering
+2. **ATP Synthase Problem Resolution** ✅
+   - **Implementation**: Intelligent biological exclusion logic in `functional_classifier`
+   - **Result**: Correctly distinguishes substrate transporters from energy metabolism proteins
+   - **Transparency**: System explains exclusions ("Excluded ATP synthase - energy metabolism, not substrate transport")
+   - **Categories Supported**: transport, metabolism, regulation, central_metabolism, and more
 
-2. **LLM-Powered Annotation Curation** 🧠
-   - Feed complete annotation catalogs to LLM for biological classification
-   - Curate by functional category: SUBSTRATE_TRANSPORT vs ENERGY_METABOLISM 
-   - Intelligent exclusion: Remove ATP synthase, respiratory complexes from "transport" searches
-   - Prioritize ABC transporters, permeases, channels for typical transport queries
+3. **Enhanced DSPy Tools** ✅
+   - `functional_classifier`: Universal biological mechanism classification  
+   - `annotation_selector`: Diverse example selection with user preferences
+   - `sequence_viewer`: Enhanced sequence analysis with genomic context
+   - **Result**: Sophisticated functional annotation curation for any biological category
 
-3. **Agentic Discovery Workflow** 🔄
-   ```
-   Phase 1: discover_annotation_space  → Get ALL KEGG/PFAM annotations
-   Phase 2: curate_transport_annotations → LLM classifies by biological function  
-   Phase 3: targeted_protein_discovery  → Query for proteins with curated annotations
-   Phase 4: diverse_example_selection   → Pick representative examples across mechanisms
-   ```
-
-4. **User Preference Integration** 🎯
-   - Extract user preferences from queries: "ABC transporters", "gram-positive bacteria", "sugar transporters"
-   - Pass preferences through classification and selection stages
-   - Default to diverse examples across transport mechanisms and organisms
-
-**Enhanced DSPy Tools**:
-- `annotation_explorer`: Comprehensive annotation space discovery
-- `transport_classifier`: Biological mechanism classification  
-- `transport_selector`: Diverse example selection with user preferences
-- `sequence_viewer`: Enhanced sequence analysis (already implemented)
-
-**Expected Results**:
+**Achieved Results**:
 - **Before**: User asks for "transport proteins" → gets ATP synthase (energy metabolism)
 - **After**: User asks for "transport proteins" → gets ABC transporter, amino acid permease, ion channel
-- **Transparency**: "Excluded K02115 (ATP synthase) - energy metabolism, not substrate transport"
+- **Universal**: System now works for any functional category, not just transport
+- **Biological Intelligence**: Proper functional classification prevents inappropriate annotations
 
-**Performance Optimizations** (Future):
-- Cache annotation catalogs (they change infrequently)
-- Batch LLM calls for annotation processing
-- Progressive disclosure for large annotation sets
-- Reusable curated annotation lists
-
-### Phase 2 (Legacy): Code Interpreter Integration ✅ **COMPLETED**
+### Phase 2: Complete Code Interpreter Integration ✅ **COMPLETED**
 **Objective**: Add secure code execution capabilities for data analysis and visualization
 
 **✅ Successfully Implemented**:
@@ -500,25 +497,99 @@ When users ask for "transport proteins," naive keyword searches return ATP synth
    - **Result**: Clean, unique protein identification throughout the system
    - **Testing**: Verified amino acid composition analysis works with direct protein IDs
 
-4. **Current Challenge: Task Orchestration** 🔄 **IN PROGRESS**
-   - **Issue**: Code interpreter tasks run in parallel with database query tasks instead of sequentially
-   - **Root Cause**: DSPy task planning generates incorrect dependencies, causing race conditions
-   - **Impact**: Code interpreter receives empty results despite successful database queries (636 transport proteins found)
-   - **Status**: Implementing workflow orchestration fixes to ensure proper task dependency resolution
+4. **Task Orchestration Integration** ✅ **COMPLETED**
+   - **Issue Resolved**: Code interpreter tasks now execute sequentially with proper dependency resolution
+   - **Root Cause Fixed**: DSPy task planning now generates correct dependencies, eliminating race conditions
+   - **Result**: Code interpreter receives populated results from successful database queries
+   - **Status**: Multi-step agentic workflows now function seamlessly with code execution capabilities
 
 ### Phase 3: Advanced Agent Capabilities (Medium Priority)
-**Objective**: Add specialized agents for error repair and knowledge gap filling
+**Objective**: Transform platform into truly autonomous biological intelligence with specialized error repair and knowledge gap filling agents
+
+#### **Phase 3A: Foundation (High Impact) 🚀**
+**Objective**: Build robust workflow foundations with intelligent error handling
 
 **Components to Implement**:
-1. **TaskRepairAgent**: Fix failed queries with corrected syntax/logic
-2. **KnowledgeGapAgent**: Identify missing information and formulate tool calls
-3. **Enhanced Error Recovery**: Retry mechanisms with intelligent modifications
+1. **[ ] Basic TaskRepairAgent** 🔧
+   - [ ] Error pattern recognition system
+   - [ ] Syntax error detection and correction
+   - [ ] Schema mismatch auto-updates (Neo4j field names)
+   - [ ] Biological logic error detection
+   - [ ] Context-aware repair suggestions
+   - [ ] Repair validation loop before execution
 
-**Testing Requirements for Each Agent**:
-- Unit tests for agent decision making
-- Integration tests with task graph
-- Error scenarios and recovery paths
-- Performance impact assessment
+2. **[ ] Simple Error Recovery System** 🛡️
+   - [ ] Graceful fallback strategies (Neo4j down → LanceDB fallback)
+   - [ ] Tool failure handling (code interpreter unavailable)
+   - [ ] Partial result preservation during workflow failures
+   - [ ] Cascade failure analysis for task chains
+   - [ ] Alternative execution pathway selection
+
+3. **[ ] Agent Integration Framework** 🔗
+   - [ ] Advanced agent coordinator class
+   - [ ] Integration with existing TaskGraph system
+   - [ ] Agent-aware task execution pipeline
+   - [ ] Error propagation and handling mechanisms
+   - [ ] Agent performance monitoring and metrics
+
+#### **Phase 3B: Intelligence (Medium Impact) 🧠**
+**Objective**: Add autonomous knowledge discovery and biological intelligence
+
+**Components to Implement**:
+1. **[ ] KnowledgeGapAgent** 🔍
+   - [ ] Knowledge gap identification algorithms
+   - [ ] External database integration (UniProt, PDB, NCBI)
+   - [ ] Literature search formulation (PubMed, bioRxiv)
+   - [ ] Gap-filling task generation and prioritization
+   - [ ] Proactive context augmentation
+   - [ ] Multi-source data integration strategies
+
+2. **[ ] Advanced Repair Logic** 🧬
+   - [ ] Biological context-aware corrections
+   - [ ] Organism-specific query suggestions
+   - [ ] Pathway-informed error detection
+   - [ ] Functional annotation logic validation
+   - [ ] Cross-reference biological databases for corrections
+
+3. **[ ] Proactive Query Enhancement** 💡
+   - [ ] Ambiguous query detection and clarification
+   - [ ] Auto-suggestion system for related processes
+   - [ ] Query context expansion recommendations
+   - [ ] Biological process disambiguation
+   - [ ] User intent inference and confirmation
+
+#### **Phase 3C: Autonomy (Future) 🤖**
+**Objective**: Achieve autonomous research capabilities with self-learning systems
+
+**Components to Implement**:
+1. **[ ] Self-Learning Repair System** 📚
+   - [ ] Learn from user corrections and feedback
+   - [ ] Adaptive error pattern recognition
+   - [ ] Personalized repair strategies
+   - [ ] Community knowledge aggregation
+   - [ ] Continuous improvement algorithms
+
+2. **[ ] Autonomous Research Agent** 🔬
+   - [ ] Independent knowledge graph enhancement
+   - [ ] Automated literature mining and integration
+   - [ ] Hypothesis generation and testing frameworks
+   - [ ] Cross-genome comparative analysis automation
+   - [ ] Scientific insight discovery algorithms
+
+3. **[ ] Multi-Modal Integration** 🎯
+   - [ ] Image analysis integration (protein structures, pathway diagrams)
+   - [ ] Document processing (papers, protocols, experimental data)
+   - [ ] Experimental data integration (expression, proteomics)
+   - [ ] Real-time data stream processing
+   - [ ] Multi-omics analysis coordination
+
+#### **Testing Requirements for Each Phase**:
+- **[ ] Unit Tests**: Agent decision making logic, error detection accuracy
+- **[ ] Integration Tests**: Agent interaction with TaskGraph, tool coordination
+- **[ ] Error Scenarios**: Comprehensive failure mode testing and recovery validation
+- **[ ] Performance Assessment**: Resource usage, execution time impact, scalability
+- **[ ] Biological Validation**: Accuracy of repairs, relevance of gap-filling
+- **[ ] User Experience**: Query suggestion quality, workflow transparency
 
 ### Phase 4: Production Readiness (Medium Priority)
 **Objective**: Scale system for production deployment
@@ -650,12 +721,12 @@ This systematic approach ensures that each enhancement builds reliably on the so
    - **Direct Access Verified**: Amino acid composition analysis works perfectly when protein IDs provided directly
    - **Code Enhancement**: Automatic code interpreter enhancement with sequence database access and variable setup
 
-4. **🔄 Task Orchestration Challenge Identified**
-   - **Current Issue**: Code interpreter tasks execute in parallel with database query tasks instead of sequentially
-   - **Evidence**: Log shows "Enhanced code interpreter with 636 protein IDs" but sessions remain empty
-   - **Root Cause**: DSPy generates task plans with incorrect dependencies, causing race conditions
-   - **Impact**: Perfect data pipeline fails due to workflow coordination, not data access issues
-   - **Next Step**: Implementing dependency resolution fixes in DSPy planning and task execution engine
+4. **✅ Task Orchestration Integration Completed**
+   - **Issue Resolved**: Code interpreter tasks now execute sequentially with proper dependency resolution
+   - **Evidence**: Multi-step workflows successfully coordinate database queries → code execution → analysis
+   - **Root Cause Fixed**: DSPy task planning updated to generate correct sequential dependencies
+   - **Result**: Complete agentic workflows with seamless code execution capabilities
+   - **Achievement**: Perfect data pipeline with sophisticated workflow coordination
 
 ### **Previous LLM Integration Fixes (June 2025):**
 
