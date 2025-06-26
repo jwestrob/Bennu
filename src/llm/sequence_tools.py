@@ -38,8 +38,15 @@ async def sequence_viewer(
     Returns:
         Dict with formatted sequences, metadata, genomic context, and analysis suggestions
     """
+    # Handle case where protein_ids might be passed as a string instead of list
+    if isinstance(protein_ids, str):
+        logger.warning(f"⚠️ protein_ids received as string: '{protein_ids}' - converting to list")
+        protein_ids = [protein_ids]
+    
     logger.info(f"🧬 Sequence viewer called with {len(protein_ids)} protein IDs")
     logger.debug(f"Raw protein IDs received: {protein_ids}")
+    logger.debug(f"Protein IDs type: {type(protein_ids)}")
+    logger.debug(f"First few protein IDs: {protein_ids[:5] if len(protein_ids) > 5 else protein_ids}")
     
     try:
         # Initialize sequence database
