@@ -225,10 +225,13 @@ async def sequence_viewer(
                         for neighbor in valid_neighbors[:5]:  # Show closest 5 neighbors
                             distance = neighbor.get('distance', 'N/A')
                             direction = neighbor.get('direction', 'N/A')
+                            strand = neighbor.get('neighbor_strand', 'N/A')
                             function = neighbor.get('function', 'Unknown function')
                             if function and len(function) > 50:
                                 function = function[:47] + "..."
-                            protein_section.append(f"  • {distance}bp {direction}: {function}")
+                            # Format strand as +/- for readability
+                            strand_symbol = '+' if strand == '1' else '-' if strand == '-1' else strand
+                            protein_section.append(f"  • {distance}bp {direction} ({strand_symbol} strand): {function}")
                         protein_section.append(f"")
             
             protein_section.extend([
