@@ -14,8 +14,9 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 from src.llm.config import LLMConfig
 from src.llm.rag_system import GenomicRAG
@@ -36,7 +37,12 @@ class RAGContextDebugger:
         
         # Monkey patch the RAG system to capture context
         original_format_context = self.rag._format_context
-        captured_context = {}
+        original_execute_task = self.rag._execute_task
+        captured_context = {
+            'agentic_tasks': [],
+            'task_results': {},
+            'is_agentic': False
+        }
         
         def capture_format_context(context):
             # Call original method
@@ -53,8 +59,33 @@ class RAGContextDebugger:
             
             return formatted_context
         
-        # Replace method temporarily
+        async def capture_execute_task(task, previous_results):
+            """Capture agentic task execution data."""
+            if not captured_context['is_agentic']:
+                captured_context['is_agentic'] = True
+                
+            # Capture task info
+            task_info = {
+                'id': task.task_id,
+                'type': task.task_type.value,
+                'status': task.status.value,
+                'dependencies': list(task.dependencies),
+                'content': getattr(task, 'query', getattr(task, 'tool_name', 'N/A'))
+            }
+            
+            # Add to tasks list if not already there
+            if not any(t['id'] == task.task_id for t in captured_context['agentic_tasks']):
+                captured_context['agentic_tasks'].append(task_info)
+            
+            # Call original method and capture results
+            result = await original_execute_task(task, previous_results)
+            captured_context['task_results'][task.task_id] = result
+            
+            return result
+        
+        # Replace methods temporarily
         self.rag._format_context = capture_format_context
+        self.rag._execute_task = capture_execute_task
         
         try:
             # Run the query
@@ -66,8 +97,9 @@ class RAGContextDebugger:
             return captured_context
             
         finally:
-            # Restore original method
+            # Restore original methods
             self.rag._format_context = original_format_context
+            self.rag._execute_task = original_execute_task
     
     def display_context_analysis(self, context_data: Dict[str, Any]):
         """Display comprehensive analysis of the context data."""
@@ -80,16 +112,26 @@ class RAGContextDebugger:
         # Data Sources Summary
         neo4j_count = context_data.get('neo4j_record_count', 0)
         lancedb_count = context_data.get('lancedb_record_count', 0)
+        is_agentic = context_data.get('is_agentic', False)
+        task_count = len(context_data.get('agentic_tasks', []))
         
         summary_table = Table(title="Data Sources Summary")
         summary_table.add_column("Source", style="cyan")
-        summary_table.add_column("Records", style="magenta")
+        summary_table.add_column("Records/Tasks", style="magenta")
         summary_table.add_column("Status", style="green")
         
+        summary_table.add_row("Query Type", "Agentic" if is_agentic else "Traditional", "🤖" if is_agentic else "📊")
         summary_table.add_row("Neo4j (Structured)", str(neo4j_count), "✅ Active" if neo4j_count > 0 else "❌ No data")
         summary_table.add_row("LanceDB (Semantic)", str(lancedb_count), "✅ Active" if lancedb_count > 0 else "❌ No data")
+        if is_agentic:
+            summary_table.add_row("Agentic Tasks", str(task_count), "🔄 Executed" if task_count > 0 else "❌ None")
         
         console.print(summary_table)
+        
+        # Agentic Task Analysis
+        if is_agentic and context_data.get('agentic_tasks'):
+            console.print("\n[bold cyan]🤖 AGENTIC TASK EXECUTION[/bold cyan]")
+            self._analyze_agentic_tasks(context_data['agentic_tasks'], context_data.get('task_results', {}))
         
         # Neo4j Data Analysis
         if context_data.get('neo4j_raw_data'):
@@ -137,7 +179,69 @@ class RAGContextDebugger:
             
             console.print(response_table)
             
-            console.print(f"\n[bold]LLM Answer:[/bold]\n{response.get('answer', 'No answer')}")
+            console.print(f"\\n[bold]LLM Answer:[/bold]\\n{response.get('answer', 'No answer')}")
+    
+    def _analyze_agentic_tasks(self, tasks, task_results):
+        """Analyze agentic task execution."""
+        if not tasks:
+            console.print("[dim]No agentic tasks[/dim]")
+            return
+            
+        # Task execution summary
+        task_table = Table(title="Agentic Task Execution")
+        task_table.add_column("Task ID", style="cyan")
+        task_table.add_column("Type", style="magenta")
+        task_table.add_column("Status", style="green")
+        task_table.add_column("Dependencies", style="yellow")
+        task_table.add_column("Content", style="white")
+        
+        for task in tasks:
+            status_emoji = {
+                'completed': '✅',
+                'failed': '❌',
+                'pending': '⏳',
+                'running': '🔄'
+            }.get(task['status'], '❓')
+            
+            deps_str = ', '.join(task['dependencies']) if task['dependencies'] else 'None'
+            content_preview = str(task['content'])[:50] + '...' if len(str(task['content'])) > 50 else str(task['content'])
+            
+            task_table.add_row(
+                task['id'],
+                task['type'],
+                f"{status_emoji} {task['status']}",
+                deps_str,
+                content_preview
+            )
+        
+        console.print(task_table)
+        
+        # Task results analysis
+        if task_results:
+            console.print("\\n[bold]📊 Task Results Summary:[/bold]")
+            for task_id, result in task_results.items():
+                console.print(f"\\n[cyan]{task_id}:[/cyan]")
+                if isinstance(result, dict):
+                    if 'context' in result:
+                        context = result['context']
+                        structured_count = len(context.structured_data) if hasattr(context, 'structured_data') and context.structured_data else 0
+                        semantic_count = len(context.semantic_data) if hasattr(context, 'semantic_data') and context.semantic_data else 0
+                        console.print(f"  Neo4j records: {structured_count}")
+                        console.print(f"  LanceDB records: {semantic_count}")
+                    elif 'tool_result' in result:
+                        tool_result = result['tool_result']
+                        success = tool_result.get('success', False)
+                        console.print(f"  Tool execution: {'✅ Success' if success else '❌ Failed'}")
+                        if 'error' in tool_result:
+                            console.print(f"  Error: {tool_result['error']}")
+                        if 'stdout' in tool_result and tool_result['stdout']:
+                            stdout_preview = tool_result['stdout'][:200] + '...' if len(tool_result['stdout']) > 200 else tool_result['stdout']
+                            console.print(f"  Output: {stdout_preview}")
+                    else:
+                        console.print(f"  Result type: {type(result)}")
+                        console.print(f"  Keys: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                else:
+                    console.print(f"  Result: {str(result)[:100]}...")
     
     def _analyze_neo4j_data(self, neo4j_data):
         """Analyze Neo4j structured data."""

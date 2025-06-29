@@ -19,7 +19,7 @@ from .config import LLMConfig
 from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor, QueryResult
 from .dsp_sig import NEO4J_SCHEMA
 from .sequence_tools import sequence_viewer, extract_protein_ids_from_analysis
-from .annotation_tools import annotation_explorer, functional_classifier, annotation_selector
+from .annotation_tools import annotation_explorer, functional_classifier, annotation_selector, pathway_based_annotation_selector
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -240,7 +240,7 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
         Dictionary containing execution results
     """
     try:
-        from ..code_interpreter.client import code_interpreter_tool as execute_code
+        from src.code_interpreter.client import code_interpreter_tool as execute_code
         return await execute_code(code=code, session_id=session_id, timeout=timeout)
     except ImportError:
         return {
@@ -262,7 +262,7 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
 # Tool manifest for the agent
 # Conditional import of code interpreter to avoid dependency issues
 try:
-    from ..code_interpreter.client import code_interpreter_tool
+    from src.code_interpreter.client import code_interpreter_tool
     CODE_INTERPRETER_AVAILABLE = True
 except ImportError:
     logger.warning("Code interpreter not available - missing dependencies")
@@ -283,6 +283,7 @@ AVAILABLE_TOOLS = {
     "annotation_explorer": annotation_explorer,
     "functional_classifier": functional_classifier,
     "annotation_selector": annotation_selector,
+    "pathway_based_annotation_selector": pathway_based_annotation_selector,
 }
 
 # ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
@@ -302,8 +303,7 @@ class PlannerAgent(dspy.Signature):
     - Cross-reference analysis: "Compare our data with published studies"
     - Multi-step workflows: "Find X, then search literature about Y, then combine"
     - Sequence analysis requests: "Find proteins and show me their sequences"
-    - Transport protein queries: "Find transport proteins" (requires intelligent annotation curation)
-    
+     - Pathway-based protein queries: "Find transport proteins", "proteins in glycolysis" (uses KEGG pathway analysis)    
     WHEN TO USE TRADITIONAL MODE (requires_planning = false):
     - Simple counts: "How many proteins?"
     - Direct lookups: "Find proteins with domain X"
@@ -313,8 +313,11 @@ class PlannerAgent(dspy.Signature):
     AVAILABLE TOOLS:
     - literature_search: Search PubMed for scientific literature and papers
     - code_interpreter: Execute Python code for data analysis, visualization, and calculations
-    - sequence_viewer: Display raw protein sequences for detailed LLM biological analysis
-    
+      Available packages: numpy, pandas, matplotlib, seaborn, scipy, scikit-learn, biopython, 
+      networkx, plotly, statsmodels, collections (Counter, defaultdict), statistics, itertools,
+      json, re, pygenomeviz, ete3, igraph, pillow, sqlalchemy, h5py, openpyxl, tqdm, joblib
+     - sequence_viewer: Display raw protein sequences for detailed LLM biological analysis
+     - pathway_based_annotation_selector: Find proteins using KEGG pathway analysis (replaces hardcoded examples)    
     TASK TYPES:
     - atomic_query: Query the local knowledge graph for known facts
     - tool_call: Execute external tools for additional information
@@ -420,7 +423,7 @@ class QueryClassifier(dspy.Signature):
 class ContextRetriever(dspy.Signature):
     """Generate database queries to retrieve relevant genomic context.
 
-    MANDATORY QUERY TEMPLATE FOR TRANSPORT PROTEINS:
+    EXAMPLE QUERY TEMPLATE FOR TRANSPORT PROTEINS:
     
     MATCH (ko:KEGGOrtholog) 
     WHERE toLower(ko.description) CONTAINS 'transport'
@@ -440,7 +443,7 @@ class ContextRetriever(dspy.Signature):
      - USE: ko.description IS NOT NULL (not exists())
      - NEVER use parameterized queries with $ symbols (e.g., $proteinIds) - always use literal values
      - Instead of WHERE p.id IN $proteinIds use WHERE p.id IN ['id1', 'id2', 'id3']    
-    For transport proteins, copy the template above EXACTLY with only the search term changed.
+     - When searching through descriptions for annotations of interest, use intelligently selected substrings (i.e. catalase, transferase)
     """
     
     question = dspy.InputField(desc="User's question")
@@ -1015,7 +1018,13 @@ class GenomicRAG(dspy.Module):
         
         # Fallback to original if enhancement fails
         if len(enhanced_query) > 200 or not pfam_domains:  # Too long or no good terms
-            return f"{base_query} AND heme AND transport AND bacteria"
+            # Extract key biological terms from base query for dynamic fallback
+            query_words = base_query.lower().split()
+            biological_terms = [word for word in query_words if len(word) > 3 and word.isalpha()]
+            if biological_terms:
+                return f"{base_query} AND {' AND '.join(biological_terms[:3])} AND bacteria"
+            else:
+                return f"{base_query} AND metabolism AND bacteria"
         
         logger.info(f"Enhanced literature query: {enhanced_query}")
         return enhanced_query
@@ -1082,34 +1091,28 @@ print(f"Retrieved {{len(sequences)}} sequences out of {{len(protein_ids)}} reque
 # Variable aliases for compatibility with different code patterns
 proteins = sequences  # For code that expects 'proteins' variable
 protein_sequences = sequences  # For code that expects 'protein_sequences' variable
+protein_ids_list = list(clean_protein_ids)  # List of protein IDs for user code
+num_proteins = len(sequences)  # Number of proteins for user code
 
 print(f"✅ Enhanced code setup complete! Database has {{len(sequences)}} sequences ready for analysis.")
 
-# Robust amino acid composition analysis template
+# Simplified robust template - all variables guaranteed global scope
+all_aa_counts = []  # Global list to store all amino acid counts
+all_sequences_data = []  # Global list to store sequence analysis data
+analyzed_count = 0  # Global counter for user code access
+
+# Pre-compute analysis for all proteins to ensure global variable availability
 if sequences:
-    print("\\n=== AMINO ACID COMPOSITION ANALYSIS ===")
-    analyzed_count = 0
     for protein_id, sequence in sequences.items():
-        if analyzed_count >= 3:  # Limit to first 3 as requested
-            break
-        analyzed_count += 1
-        
-        print(f"\\nProtein {{analyzed_count}}: {{protein_id[:50]}}...")
-        print(f"Length: {{len(sequence)}} amino acids")
-        
         if len(sequence) > 0:
-            # Calculate amino acid composition with safe scoping
+            # Calculate amino acid composition
             aa_counts = Counter(sequence)
             total_aa = len(sequence)
             
-            # Top 5 most frequent amino acids
-            top_aa = aa_counts.most_common(5)
-            print("Top 5 amino acids:")
-            for aa, count in top_aa:
-                freq = count / total_aa
-                print(f"  {{aa}}: {{freq:.3f}} ({{count}} residues)")
+            # Store in global variables
+            all_aa_counts.append(aa_counts)
             
-            # Transport protein properties - explicit calculation to avoid scoping issues
+            # Transport protein properties
             hydrophobic_aa = ['A', 'V', 'L', 'I', 'M', 'F', 'W', 'Y', 'P']
             charged_aa = ['R', 'K', 'D', 'E']
             polar_aa = ['S', 'T', 'N', 'Q', 'H', 'C']
@@ -1118,26 +1121,33 @@ if sequences:
             charged_count = sum(aa_counts.get(aa, 0) for aa in charged_aa)
             polar_count = sum(aa_counts.get(aa, 0) for aa in polar_aa)
             
-            print(f"Hydrophobic: {{hydrophobic_count/total_aa:.3f}} ({{hydrophobic_count}} residues)")
-            print(f"Charged: {{charged_count/total_aa:.3f}} ({{charged_count}} residues)")
-            print(f"Polar: {{polar_count/total_aa:.3f}} ({{polar_count}} residues)")
-            
-            # Sequence insights
-            print(f"N-terminus (first 20): {{sequence[:20]}}")
-            if len(sequence) > 20:
-                print(f"C-terminus (last 20): {{sequence[-20:]}}")
-            
-            # Membrane protein prediction
-            if hydrophobic_count/total_aa > 0.4:
-                print("✓ High hydrophobic content - likely membrane protein")
-            
-            # Signal sequence check
-            if sequence.startswith('M'):
-                print("✓ Starts with methionine (typical start codon)")
-        else:
-            print("❌ Empty sequence")
-else:
-    print("❌ No sequences available for analysis")
+            # Store comprehensive sequence data
+            sequence_data = {{
+                'protein_id': protein_id,
+                'sequence': sequence,
+                'length': total_aa,
+                'aa_counts': aa_counts,
+                'hydrophobic_fraction': hydrophobic_count/total_aa,
+                'charged_fraction': charged_count/total_aa,
+                'polar_fraction': polar_count/total_aa,
+                'n_terminus': sequence[:20],
+                'c_terminus': sequence[-20:] if len(sequence) > 20 else sequence,
+                'starts_with_met': sequence.startswith('M'),
+                'likely_membrane': hydrophobic_count/total_aa > 0.4
+            }}
+            all_sequences_data.append(sequence_data)
+            analyzed_count += 1
+
+# Global variables guaranteed available for user code:
+# - sequences: dict of protein_id -> sequence  
+# - all_aa_counts: list of Counter objects (one per protein)
+# - all_sequences_data: list of analysis dicts (comprehensive data per protein)
+# - analyzed_count: int (number of proteins successfully analyzed)
+# - num_proteins: int (total proteins retrieved)
+# - protein_ids_list: list of protein IDs
+
+print(f"✅ Enhanced setup complete! {{analyzed_count}} sequences analyzed, {{len(sequences)}} total retrieved.")
+print("Global variables available: sequences, all_aa_counts, all_sequences_data, analyzed_count, num_proteins, protein_ids_list")
 
 # Original user analysis code (if any):
 {original_code}
@@ -1201,6 +1211,9 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
     
     def _combine_task_results(self, all_results: Dict[str, Any]) -> str:
         """Combine results from all tasks into context for final answer generation."""
+        logger.info(f"🔧 DEBUG: _combine_task_results called with {len(all_results)} results")
+        logger.info(f"🔧 DEBUG: Task result keys: {list(all_results.keys())}")
+        
         context_parts = []
         
         # Separate different types of results for better organization
@@ -1209,11 +1222,16 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
         aggregation_results = []
         
         for task_id, result in all_results.items():
+            logger.info(f"🔧 DEBUG: Processing task '{task_id}' with result type: {type(result)}")
+            logger.info(f"🔧 DEBUG: Task '{task_id}' result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+            
             if "context" in result:
                 # Database query result
                 context = result["context"]
+                logger.info(f"🔧 DEBUG: Task '{task_id}' has context with {len(context.structured_data) if hasattr(context, 'structured_data') else 0} structured data items")
                 formatted_context = self._format_context(context)
-                database_results.append(f"=== Local Database: {task_id} ===\n{formatted_context}")
+                logger.info(f"🔧 DEBUG: Formatted context length for '{task_id}': {len(formatted_context)} chars")
+                database_results.append(f"=== Local Database: {task_id} ===\\n{formatted_context}")
                 
             elif "tool_result" in result:
                 # Tool execution result
@@ -1489,42 +1507,121 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
     
     def _resolve_template_variables(self, tool_args: Dict[str, Any], previous_results: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve template variables in tool arguments using previous task results."""
+        import re
         resolved_args = {}
         
         for key, value in tool_args.items():
-            if isinstance(value, str) and value.startswith("from "):
-                # Extract task reference (e.g., "from query_central_metabolism_proteins")
-                task_ref = value.replace("from ", "").strip()
-                logger.info(f"🔧 Resolving template variable: {value} -> task_ref: {task_ref}")
+            resolved_value = value
+            
+            # Handle different template patterns
+            if isinstance(value, str):
+                # Pattern 1: "from task_name" 
+                if value.startswith("from "):
+                    task_ref = value.replace("from ", "").strip()
+                    logger.info(f"🔧 Resolving 'from' template: {value} -> task_ref: {task_ref}")
+                    resolved_value = self._extract_protein_ids_from_task(task_ref, previous_results)
                 
-                # Extract protein IDs from the referenced task
-                protein_ids = []
-                if task_ref in previous_results:
-                    result = previous_results[task_ref]
-                    logger.info(f"🔧 Found task result for {task_ref}: {type(result)}")
+                # Pattern 2: "<ids_from_task_name>" or "<task_name>"
+                elif "<" in value and ">" in value:
+                    # Find all template patterns like <ids_from_task_name> or <task_name>
+                    template_patterns = re.findall(r'<([^>]+)>', value)
+                    logger.info(f"🔧 Found template patterns in '{value}': {template_patterns}")
                     
-                    if "context" in result:
-                        context = result["context"]
-                        
-                        # Handle GenomicContext with structured_data
-                        if hasattr(context, 'structured_data'):
-                            for item in context.structured_data:
-                                pid = item.get('protein_id', '')
-                                if pid:
-                                    protein_ids.append(pid)
-                        # Handle QueryResult object wrapped in context
-                        elif hasattr(context, 'results'):
-                            for item in context.results:
-                                pid = item.get('protein_id', '')
-                                if pid:
-                                    protein_ids.append(pid)
-                
-                logger.info(f"🔧 Resolved {len(protein_ids)} protein IDs: {protein_ids[:3]}...")
-                resolved_args[key] = protein_ids
-            else:
-                resolved_args[key] = value
+                    for pattern in template_patterns:
+                        if pattern.startswith("ids_from_"):
+                            # Extract task name from "ids_from_task_name"
+                            task_ref = pattern.replace("ids_from_", "")
+                            logger.info(f"🔧 Resolving template pattern: <{pattern}> -> task_ref: {task_ref}")
+                            protein_ids = self._extract_protein_ids_from_task(task_ref, previous_results)
+                            
+                            # Replace the template with actual protein IDs
+                            if protein_ids:
+                                resolved_value = protein_ids
+                            else:
+                                logger.warning(f"⚠️ No protein IDs found for template <{pattern}>")
+                                resolved_value = []
+                        else:
+                            # Handle other template patterns like <task_name>
+                            task_ref = pattern
+                            logger.info(f"🔧 Resolving generic template: <{pattern}> -> task_ref: {task_ref}")
+                            protein_ids = self._extract_protein_ids_from_task(task_ref, previous_results)
+                            if protein_ids:
+                                resolved_value = protein_ids
+                            else:
+                                resolved_value = []
+            
+            # Handle lists that might contain template strings
+            elif isinstance(value, list):
+                resolved_list = []
+                for item in value:
+                    if isinstance(item, str) and ("<" in item and ">" in item):
+                        # Apply same template resolution to list items
+                        template_patterns = re.findall(r'<([^>]+)>', item)
+                        for pattern in template_patterns:
+                            if pattern.startswith("ids_from_"):
+                                task_ref = pattern.replace("ids_from_", "")
+                                protein_ids = self._extract_protein_ids_from_task(task_ref, previous_results)
+                                resolved_list.extend(protein_ids)
+                            else:
+                                task_ref = pattern
+                                protein_ids = self._extract_protein_ids_from_task(task_ref, previous_results)
+                                resolved_list.extend(protein_ids)
+                    else:
+                        resolved_list.append(item)
+                resolved_value = resolved_list if resolved_list else value
+            
+            resolved_args[key] = resolved_value
         
+        logger.info(f"🔧 Template resolution complete. Original: {tool_args} -> Resolved: {resolved_args}")
         return resolved_args
+    
+    def _extract_protein_ids_from_task(self, task_ref: str, previous_results: Dict[str, Any]) -> List[str]:
+        """Extract protein IDs from a specific task result."""
+        protein_ids = []
+        
+        if task_ref not in previous_results:
+            logger.warning(f"⚠️ Task reference '{task_ref}' not found in previous results")
+            return protein_ids
+        
+        result = previous_results[task_ref]
+        logger.info(f"🔧 Extracting protein IDs from task '{task_ref}': {type(result)}")
+        
+        # Handle atomic query results with context
+        if "context" in result:
+            context = result["context"]
+            
+            # Handle GenomicContext with structured_data
+            if hasattr(context, 'structured_data'):
+                for item in context.structured_data:
+                    pid = item.get('protein_id', '')
+                    if pid:
+                        protein_ids.append(pid)
+            # Handle QueryResult object wrapped in context
+            elif hasattr(context, 'results'):
+                for item in context.results:
+                    pid = item.get('protein_id', '')
+                    if pid:
+                        protein_ids.append(pid)
+        
+        # Handle tool call results
+        elif "tool_result" in result:
+            tool_result = result["tool_result"]
+            # Extract from code interpreter output
+            if result.get("tool_name") == "code_interpreter":
+                stdout = tool_result.get("stdout", "")
+                # Look for protein IDs in the output
+                import re
+                protein_id_patterns = re.findall(r'protein:[\w_]+', stdout)
+                protein_ids.extend(protein_id_patterns)
+        
+        # Handle aggregated results
+        elif "aggregated_results" in result:
+            for sub_result in result["aggregated_results"]:
+                sub_ids = self._extract_protein_ids_from_task("temp", {"temp": sub_result})
+                protein_ids.extend(sub_ids)
+        
+        logger.info(f"🔧 Extracted {len(protein_ids)} protein IDs from '{task_ref}': {protein_ids[:3]}...")
+        return protein_ids
     
     def _format_context(self, context: GenomicContext) -> str:
         """Format context for LLM consumption with enhanced genomic intelligence and quantitative insights."""
@@ -1666,6 +1763,9 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
             return processed_neighbors[:5]  # Show more neighbors since they're now truly local
         
         if context.structured_data:
+            logger.info(f"🔧 DEBUG: _format_context processing {len(context.structured_data)} structured data items")
+            logger.info(f"🔧 DEBUG: First item keys: {list(context.structured_data[0].keys()) if context.structured_data else 'None'}")
+            
             # Detect different query patterns
             is_domain_query = any(
                 'p.id' in item and 'd.id' in item and 'd.bitscore' in item 
@@ -1807,13 +1907,14 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                         formatted_parts.append(f"       Position: {d['position']} aa")
             
             # Handle protein-specific information with enhanced genomic context
-            formatted_parts.append("\nPROTEIN ANALYSIS:")
+            formatted_parts.append("\\nPROTEIN ANALYSIS:")
             unique_proteins = {}
             
             # Deduplicate proteins by ID to avoid showing same protein multiple times
             for item in context.structured_data:
                 # Handle both legacy field names (protein_id) and Neo4j field names (p.id)
                 protein_id = item.get('protein_id') or item.get('p.id')
+                logger.info(f"🔧 DEBUG: Processing item with protein_id='{protein_id}', item keys: {list(item.keys())}")
                 if protein_id:
                     if protein_id not in unique_proteins:
                         unique_proteins[protein_id] = item
@@ -1822,6 +1923,8 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                         for key, value in item.items():
                             if key not in unique_proteins[protein_id] or not unique_proteins[protein_id][key]:
                                 unique_proteins[protein_id][key] = value
+            
+            logger.info(f"🔧 DEBUG: Found {len(unique_proteins)} unique proteins for formatting")
             
             for i, (protein_id, item) in enumerate(list(unique_proteins.items())[:2]):  # Show max 2 proteins
                 # Clean protein ID (remove 'protein:' prefix if present)
