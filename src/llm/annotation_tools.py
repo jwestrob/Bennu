@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Intelligent Annotation Discovery Tools for Biological Function Classification
-Solves the "ATP synthase problem" through comprehensive annotation space exploration
+Enhanced with dynamic KEGG pathway-based protein discovery
 """
 
 import logging
@@ -9,11 +9,12 @@ from typing import List, Dict, Any, Optional, Set
 from pathlib import Path
 import asyncio
 
-# Import Neo4j query processor
+# Import Neo4j query processor and pathway tools
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from llm.query_processor import Neo4jQueryProcessor
 from llm.config import LLMConfig
+from llm.pathway_tools import pathway_based_protein_discovery, pathway_classifier
 
 logger = logging.getLogger(__name__)
 
@@ -291,4 +292,90 @@ async def annotation_selector(
             "error": str(e),
             "selected_annotations": [],
             "selection_count": 0
+        }
+
+async def pathway_based_annotation_selector(
+    query: str,
+    functional_category: str = "metabolism",
+    max_pathways: int = 3,
+    max_proteins_per_pathway: int = 5,
+    selection_criteria: str = "",
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Select protein annotations based on KEGG pathway analysis instead of hardcoded examples.
+    This replaces the hardcoded transporter examples with dynamic pathway-based discovery.
+    
+    Args:
+        query: User query to analyze for pathway relevance
+        functional_category: Biological category for context
+        max_pathways: Maximum number of relevant pathways to analyze
+        max_proteins_per_pathway: Maximum proteins to return per pathway
+        
+    Returns:
+        Dict with pathway-based protein annotations for similarity search
+    """
+    logger.info(f"🔍 Pathway-based annotation selection for: {query}")
+    
+    try:
+        # Step 1: Classify query to find relevant pathways
+        pathway_classification = await pathway_classifier(query, max_pathways)
+        
+        if not pathway_classification["success"] or not pathway_classification["relevant_pathways"]:
+            logger.warning(f"⚠️ No relevant pathways found for query: {query}")
+            return {
+                "success": False,
+                "error": f"No relevant KEGG pathways found for query: {query}",
+                "selected_proteins": [],
+                "pathways_used": []
+            }
+        
+        # Step 2: Extract search terms and find proteins in relevant pathways
+        search_terms = pathway_classification["extracted_terms"]
+        protein_discovery = await pathway_based_protein_discovery(
+            search_terms, 
+            functional_category, 
+            max_pathways, 
+            max_proteins_per_pathway
+        )
+        
+        if not protein_discovery["success"]:
+            return {
+                "success": False,
+                "error": protein_discovery.get("error", "Protein discovery failed"),
+                "selected_proteins": [],
+                "pathways_used": []
+            }
+        
+        # Step 3: Format results for similarity search
+        selected_proteins = []
+        for protein in protein_discovery["proteins_found"]:
+            selected_proteins.append({
+                "protein_id": protein["protein_id"],
+                "ko_id": protein["ko_id"],
+                "ko_description": protein["ko_description"],
+                "pathway_id": protein["pathway_id"],
+                "pathway_relevance": protein["pathway_relevance"]
+            })
+        
+        logger.info(f"✅ Pathway-based selection complete: {len(selected_proteins)} proteins from {protein_discovery['pathways_analyzed']} pathways")
+        
+        return {
+            "success": True,
+            "original_query": query,
+            "functional_category": functional_category,
+            "selected_proteins": selected_proteins,
+            "pathways_used": protein_discovery["pathway_details"],
+            "total_proteins": len(selected_proteins),
+            "selection_method": "kegg_pathway_based",
+            "search_terms_used": search_terms
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in pathway-based annotation selection: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "selected_proteins": [],
+            "pathways_used": []
         }
