@@ -29,7 +29,6 @@ from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQ
 from .dsp_sig import NEO4J_SCHEMA
 from .sequence_tools import sequence_viewer, extract_protein_ids_from_analysis
 from .annotation_tools import annotation_explorer, functional_classifier, annotation_selector, pathway_based_annotation_selector, assess_operon_context, prospect_operonic_proteins
-from .task_notes import task_notes
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -532,43 +531,28 @@ class PlannerAgent(dspy.Signature):
          ]
      }
      
-      FUNCTIONAL PROTEIN DISCOVERY EXAMPLE (4-step process):
-      {
-          "tasks": [
-              {
-                  "id": "explore_annotations",
-                  "type": "tool_call",
-                  "tool_name": "annotation_explorer",
-                  "tool_args": {"annotation_types": ["KEGG", "PFAM"], "functional_category": "central_metabolism"},
-                  "dependencies": []
-              },
-              {
-                  "id": "classify_functions",
-                  "type": "tool_call",
-                  "tool_name": "functional_classifier",
-                  "tool_args": {"annotation_catalog": "explore_annotations", "functional_category": "central_metabolism"},
-                  "dependencies": ["explore_annotations"]
-              },
-              {
-                  "id": "lookup_proteins",
-                  "type": "atomic_query",
-                  "query": "Find proteins with KEGG annotations from classified functional results",
-                  "dependencies": ["classify_functions"]
-              },
-              {
-                  "id": "view_sequences",
-                  "type": "tool_call",
-                  "tool_name": "sequence_viewer",
-                  "tool_args": {"protein_ids": "from lookup_proteins", "analysis_context": "functional protein analysis"},
-                  "dependencies": ["lookup_proteins"]
-              },
-              {
-                  "id": "synthesize_results",
-                  "type": "aggregate",
-                  "dependencies": ["lookup_proteins", "view_sequences"]
-              }
-          ]
-      }
+     FUNCTIONAL CLASSIFICATION EXAMPLE:
+     {
+         "tasks": [
+             {
+                 "id": "explore_annotations",
+                 "type": "tool_call",
+                 "tool_name": "annotation_explorer",
+                 "tool_args": {"annotation_types": ["KEGG", "PFAM"], "functional_category": "central_metabolism"},
+                 "dependencies": []
+             },
+             {
+                 "id": "classify_functions",
+                 "type": "tool_call",
+                 "tool_name": "functional_classifier",
+                 "tool_args": {"annotation_catalog": "explore_annotations", "functional_category": "central_metabolism"},
+                 "dependencies": ["explore_annotations"]
+             },
+             {
+                 "id": "synthesize_results",
+                 "type": "aggregate",
+                 "dependencies": ["classify_functions"]
+             }
          ]
      }            }
         ]
@@ -589,7 +573,7 @@ class PlannerAgent(dspy.Signature):
     
     user_query = dspy.InputField(desc="User query about genomic data")
     requires_planning = dspy.OutputField(desc="Boolean: true if query needs multi-step agentic planning with external tools, false for simple direct queries using local data only")
-    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'. FOR FUNCTIONAL PROTEIN QUERIES: Use 4-step process: 1) annotation_explorer (get KO catalog), 2) functional_classifier (find relevant KOs), 3) atomic_query (find proteins with those KOs), 4) sequence_viewer (get sequences). The atomic_query step is CRITICAL - it converts KO IDs to actual protein records via Neo4j.")
+    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'. FOR TRANSPORT PROTEIN QUERIES: Use 4-task intelligent annotation discovery: 1) annotation_explorer, 2) transport_classifier, 3) transport_selector, 4) sequence_viewer.")
     reasoning = dspy.OutputField(desc="Explanation of why planning is or isn't needed and the chosen strategy")
 
 @dataclass
@@ -1023,24 +1007,11 @@ class GenomicRAG(dspy.Module):
     async def _execute_task(self, task: Task, previous_results: Dict[str, Any]) -> Any:
         """Execute a single task based on its type."""
         if task.task_type == TaskType.ATOMIC_QUERY:
-            # Execute database query with context from previous tasks
-            enhanced_query = task.query
-            
-            # Inject classified KO list if available from functional_classifier
-            if "classify_functions" in previous_results:
-                classify_result = previous_results["classify_functions"]
-                if "tool_result" in classify_result and classify_result["tool_result"].get("success"):
-                    classification_data = classify_result["tool_result"].get("classification", {})
-                    relevant_kos = classification_data.get("RELEVANT", [])
-                    if relevant_kos:
-                        ko_list = "', '".join(relevant_kos[:50])  # Limit to 50 KOs to avoid query length issues
-                        enhanced_query = f"{task.query} - Use these specific KEGG orthologs: ['{ko_list}']"
-                        logger.info(f"🔧 Enhanced atomic query with {len(relevant_kos)} classified KO IDs")
-            
-            classification = self.classifier(question=enhanced_query)
+            # Execute database query
+            classification = self.classifier(question=task.query)
             retrieval_plan = self.retriever(
                 db_schema=NEO4J_SCHEMA,
-                question=enhanced_query,
+                question=task.query,
                 query_type=classification.query_type
             )
             context = await self._retrieve_context(classification.query_type, retrieval_plan)
