@@ -66,6 +66,74 @@ def parse_prodigal_header(header_line: str) -> Dict[str, Any]:
     return gene_data
 
 
+def build_contig_to_genome_index_from_proteins(graph: Graph, protein_uris: Dict[str, URIRef]) -> Dict[str, URIRef]:
+    """Build efficient contig -> genome URI mapping by querying existing protein-genome relationships.
+    
+    Args:
+        graph: RDF graph containing protein-genome relationships  
+        protein_uris: Map of protein_id -> protein_uri
+        
+    Returns:
+        Dict mapping contig_id -> genome_uri for efficient BGC assignment
+    """
+    contig_to_genome = {}
+    
+    # Query the graph for protein-genome relationships that already exist
+    query = """
+    PREFIX kg: <http://genome-kg.org/ontology/>
+    
+    SELECT ?protein ?genome WHERE {
+        ?protein kg:encodedBy ?gene .
+        ?gene kg:belongsToGenome ?genome .
+    }
+    """
+    
+    # Execute query and build mapping
+    for row in graph.query(query):
+        protein_uri = str(row.protein)
+        genome_uri = row.genome
+        
+        # Extract protein ID from URI
+        protein_id = protein_uri.split('/')[-1] if '/' in protein_uri else protein_uri
+        
+        # Extract contig from protein ID
+        parts = protein_id.split('_')
+        if len(parts) >= 2:
+            contig_id = '_'.join(parts[:-1])  # Remove last part (protein number)
+            if contig_id not in contig_to_genome:
+                contig_to_genome[contig_id] = genome_uri
+    
+    logger.info(f"Built contig-to-genome index from existing relationships: {len(contig_to_genome)} contigs mapped")
+    return contig_to_genome
+
+
+def assign_bgc_to_correct_genome(bgc_data: Dict[str, Any], 
+                                contig_to_genome: Dict[str, URIRef]) -> Dict[str, URIRef]:
+    """Assign each BGC to its correct genome URI based on contig mapping.
+    
+    Args:
+        bgc_data: BGC results from GECCO
+        contig_to_genome: Mapping from contig_id -> genome_uri
+        
+    Returns:
+        Dict mapping cluster_id -> genome_uri
+    """
+    bgc_genome_assignments = {}
+    
+    for cluster in bgc_data.get("clusters", []):
+        contig_id = cluster.get("contig", "")
+        cluster_id = cluster.get("cluster_id", "unknown")
+        
+        if contig_id in contig_to_genome:
+            bgc_genome_assignments[cluster_id] = contig_to_genome[contig_id]
+            logger.debug(f"Assigned BGC {cluster_id} to genome via contig {contig_id}")
+        else:
+            logger.warning(f"Could not assign BGC {cluster_id} - contig {contig_id} not found in mapping")
+    
+    logger.info(f"BGC genome assignments: {len(bgc_genome_assignments)} BGCs assigned to genomes")
+    return bgc_genome_assignments
+
+
 # Define ontology namespaces
 KG = Namespace("http://genome-kg.org/ontology/")
 GENOME = Namespace("http://genome-kg.org/genomes/")
@@ -73,6 +141,7 @@ GENE = Namespace("http://genome-kg.org/genes/")
 PROTEIN = Namespace("http://genome-kg.org/proteins/")
 PFAM = Namespace("http://pfam.xfam.org/family/")
 KO = Namespace("http://www.genome.jp/kegg/ko/")
+CAZYME = Namespace("http://genome-kg.org/cazyme/")
 PROV = Namespace("http://www.w3.org/ns/prov#")
 
 
@@ -92,6 +161,7 @@ class GenomeKGBuilder:
         self.graph.bind("protein", PROTEIN)
         self.graph.bind("pfam", PFAM)
         self.graph.bind("ko", KO)
+        self.graph.bind("cazyme", CAZYME)
         self.graph.bind("prov", PROV)
     
     def _add_ontology_definitions(self):
@@ -103,7 +173,11 @@ class GenomeKGBuilder:
             (KG.DomainAnnotation, "Protein domain annotation instance"),
             (KG.FunctionalAnnotation, "Functional annotation"),
             (KG.KEGGOrtholog, "KEGG Orthologous group"),
-            (KG.Domain, "Protein domain family (PFAM)")
+            (KG.Domain, "Protein domain family (PFAM)"),
+            (KG.BGC, "Biosynthetic Gene Cluster"),
+            (KG.BGCGene, "Gene within a biosynthetic gene cluster"),
+            (KG.CAZymeFamily, "Carbohydrate-Active Enzyme family"),
+            (KG.CAZymeAnnotation, "CAZyme domain annotation instance")
         ]
         
         properties = [
@@ -112,7 +186,12 @@ class GenomeKGBuilder:
             (KG.hasDomain, "protein has domain"),
             (KG.hasFunction, "protein has function"),
             (KG.domainFamily, "domain belongs to family"),
-            (KG.hasQualityMetrics, "genome has quality metrics")
+            (KG.hasQualityMetrics, "genome has quality metrics"),
+            (KG.partOfBGC, "gene is part of biosynthetic gene cluster"),
+            (KG.hasBGC, "genome has biosynthetic gene cluster"),
+            (KG.produces, "BGC produces metabolite"),
+            (KG.hasCAZyme, "protein has CAZyme annotation"),
+            (KG.cazymeFamily, "CAZyme annotation belongs to family")
         ]
         
         for class_uri, label in classes:
@@ -274,6 +353,242 @@ class GenomeKGBuilder:
             function_count += 1
         
         logger.info(f"Added {function_count} KOFAM functional annotations")
+    
+    def add_bgc_annotations(self, bgc_data: Dict[str, Any], 
+                           genome_uri: URIRef, protein_uris: Dict[str, URIRef]):
+        """Add biosynthetic gene cluster annotations from AntiSMASH."""
+        bgc_count = 0
+        gene_count = 0
+        
+        # Define BGC namespace
+        BGC_NS = Namespace("http://genome-kg.org/bgc/")
+        
+        # Process clusters
+        for cluster in bgc_data.get("clusters", []):
+            cluster_id = f"{cluster.get('record_id', 'unknown')}_{cluster.get('cluster_number', bgc_count)}"
+            bgc_uri = BGC_NS[cluster_id]
+            
+            # BGC properties
+            self.graph.add((bgc_uri, RDF.type, KG.BGC))
+            self.graph.add((bgc_uri, KG.belongsToGenome, genome_uri))
+            self.graph.add((bgc_uri, KG.bgcId, Literal(cluster_id)))
+            
+            if "start" in cluster and "end" in cluster:
+                self.graph.add((bgc_uri, KG.startCoordinate, Literal(cluster["start"], datatype=XSD.integer)))
+                self.graph.add((bgc_uri, KG.endCoordinate, Literal(cluster["end"], datatype=XSD.integer)))
+                
+                # Calculate cluster length
+                cluster_length = cluster["end"] - cluster["start"] + 1
+                self.graph.add((bgc_uri, KG.lengthNt, Literal(cluster_length, datatype=XSD.integer)))
+            
+            if "product" in cluster:
+                self.graph.add((bgc_uri, KG.bgcProduct, Literal(cluster["product"])))
+            
+            if "qualifiers" in cluster:
+                qualifiers = cluster["qualifiers"]
+                if "cluster_number" in qualifiers:
+                    self.graph.add((bgc_uri, KG.clusterNumber, Literal(qualifiers["cluster_number"][0])))
+            
+            # Link genome to BGC
+            self.graph.add((genome_uri, KG.hasBGC, bgc_uri))
+            
+            bgc_count += 1
+        
+        # Process genes within BGCs
+        for gene in bgc_data.get("genes", []):
+            if gene.get("feature_type") == "CDS" and "protein_id" in gene:
+                protein_id = gene["protein_id"]
+                
+                # Try to find matching protein URI
+                matching_protein_uri = None
+                for existing_protein_id, protein_uri in protein_uris.items():
+                    if protein_id in existing_protein_id or existing_protein_id in protein_id:
+                        matching_protein_uri = protein_uri
+                        break
+                
+                if matching_protein_uri:
+                    # Create BGC gene annotation
+                    bgc_gene_uri = BGC_NS[f"gene_{protein_id}"]
+                    
+                    self.graph.add((bgc_gene_uri, RDF.type, KG.BGCGene))
+                    self.graph.add((bgc_gene_uri, KG.annotatesProtein, matching_protein_uri))
+                    
+                    if "product" in gene:
+                        self.graph.add((bgc_gene_uri, KG.geneProduct, Literal(gene["product"])))
+                    
+                    if "gene_kind" in gene:
+                        self.graph.add((bgc_gene_uri, KG.geneKind, Literal(gene["gene_kind"])))
+                    
+                    if "sec_met_domains" in gene:
+                        for domain in gene["sec_met_domains"]:
+                            self.graph.add((bgc_gene_uri, KG.secMetDomain, Literal(domain)))
+                    
+                    # Link protein to BGC gene annotation
+                    self.graph.add((matching_protein_uri, KG.partOfBGC, bgc_gene_uri))
+                    
+                    gene_count += 1
+                else:
+                    logger.warning(f"Could not find matching protein for BGC gene: {protein_id}")
+        
+        logger.info(f"Added {bgc_count} BGC clusters and {gene_count} BGC gene annotations")
+    
+    def add_bgc_annotations_with_assignments(self, bgc_data: Dict[str, Any], 
+                                           bgc_genome_assignments: Dict[str, URIRef], 
+                                           protein_uris: Dict[str, URIRef]):
+        """Add biosynthetic gene cluster annotations with per-BGC genome assignments."""
+        bgc_count = 0
+        gene_count = 0
+        
+        # Define BGC namespace
+        BGC_NS = Namespace("http://genome-kg.org/bgc/")
+        
+        # Process clusters
+        for cluster in bgc_data.get("clusters", []):
+            cluster_id = cluster.get('cluster_id', f"unknown_{bgc_count}")
+            bgc_uri = BGC_NS[cluster_id]
+            
+            # Get the correct genome URI for this BGC
+            genome_uri = bgc_genome_assignments.get(cluster_id)
+            if not genome_uri:
+                logger.warning(f"No genome assignment found for BGC {cluster_id}, skipping")
+                continue
+            
+            # BGC properties
+            self.graph.add((bgc_uri, RDF.type, KG.BGC))
+            self.graph.add((bgc_uri, KG.belongsToGenome, genome_uri))
+            self.graph.add((bgc_uri, KG.bgcId, Literal(cluster_id)))
+            
+            # Add coordinates if available
+            if "start" in cluster and "end" in cluster:
+                self.graph.add((bgc_uri, KG.startCoordinate, Literal(cluster["start"], datatype=XSD.integer)))
+                self.graph.add((bgc_uri, KG.endCoordinate, Literal(cluster["end"], datatype=XSD.integer)))
+                
+                # Calculate cluster length
+                cluster_length = cluster["end"] - cluster["start"] + 1
+                self.graph.add((bgc_uri, KG.lengthNt, Literal(cluster_length, datatype=XSD.integer)))
+            
+            # Add BGC type/product
+            if "bgc_type" in cluster:
+                self.graph.add((bgc_uri, KG.bgcProduct, Literal(cluster["bgc_type"])))
+            
+            # Add contig information
+            if "contig" in cluster:
+                self.graph.add((bgc_uri, KG.contig, Literal(cluster["contig"])))
+            
+            # Add protein count
+            if "proteins" in cluster:
+                self.graph.add((bgc_uri, KG.proteinCount, Literal(cluster["proteins"], datatype=XSD.integer)))
+            
+            # Add GECCO probability scores
+            if "average_p" in cluster:
+                self.graph.add((bgc_uri, KG.averageProbability, Literal(cluster["average_p"], datatype=XSD.float)))
+            if "max_p" in cluster:
+                self.graph.add((bgc_uri, KG.maxProbability, Literal(cluster["max_p"], datatype=XSD.float)))
+            if "alkaloid_probability" in cluster:
+                self.graph.add((bgc_uri, KG.alkaloidProbability, Literal(cluster["alkaloid_probability"], datatype=XSD.float)))
+            if "nrp_probability" in cluster:
+                self.graph.add((bgc_uri, KG.nrpProbability, Literal(cluster["nrp_probability"], datatype=XSD.float)))
+            if "polyketide_probability" in cluster:
+                self.graph.add((bgc_uri, KG.polyketideProbability, Literal(cluster["polyketide_probability"], datatype=XSD.float)))
+            if "ripp_probability" in cluster:
+                self.graph.add((bgc_uri, KG.rippProbability, Literal(cluster["ripp_probability"], datatype=XSD.float)))
+            if "saccharide_probability" in cluster:
+                self.graph.add((bgc_uri, KG.saccharideProbability, Literal(cluster["saccharide_probability"], datatype=XSD.float)))
+            if "terpene_probability" in cluster:
+                self.graph.add((bgc_uri, KG.terpeneProbability, Literal(cluster["terpene_probability"], datatype=XSD.float)))
+            
+            # Add domain information
+            if "domains" in cluster:
+                self.graph.add((bgc_uri, KG.domains, Literal(cluster["domains"])))
+            
+            # Link genome to BGC
+            self.graph.add((genome_uri, KG.hasBGC, bgc_uri))
+            
+            # Link BGC genes if available
+            if "protein_list" in cluster:
+                for protein_id in cluster["protein_list"]:
+                    if protein_id in protein_uris:
+                        # Convert protein URI to gene URI since partOfBGC should be gene->BGC
+                        gene_uri = URIRef(f"http://genome-kg.org/genes/{protein_id}")
+                        self.graph.add((gene_uri, KG.partOfBGC, bgc_uri))
+                        gene_count += 1
+            
+            bgc_count += 1
+        
+        logger.info(f"Added {bgc_count} BGC clusters with correct genome assignments and {gene_count} BGC protein links")
+    
+    def add_cazyme_annotations(self, cazyme_data: Dict[str, Any], 
+                              genome_uri: URIRef, protein_uris: Dict[str, URIRef]):
+        """Add CAZyme family annotations from dbCAN."""
+        annotation_count = 0
+        family_count = 0
+        families_added = set()
+        
+        # Define CAZyme namespace
+        CAZYME_NS = Namespace("http://genome-kg.org/cazyme/")
+        
+        # Process CAZyme annotations
+        for annotation in cazyme_data.get("annotations", []):
+            protein_id = annotation.get("protein_id")
+            cazyme_family = annotation.get("cazyme_family")
+            
+            if not protein_id or not cazyme_family:
+                continue
+                
+            # Find matching protein URI
+            matching_protein_uri = None
+            for existing_protein_id, protein_uri in protein_uris.items():
+                if existing_protein_id == protein_id or existing_protein_id.endswith(protein_id):
+                    matching_protein_uri = protein_uri
+                    break
+            
+            if matching_protein_uri:
+                # Create CAZyme annotation instance
+                annotation_id = f"{protein_id}_{cazyme_family}_{annotation_count}"
+                annotation_uri = CAZYME_NS[annotation_id]
+                
+                self.graph.add((annotation_uri, RDF.type, KG.CAZymeAnnotation))
+                self.graph.add((annotation_uri, KG.annotationId, Literal(annotation_id)))
+                
+                # Add annotation properties
+                if "family_type" in annotation:
+                    self.graph.add((annotation_uri, KG.cazymeType, Literal(annotation["family_type"])))
+                
+                if "evalue" in annotation:
+                    self.graph.add((annotation_uri, KG.evalue, Literal(annotation["evalue"], datatype=XSD.float)))
+                
+                if "coverage" in annotation:
+                    self.graph.add((annotation_uri, KG.coverage, Literal(annotation["coverage"], datatype=XSD.float)))
+                
+                if "start_pos" in annotation and "end_pos" in annotation:
+                    self.graph.add((annotation_uri, KG.startPosition, Literal(annotation["start_pos"], datatype=XSD.integer)))
+                    self.graph.add((annotation_uri, KG.endPosition, Literal(annotation["end_pos"], datatype=XSD.integer)))
+                
+                if "ec_number" in annotation and annotation["ec_number"]:
+                    self.graph.add((annotation_uri, KG.ecNumber, Literal(annotation["ec_number"])))
+                
+                # Create CAZyme family if not already added
+                if cazyme_family not in families_added:
+                    family_uri = CAZYME_NS[f"family_{cazyme_family}"]
+                    self.graph.add((family_uri, RDF.type, KG.CAZymeFamily))
+                    self.graph.add((family_uri, KG.familyId, Literal(cazyme_family)))
+                    
+                    if "family_type" in annotation:
+                        self.graph.add((family_uri, KG.cazymeType, Literal(annotation["family_type"])))
+                    
+                    families_added.add(cazyme_family)
+                    family_count += 1
+                
+                # Link annotation to family and protein
+                family_uri = CAZYME_NS[f"family_{cazyme_family}"]
+                self.graph.add((annotation_uri, KG.cazymeFamily, family_uri))
+                self.graph.add((matching_protein_uri, KG.hasCAZyme, annotation_uri))
+                
+                annotation_count += 1
+            else:
+                logger.warning(f"Could not find matching protein for CAZyme annotation: {protein_id}")
+        
+        logger.info(f"Added {annotation_count} CAZyme annotations and {family_count} CAZyme families")
     
     def add_provenance(self, pipeline_data: Dict[str, Any]):
         """Add provenance information for the knowledge graph."""
@@ -451,6 +766,265 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     
     logger.info(f"Knowledge graph build completed: {stats}")
     return stats
+
+
+def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_dir: Path, 
+                                                   stage05a_dir: Optional[Path], 
+                                                   stage05b_dir: Optional[Path],
+                                                   output_dir: Path) -> Dict[str, Any]:
+    """
+    Build complete knowledge graph from pipeline results including BGC and CAZyme annotations.
+    
+    Args:
+        stage03_dir: Prodigal output directory
+        stage04_dir: Astra annotation output directory
+        stage05a_dir: AntiSMASH BGC output directory (optional)
+        stage05b_dir: dbCAN CAZyme output directory (optional)
+        output_dir: Output directory for knowledge graph
+        
+    Returns:
+        Dict containing build statistics and output files
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize builder
+    builder = GenomeKGBuilder()
+    
+    # Load prodigal manifest to get genome/gene information
+    prodigal_manifest_file = stage03_dir / "processing_manifest.json"
+    with open(prodigal_manifest_file) as f:
+        prodigal_manifest = json.load(f)
+    
+    # Load astra results
+    annotation_results = process_astra_results(stage04_dir)
+    
+    # Load BGC results if available
+    bgc_results = {}
+    if stage05a_dir and stage05a_dir.exists():
+        bgc_manifest_file = stage05a_dir / "processing_manifest.json"
+        if bgc_manifest_file.exists():
+            with open(bgc_manifest_file) as f:
+                bgc_manifest = json.load(f)
+            
+            # Load combined BGC data
+            bgc_data_file = stage05a_dir / "combined_bgc_data.json"
+            if bgc_data_file.exists():
+                with open(bgc_data_file) as f:
+                    bgc_results = json.load(f)
+                logger.info(f"Loaded BGC data: {len(bgc_results.get('clusters', []))} clusters, {len(bgc_results.get('genes', []))} genes")
+            else:
+                logger.warning(f"BGC data file not found: {bgc_data_file}")
+        else:
+            logger.warning(f"BGC manifest not found: {bgc_manifest_file}")
+    else:
+        logger.info("No BGC directory provided, skipping BGC annotations")
+    
+    # Load CAZyme results if available
+    cazyme_results = {}
+    if stage05b_dir and stage05b_dir.exists():
+        cazyme_manifest_file = stage05b_dir / "processing_manifest.json"
+        if cazyme_manifest_file.exists():
+            with open(cazyme_manifest_file) as f:
+                cazyme_manifest = json.load(f)
+            
+            # Load CAZyme summary data
+            cazyme_summary_file = stage05b_dir / "dbcan_summary.json"
+            if cazyme_summary_file.exists():
+                with open(cazyme_summary_file) as f:
+                    cazyme_summary = json.load(f)
+                
+                # Combine all individual CAZyme results
+                all_annotations = []
+                for genome_id in cazyme_summary.get('genome_results', {}):
+                    result_file = stage05b_dir / f"{genome_id}_cazyme_results.json"
+                    if result_file.exists():
+                        with open(result_file) as f:
+                            genome_cazyme_data = json.load(f)
+                            all_annotations.extend(genome_cazyme_data.get('annotations', []))
+                
+                cazyme_results = {'annotations': all_annotations}
+                logger.info(f"Loaded CAZyme data: {len(all_annotations)} annotations from {len(cazyme_summary.get('genome_results', {}))} genomes")
+            else:
+                logger.warning(f"CAZyme summary file not found: {cazyme_summary_file}")
+        else:
+            logger.warning(f"CAZyme manifest not found: {cazyme_manifest_file}")
+    else:
+        logger.info("No CAZyme directory provided, skipping CAZyme annotations")
+    
+    # Build protein URIs mapping for linking annotations
+    protein_uris = {}
+    genome_uris = {}
+    
+    # Process each genome from prodigal results
+    for genome_result in prodigal_manifest['genomes']:
+        if genome_result['execution_status'] != 'success':
+            continue
+            
+        genome_id = genome_result['genome_id']
+        
+        # Add genome entity
+        genome_data = {
+            'genome_id': genome_id,
+            'quality_metrics': {}  # TODO: Load from QUAST results
+        }
+        genome_uri = builder.add_genome_entity(genome_data)
+        genome_uris[genome_id] = genome_uri
+        
+        # Load protein sequences from prodigal output for this genome
+        protein_file = stage03_dir / "genomes" / genome_id / f"{genome_id}.faa"
+        gene_data = []
+        
+        if protein_file.exists():
+            with open(protein_file, 'r') as f:
+                for line in f:
+                    if line.startswith('>'):
+                        # Parse full prodigal header including genomic coordinates
+                        gene_info = parse_prodigal_header(line)
+                        gene_data.append(gene_info)
+        
+        genome_protein_uris = builder.add_gene_protein_entities(gene_data, genome_uri)
+        protein_uris.update(genome_protein_uris)
+    
+    # Add PFAM domain annotations
+    builder.add_pfam_domains(annotation_results['pfam_domains'], protein_uris)
+    
+    # Add KOFAM functional annotations  
+    builder.add_kofam_functions(annotation_results['kofam_functions'], protein_uris)
+    
+    # Add BGC annotations if available with efficient genome mapping
+    bgc_stats = {'clusters': 0, 'genes': 0}
+    if bgc_results:
+        if genome_uris:
+            # Build efficient contig-to-genome mapping from existing graph relationships
+            logger.info("Building contig-to-genome index from existing protein-genome relationships...")
+            contig_to_genome = build_contig_to_genome_index_from_proteins(builder.graph, protein_uris)
+            
+            # Assign each BGC to its correct genome
+            bgc_genome_assignments = assign_bgc_to_correct_genome(bgc_results, contig_to_genome)
+            
+            # Add BGC annotations with correct assignments
+            if bgc_genome_assignments:
+                builder.add_bgc_annotations_with_assignments(bgc_results, bgc_genome_assignments, protein_uris)
+                bgc_stats['clusters'] = len(bgc_results.get('clusters', []))
+                bgc_stats['genes'] = len(bgc_results.get('genes', []))
+            else:
+                logger.warning("No BGC genome assignments could be made - BGCs will be skipped")
+        else:
+            logger.warning("No genome URIs available for BGC assignment")
+    
+    # Add CAZyme annotations if available
+    cazyme_stats = {'annotations': 0, 'families': 0}
+    if cazyme_results:
+        if genome_uris:
+            first_genome_uri = list(genome_uris.values())[0]
+            builder.add_cazyme_annotations(cazyme_results, first_genome_uri, protein_uris)
+            cazyme_stats['annotations'] = len(cazyme_results.get('annotations', []))
+            # Count unique families
+            families = set(ann.get('cazyme_family') for ann in cazyme_results.get('annotations', []))
+            cazyme_stats['families'] = len(families)
+    
+    # Add provenance
+    databases_used = ['PFAM', 'KOFAM']
+    if bgc_results:
+        databases_used.append('AntiSMASH')
+    if cazyme_results:
+        databases_used.append('dbCAN')
+    
+    builder.add_provenance({
+        'version': '0.1.0',
+        'astra_databases': databases_used
+    })
+    
+    # Enrich with functional annotations from reference databases
+    enriched_graph, enrichment_stats = add_functional_enrichment_to_pipeline(builder.graph)
+    builder.graph = enriched_graph
+    
+    # Integrate KEGG pathways
+    logger.info("Integrating KEGG pathways...")
+    repo_root = Path(__file__).parent.parent.parent
+    ko_pathway_file = repo_root / "data/reference/ko_pathway.list"
+    
+    # Extract KO IDs that are actually found in our proteins
+    found_ko_ids = set()
+    for func in annotation_results['kofam_functions']:
+        found_ko_ids.add(func['ko_id'])
+    
+    logger.info(f"Found {len(found_ko_ids)} unique KO IDs in protein annotations")
+    
+    pathway_stats = {'pathways_integrated': 0, 'ko_pathway_relationships': 0}
+    if ko_pathway_file.exists():
+        # Create pathway integration in temporary directory  
+        pathway_temp_dir = output_dir / "temp_pathways"
+        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, found_ko_ids)
+        
+        # Load and merge pathway graph into main graph
+        pathway_graph = Graph()
+        pathway_graph.parse(str(pathway_rdf_file), format='turtle')
+        
+        # Merge pathway graph into main graph
+        for triple in pathway_graph:
+            builder.graph.add(triple)
+        
+        # Get pathway statistics
+        pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
+                                                   if 'pathway/' in str(s)])
+        pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
+        
+        logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
+        
+        # Clean up temporary directory
+        import shutil
+        shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+    else:
+        logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
+    
+    # Save knowledge graph
+    kg_file = output_dir / "knowledge_graph.ttl"
+    save_stats = builder.save_graph(kg_file, format='turtle')
+    
+    # Generate summary statistics
+    stats = {
+        'total_triples': save_stats['triple_count'],
+        'genomes_processed': len([g for g in prodigal_manifest['genomes'] 
+                                if g['execution_status'] == 'success']),
+        'proteins_annotated': len(protein_uris),
+        'pfam_domains': len(annotation_results['pfam_domains']),
+        'kofam_functions': len(annotation_results['kofam_functions']),
+        'bgc_clusters': bgc_stats['clusters'],
+        'bgc_genes': bgc_stats['genes'],
+        'cazyme_annotations': cazyme_stats['annotations'],
+        'cazyme_families': cazyme_stats['families'],
+        'functional_enrichment': enrichment_stats,
+        'pathway_integration': pathway_stats,
+        'output_files': {
+            'knowledge_graph': str(kg_file)
+        }
+    }
+    
+    # Save statistics
+    stats_file = output_dir / "build_statistics.json"
+    with open(stats_file, 'w') as f:
+        json.dump(stats, f, indent=2)
+    
+    logger.info(f"Knowledge graph build completed with extended annotations: {stats}")
+    return stats
+
+
+def build_knowledge_graph_with_bgc(stage03_dir: Path, stage04_dir: Path, 
+                                  stage05a_dir: Optional[Path], output_dir: Path) -> Dict[str, Any]:
+    """
+    Backward compatibility wrapper for BGC-only knowledge graph building.
+    
+    This function maintains compatibility with existing code that only uses BGC annotations.
+    For new code, use build_knowledge_graph_with_extended_annotations() instead.
+    """
+    return build_knowledge_graph_with_extended_annotations(
+        stage03_dir=stage03_dir,
+        stage04_dir=stage04_dir, 
+        stage05a_dir=stage05a_dir,
+        stage05b_dir=None,  # No CAZyme annotations
+        output_dir=output_dir
+    )
 
 
 if __name__ == "__main__":

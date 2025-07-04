@@ -190,8 +190,8 @@ class RDFToCSVConverter:
 
 def main():
     """Convert RDF to CSV for bulk import."""
-    rdf_file = Path("data/stage05_kg/knowledge_graph.ttl")
-    csv_dir = Path("data/stage05_kg/csv")
+    rdf_file = Path("data/stage07_kg/knowledge_graph.ttl")
+    csv_dir = Path("data/stage07_kg/csv")
     
     if not rdf_file.exists():
         console.print(f"[red]RDF file not found: {rdf_file}[/red]")

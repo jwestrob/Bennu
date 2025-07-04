@@ -20,6 +20,8 @@ run_quast_module = importlib.import_module('src.ingest.01_run_quast')
 run_dfast_qc_module = importlib.import_module('src.ingest.02_dfast_qc')
 run_prodigal_module = importlib.import_module('src.ingest.03_prodigal')
 run_astra_scan_module = importlib.import_module('src.ingest.04_astra_scan')
+run_gecco_module = importlib.import_module('src.ingest.gecco_bgc')
+run_dbcan_module = importlib.import_module('src.ingest.dbcan_cazyme')
 build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
 esm2_embeddings_module = importlib.import_module('src.ingest.06_esm2_embeddings')
 
@@ -28,7 +30,10 @@ run_quast = run_quast_module.run_quast
 run_dfast_qc = run_dfast_qc_module.call
 run_prodigal = run_prodigal_module.run_prodigal
 run_astra_scan = run_astra_scan_module.run_astra_scan
+run_gecco_analysis = run_gecco_module.gecco_bgc_detection
+run_dbcan_analysis = run_dbcan_module.run_dbcan_batch_analysis
 build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
+build_knowledge_graph_with_extended_annotations = build_kg_module.build_knowledge_graph_with_extended_annotations
 run_esm2_embeddings = esm2_embeddings_module.run_esm2_embeddings
 
 # Import LLM components
@@ -67,12 +72,12 @@ def build(
     from_stage: int = typer.Option(
         0,
         "--from-stage", "-f",
-        help="Resume pipeline from specific stage (0-6)"
+        help="Resume pipeline from specific stage (0-8)"
     ),
     to_stage: int = typer.Option(
-        6,
+        8,
         "--to-stage", "-t",
-        help="Stop pipeline at specific stage (0-6)"
+        help="Stop pipeline at specific stage (0-8)"
     ),
     threads: int = typer.Option(
         4,
@@ -99,8 +104,10 @@ def build(
     2. Taxonomic classification with DFAST_QC (ANI+CheckM)  
     3. Gene prediction with Prodigal
     4. Functional annotation with Astra/PyHMMer
-    5. Knowledge graph construction with RDF triples
-    6. ESM2 protein embeddings for semantic search
+    5. AntiSMASH biosynthetic gene cluster detection
+    6. dbCAN carbohydrate-active enzyme annotation
+    7. Knowledge graph construction with RDF triples (includes BGC and CAZyme if available)
+    8. ESM2 protein embeddings for semantic search
     """
     console.print("[bold blue]Genome-to-LLM Knowledge Graph Pipeline[/bold blue]")
     console.print(f"Input directory: {input_dir}")
@@ -165,18 +172,39 @@ def build(
             )
         },
         5: {
-            "name": "Knowledge Graph Construction",
-            "function": lambda: build_knowledge_graph(
-                stage03_dir=output_dir / "stage03_prodigal",
-                stage04_dir=output_dir / "stage04_astra",
-                output_dir=output_dir / "stage05_kg"
+            "name": "GECCO BGC Detection",
+            "function": lambda: run_gecco_analysis(
+                input_dir=output_dir / "stage00_prepared",
+                output_dir=output_dir / "stage05_gecco",
+                threads=min(threads, 4),  # Threads per GECCO job
+                max_workers=2,  # Limit parallel GECCO jobs
+                force=force
             )
         },
         6: {
+            "name": "dbCAN CAZyme Annotation",
+            "function": lambda: run_dbcan_analysis(
+                input_dir=output_dir / "stage03_prodigal" / "genomes" / "all_protein_symlinks",
+                output_dir=output_dir / "stage06_dbcan",
+                max_workers=min(threads, 2),  # Limit parallel dbCAN processes
+                threads_per_job=4  # Threads per dbCAN job
+            )
+        },
+        7: {
+            "name": "Knowledge Graph Construction",
+            "function": lambda: build_knowledge_graph_with_extended_annotations(
+                stage03_dir=output_dir / "stage03_prodigal",
+                stage04_dir=output_dir / "stage04_astra",
+                stage05a_dir=output_dir / "stage05_gecco",
+                stage05b_dir=output_dir / "stage06_dbcan",
+                output_dir=output_dir / "stage07_kg"
+            )
+        },
+        8: {
             "name": "ESM2 Protein Embeddings",
             "function": lambda: run_esm2_embeddings(
                 stage03_dir=output_dir / "stage03_prodigal",
-                output_dir=output_dir / "stage06_esm2",
+                output_dir=output_dir / "stage08_esm2",
                 batch_size=max(1, threads // 2),  # Adjust batch size based on available threads
                 force=force
             )
