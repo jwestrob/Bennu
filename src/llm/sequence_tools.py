@@ -18,6 +18,25 @@ from llm.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
+def _safe_log_data(data: Any, max_length: int = 200, description: str = "data") -> str:
+    """Safely log data structures with length limits to prevent console spam."""
+    try:
+        if isinstance(data, (dict, list)):
+            data_str = str(data)
+            if len(data_str) > max_length:
+                if isinstance(data, dict):
+                    return f"<large_dict: {len(data)} keys, {len(data_str)} chars>"
+                elif isinstance(data, list):
+                    return f"<large_list: {len(data)} items, {len(data_str)} chars>"
+            return data_str
+        else:
+            data_str = str(data)
+            if len(data_str) > max_length:
+                return f"<large_{type(data).__name__}: {len(data_str)} chars>"
+            return data_str
+    except Exception as e:
+        return f"<error_logging_{description}: {str(e)}>"
+
 async def sequence_viewer(
     protein_ids: List[str], 
     analysis_context: str = "",
@@ -44,9 +63,9 @@ async def sequence_viewer(
         protein_ids = [protein_ids]
     
     logger.info(f"🧬 Sequence viewer called with {len(protein_ids)} protein IDs")
-    logger.debug(f"Raw protein IDs received: {protein_ids}")
+    logger.debug(f"Raw protein IDs received: {_safe_log_data(protein_ids, description='raw_protein_ids')}")
     logger.debug(f"Protein IDs type: {type(protein_ids)}")
-    logger.debug(f"First few protein IDs: {protein_ids[:5] if len(protein_ids) > 5 else protein_ids}")
+    logger.debug(f"First few protein IDs: {_safe_log_data(protein_ids[:5] if len(protein_ids) > 5 else protein_ids, description='first_protein_ids')}")
     
     try:
         # Initialize sequence database
@@ -66,7 +85,7 @@ async def sequence_viewer(
             logger.debug(f"ID {i+1}: '{original_id}' → '{clean_id}'")
         
         logger.info(f"🔍 Attempting to retrieve {len(clean_ids)} sequences")
-        logger.debug(f"Clean protein IDs: {clean_ids}")
+        logger.debug(f"Clean protein IDs: {_safe_log_data(clean_ids, description='clean_protein_ids')}")
         
         # Retrieve sequences
         sequences = db.get_sequences(clean_ids)
@@ -274,7 +293,7 @@ async def sequence_viewer(
         formatted_sequences = "\\n".join(formatted_output)
         
         logger.info(f"✅ Sequence viewer retrieved {len(sequences)} sequences for LLM analysis")
-        logger.debug(f"🧬 Retrieved sequences for: {list(sequences.keys())}")
+        logger.debug(f"🧬 Retrieved sequences for: {_safe_log_data(list(sequences.keys()), description='sequence_keys')}")
         
         return {
             "success": True,

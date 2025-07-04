@@ -39,22 +39,39 @@ class KoEntry:
     profile_type: str
 
 
+@dataclass
+class CazyEntry:
+    """CAZy family entry with functional information."""
+    family_id: str
+    family_type: str  # GH, GT, PL, CE, AA, CBM
+    description: str
+    substrate: Optional[str] = None
+    ec_numbers: Optional[List[str]] = None
+    activities: Optional[List[str]] = None
+
+
 class FunctionalEnrichment:
     """Enrich knowledge graph with functional annotations from reference databases."""
     
-    def __init__(self, pfam_file: Path, ko_file: Path):
+    def __init__(self, pfam_file: Path, ko_file: Path, cazy_file: Optional[Path] = None):
         """Initialize with reference database files."""
         self.pfam_file = pfam_file
         self.ko_file = ko_file
+        self.cazy_file = cazy_file
         self.pfam_data = {}
         self.ko_data = {}
+        self.cazy_data = {}
         
     def load_reference_data(self) -> None:
-        """Load PFAM and KOFAM reference data."""
+        """Load PFAM, KOFAM, and CAZy reference data."""
         console.print("[bold blue]Loading functional reference databases...[/bold blue]")
         
         self.pfam_data = self._parse_pfam_stockholm()
         self.ko_data = self._parse_ko_list()
+        
+        if self.cazy_file:
+            self.cazy_data = self._parse_cazy_families()
+            console.print(f"✓ Loaded {len(self.cazy_data)} CAZy families")
         
         console.print(f"✓ Loaded {len(self.pfam_data)} PFAM families")
         console.print(f"✓ Loaded {len(self.ko_data)} KEGG orthologs")
@@ -134,19 +151,82 @@ class FunctionalEnrichment:
         
         return ko_entries
     
+    def _parse_cazy_families(self) -> Dict[str, CazyEntry]:
+        """Parse CAZy family descriptions from reference file."""
+        cazy_entries = {}
+        
+        if not self.cazy_file or not self.cazy_file.exists():
+            logger.warning(f"CAZy file not found: {self.cazy_file}")
+            return cazy_entries
+        
+        # Basic CAZy family descriptions (can be expanded with real CAZy database)
+        basic_descriptions = {
+            # Glycoside Hydrolases
+            "GH": "Glycoside hydrolases - enzymes that hydrolyze glycosidic bonds",
+            "GH1": "Beta-glucosidase family",
+            "GH2": "Beta-galactosidase family", 
+            "GH3": "Beta-glucosidase family",
+            "GH13": "Alpha-amylase family",
+            "GH18": "Chitinase family",
+            "GH43": "Beta-xylosidase family",
+            
+            # Glycosyltransferases
+            "GT": "Glycosyltransferases - enzymes that catalyze glycosidic bond formation",
+            "GT1": "UDP-glucuronosyltransferase family",
+            "GT2": "Cellulose synthase family",
+            "GT4": "Sucrose synthase family",
+            
+            # Polysaccharide Lyases
+            "PL": "Polysaccharide lyases - enzymes that cleave polysaccharides via elimination",
+            "PL1": "Pectate lyase family",
+            "PL9": "Pectinesterase family",
+            
+            # Carbohydrate Esterases
+            "CE": "Carbohydrate esterases - enzymes that de-O-acetylate polysaccharides",
+            "CE1": "Acetyl xylan esterase family",
+            "CE4": "Chitin deacetylase family",
+            
+            # Auxiliary Activities
+            "AA": "Auxiliary activities - redox enzymes that act on lignin and cellulose",
+            "AA9": "Lytic polysaccharide monooxygenase family",
+            "AA10": "Lytic polysaccharide monooxygenase family",
+            
+            # Carbohydrate-Binding Modules
+            "CBM": "Carbohydrate-binding modules - non-catalytic domains that bind carbohydrates",
+            "CBM20": "Starch-binding domain family",
+            "CBM48": "Glycogen-binding domain family"
+        }
+        
+        # Create entries for basic families
+        for family_id, description in basic_descriptions.items():
+            family_type = family_id.rstrip('0123456789')  # Remove numbers to get type
+            if not family_type:
+                family_type = family_id
+                
+            entry = CazyEntry(
+                family_id=family_id,
+                family_type=family_type,
+                description=description
+            )
+            cazy_entries[family_id] = entry
+        
+        return cazy_entries
+    
     def enrich_rdf_graph(self, graph: rdflib.Graph) -> Tuple[rdflib.Graph, Dict[str, int]]:
         """Enrich RDF graph with functional annotations."""
         console.print("[bold blue]Enriching knowledge graph with functional annotations...[/bold blue]")
         
-        if not self.pfam_data and not self.ko_data:
+        if not self.pfam_data and not self.ko_data and not self.cazy_data:
             self.load_reference_data()
         
-        stats = {'pfam_enriched': 0, 'ko_enriched': 0, 'missing_pfam': 0, 'missing_ko': 0}
+        stats = {'pfam_enriched': 0, 'ko_enriched': 0, 'cazy_enriched': 0, 
+                'missing_pfam': 0, 'missing_ko': 0, 'missing_cazy': 0}
         
         # Define namespaces
         kg = rdflib.Namespace("http://genome-kg.org/ontology/")
         pfam_ns = rdflib.Namespace("http://pfam.xfam.org/family/")
         ko_ns = rdflib.Namespace("http://www.genome.jp/kegg/ko/")
+        cazy_ns = rdflib.Namespace("http://genome-kg.org/cazyme/")
         
         # Enrich PFAM families
         stats.update(self._enrich_pfam_families(graph, kg, pfam_ns))
@@ -154,12 +234,20 @@ class FunctionalEnrichment:
         # Enrich KEGG orthologs
         stats.update(self._enrich_ko_functions(graph, kg, ko_ns))
         
+        # Enrich CAZy families if data available
+        if self.cazy_data:
+            stats.update(self._enrich_cazy_families(graph, kg, cazy_ns))
+        
         console.print(f"✓ Enriched {stats['pfam_enriched']} PFAM families")
         console.print(f"✓ Enriched {stats['ko_enriched']} KEGG orthologs")
+        if self.cazy_data:
+            console.print(f"✓ Enriched {stats['cazy_enriched']} CAZy families")
         if stats['missing_pfam'] > 0:
             console.print(f"⚠️  {stats['missing_pfam']} PFAM families without reference data")
         if stats['missing_ko'] > 0:
             console.print(f"⚠️  {stats['missing_ko']} KEGG orthologs without reference data")
+        if stats['missing_cazy'] > 0:
+            console.print(f"⚠️  {stats['missing_cazy']} CAZy families without reference data")
         
         return graph, stats
     
@@ -235,11 +323,60 @@ class FunctionalEnrichment:
                 logger.debug(f"No KO reference data for: {ko_id}")
         
         return stats
+    
+    def _enrich_cazy_families(self, graph: rdflib.Graph, kg: rdflib.Namespace, cazy_ns: rdflib.Namespace) -> Dict[str, int]:
+        """Add functional descriptions to CAZy families."""
+        stats = {'cazy_enriched': 0, 'missing_cazy': 0}
+        
+        # Find all CAZy family nodes
+        cazy_families = set()
+        for subj, pred, obj in graph:
+            if isinstance(subj, rdflib.URIRef) and str(subj).startswith(str(cazy_ns)):
+                # Extract family ID from URI like "http://genome-kg.org/cazyme/family_GH13"
+                family_id = str(subj).replace(str(cazy_ns), "").replace("family_", "")
+                cazy_families.add((subj, family_id))
+        
+        # Enrich each family
+        for family_uri, family_id in cazy_families:
+            # Try exact match first, then family type match
+            entry = None
+            if family_id in self.cazy_data:
+                entry = self.cazy_data[family_id]
+            else:
+                # Try family type (e.g., GH13 -> GH)
+                family_type = family_id.rstrip('0123456789')
+                if family_type in self.cazy_data:
+                    entry = self.cazy_data[family_type]
+            
+            if entry:
+                # Add functional description
+                graph.add((family_uri, rdflib.RDFS.label, rdflib.Literal(entry.description)))
+                graph.add((family_uri, kg.description, rdflib.Literal(entry.description)))
+                graph.add((family_uri, kg.cazymeType, rdflib.Literal(entry.family_type)))
+                
+                if entry.substrate:
+                    graph.add((family_uri, kg.substrate, rdflib.Literal(entry.substrate)))
+                
+                if entry.ec_numbers:
+                    for ec in entry.ec_numbers:
+                        graph.add((family_uri, kg.ecNumber, rdflib.Literal(ec)))
+                
+                if entry.activities:
+                    for activity in entry.activities:
+                        graph.add((family_uri, kg.enzymaticActivity, rdflib.Literal(activity)))
+                
+                stats['cazy_enriched'] += 1
+            else:
+                stats['missing_cazy'] += 1
+                logger.debug(f"No CAZy reference data for: {family_id}")
+        
+        return stats
 
 
 def add_functional_enrichment_to_pipeline(graph: rdflib.Graph, 
                                         pfam_file: Path = Path("data/reference/Pfam-A.hmm.dat.stockholm"),
-                                        ko_file: Path = Path("data/reference/ko_list")) -> Tuple[rdflib.Graph, Dict[str, int]]:
+                                        ko_file: Path = Path("data/reference/ko_list"),
+                                        cazy_file: Optional[Path] = None) -> Tuple[rdflib.Graph, Dict[str, int]]:
     """
     Main function to add functional enrichment to the knowledge graph pipeline.
     
@@ -247,9 +384,10 @@ def add_functional_enrichment_to_pipeline(graph: rdflib.Graph,
         graph: RDF graph to enrich
         pfam_file: Path to PFAM reference file
         ko_file: Path to KEGG Ortholog reference file
+        cazy_file: Path to CAZy reference file (optional)
         
     Returns:
         Tuple of enriched graph and enrichment statistics
     """
-    enricher = FunctionalEnrichment(pfam_file, ko_file)
+    enricher = FunctionalEnrichment(pfam_file, ko_file, cazy_file)
     return enricher.enrich_rdf_graph(graph)

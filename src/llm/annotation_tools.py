@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional, Set
 from pathlib import Path
 import asyncio
+from datetime import datetime
 
 # Import Neo4j query processor and pathway tools
 import sys
@@ -17,6 +18,246 @@ from llm.config import LLMConfig
 from llm.pathway_tools import pathway_based_protein_discovery, pathway_classifier
 
 logger = logging.getLogger(__name__)
+
+async def enrich_proteins_with_context(
+    protein_ids: List[str],
+    max_proteins: int = 50
+) -> Dict[str, Any]:
+    """
+    Enrich a list of protein IDs with comprehensive genomic context.
+    
+    This function takes basic protein IDs and adds:
+    - Gene coordinates and strand information
+    - PFAM domain annotations with descriptions
+    - KEGG functional annotations
+    - Genomic neighborhood analysis (5kb window)
+    - Domain scores and positions
+    
+    Args:
+        protein_ids: List of protein IDs to enrich
+        max_proteins: Maximum number of proteins to process
+        
+    Returns:
+        Dict with enriched protein data including full genomic context
+    """
+    logger.info(f"🧬 Enriching {len(protein_ids)} proteins with comprehensive genomic context")
+    
+    try:
+        config = LLMConfig()
+        neo4j = Neo4jQueryProcessor(config)
+        
+        enriched_proteins = []
+        
+        # Process proteins in batches to avoid overwhelming the system
+        batch_size = 10
+        for i in range(0, min(len(protein_ids), max_proteins), batch_size):
+            batch = protein_ids[i:i+batch_size]
+            logger.info(f"📊 Processing batch {i//batch_size + 1}: {len(batch)} proteins")
+            
+            for protein_id in batch:
+                try:
+                    # Use the comprehensive protein_info query
+                    result = await neo4j.process_query(
+                        protein_id,
+                        query_type="protein_info"
+                    )
+                    
+                    if result.results:
+                        protein_data = result.results[0]
+                        
+                        # Add enrichment metadata
+                        protein_data['enrichment_source'] = 'comprehensive_protein_info'
+                        protein_data['enrichment_timestamp'] = str(datetime.now())
+                        
+                        # Calculate neighbor summary statistics
+                        neighbors = protein_data.get('detailed_neighbors', [])
+                        if neighbors:
+                            protein_data['neighbor_count'] = len([n for n in neighbors if n.get('protein_id')])
+                            protein_data['functional_neighbors'] = len([n for n in neighbors if n.get('kegg_desc')])
+                            protein_data['domain_neighbors'] = len([n for n in neighbors if n.get('pfam_ids')])
+                        
+                        enriched_proteins.append(protein_data)
+                        logger.debug(f"✅ Enriched {protein_id} with {len(neighbors)} neighbors")
+                    else:
+                        logger.warning(f"⚠️ No enrichment data found for {protein_id}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Failed to enrich {protein_id}: {e}")
+                    continue
+        
+        logger.info(f"🎯 Successfully enriched {len(enriched_proteins)} proteins with comprehensive context")
+        
+        return {
+            "success": True,
+            "enriched_proteins": enriched_proteins,
+            "enrichment_count": len(enriched_proteins),
+            "original_count": len(protein_ids),
+            "enrichment_rate": len(enriched_proteins) / len(protein_ids) if protein_ids else 0,
+            "context_types": [
+                "gene_coordinates",
+                "pfam_domains", 
+                "kegg_functions",
+                "genomic_neighborhood",
+                "domain_scores",
+                "neighbor_analysis"
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Protein enrichment failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "enriched_proteins": [],
+            "enrichment_count": 0
+        }
+
+async def comprehensive_protein_discovery(
+    functional_category: str = "central_metabolism",
+    max_proteins: int = 100,
+    include_enrichment: bool = True,
+    batch_size: int = 25
+) -> Dict[str, Any]:
+    """
+    Comprehensive protein discovery with automatic enrichment.
+    
+    This function combines:
+    1. Functional annotation discovery (KEGG + PFAM)
+    2. Protein finding via Neo4j queries
+    3. Automatic enrichment with genomic context
+    
+    Args:
+        functional_category: Biological category to search for
+        max_proteins: Maximum proteins to discover
+        include_enrichment: Whether to add comprehensive genomic context
+        batch_size: Batch size for processing
+        
+    Returns:
+        Dict with discovered proteins and rich genomic context
+    """
+    logger.info(f"🔬 Starting comprehensive protein discovery for {functional_category}")
+    
+    try:
+        config = LLMConfig()
+        neo4j = Neo4jQueryProcessor(config)
+        
+        # Step 1: Get annotation catalog
+        logger.info("📚 Step 1: Exploring annotation catalog")
+        annotation_result = await annotation_explorer(
+            annotation_types=["KEGG", "PFAM"],
+            functional_category=functional_category,
+            max_annotations=1000
+        )
+        
+        if not annotation_result.get("success"):
+            return {
+                "success": False,
+                "error": "Failed to get annotation catalog",
+                "discovered_proteins": [],
+                "discovery_count": 0
+            }
+        
+        # Step 2: Classify relevant annotations
+        logger.info("🎯 Step 2: Classifying functional annotations")
+        classification_result = await functional_classifier(
+            annotation_catalog=annotation_result["annotation_catalog"],
+            functional_category=functional_category,
+            max_relevant=50  # Increased for comprehensive discovery
+        )
+        
+        if not classification_result.get("success"):
+            return {
+                "success": False,
+                "error": "Failed to classify annotations",
+                "discovered_proteins": [],
+                "discovery_count": 0
+            }
+        
+        # Step 3: Find proteins using classified annotations
+        logger.info("🔍 Step 3: Discovering proteins from classified annotations")
+        relevant_kos = classification_result["classification"].get("RELEVANT", [])
+        
+        if not relevant_kos:
+            return {
+                "success": False,
+                "error": "No relevant KEGG orthologs found",
+                "discovered_proteins": [],
+                "discovery_count": 0
+            }
+        
+        discovered_proteins = []
+        
+        # Process KO IDs in batches to avoid query length limits
+        for i in range(0, len(relevant_kos), batch_size):
+            batch_kos = relevant_kos[i:i+batch_size]
+            ko_list = "', '".join(batch_kos)
+            
+            logger.info(f"📊 Processing KO batch {i//batch_size + 1}: {len(batch_kos)} orthologs")
+            
+            # Query for proteins with these KEGG functions
+            query = f"""
+            MATCH (ko:KEGGOrtholog)
+            WHERE ko.id IN ['{ko_list}']
+            MATCH (p:Protein)-[:HASFUNCTION]->(ko)
+            OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(genome:Genome)
+            RETURN DISTINCT p.id AS protein_id, ko.id AS kegg_id, ko.description AS kegg_description,
+                   g.id AS gene_id, genome.id AS genome_id
+            LIMIT {max_proteins}
+            """
+            
+            result = await neo4j.process_query(query, query_type="cypher")
+            batch_proteins = result.results
+            
+            discovered_proteins.extend(batch_proteins)
+            logger.info(f"✅ Found {len(batch_proteins)} proteins in this batch")
+            
+            if len(discovered_proteins) >= max_proteins:
+                break
+        
+        # Limit to max_proteins
+        discovered_proteins = discovered_proteins[:max_proteins]
+        protein_ids = [p["protein_id"] for p in discovered_proteins]
+        
+        logger.info(f"🎯 Discovered {len(discovered_proteins)} proteins for {functional_category}")
+        
+        # Step 4: Enrich with comprehensive context (if requested)
+        enriched_proteins = discovered_proteins
+        if include_enrichment and protein_ids:
+            logger.info("🧬 Step 4: Enriching proteins with comprehensive genomic context")
+            enrichment_result = await enrich_proteins_with_context(
+                protein_ids=protein_ids,
+                max_proteins=max_proteins
+            )
+            
+            if enrichment_result.get("success"):
+                enriched_proteins = enrichment_result["enriched_proteins"]
+                logger.info(f"✅ Successfully enriched {len(enriched_proteins)} proteins")
+            else:
+                logger.warning(f"⚠️ Enrichment failed: {enrichment_result.get('error')}")
+        
+        return {
+            "success": True,
+            "discovered_proteins": enriched_proteins,
+            "discovery_count": len(enriched_proteins),
+            "functional_category": functional_category,
+            "relevant_kos_count": len(relevant_kos),
+            "enrichment_included": include_enrichment,
+            "discovery_summary": {
+                "total_proteins": len(discovered_proteins),
+                "enriched_proteins": len(enriched_proteins) if include_enrichment else 0,
+                "relevant_annotations": len(relevant_kos),
+                "functional_category": functional_category
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Comprehensive protein discovery failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "discovered_proteins": [],
+            "discovery_count": 0
+        }
 
 async def annotation_explorer(
     annotation_types: List[str] = ["KEGG", "PFAM"], 

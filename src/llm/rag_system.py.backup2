@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import datetime
-import os
 
 import dspy
 from rich.console import Console
@@ -29,49 +28,56 @@ from .config import LLMConfig
 from .query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor, QueryResult
 from .dsp_sig import NEO4J_SCHEMA
 from .sequence_tools import sequence_viewer, extract_protein_ids_from_analysis
-from .annotation_tools import annotation_explorer, functional_classifier, annotation_selector, pathway_based_annotation_selector, assess_operon_context, prospect_operonic_proteins, enrich_proteins_with_context, comprehensive_protein_discovery
+from .annotation_tools import annotation_explorer, functional_classifier, annotation_selector, pathway_based_annotation_selector, assess_operon_context, prospect_operonic_proteins, comprehensive_protein_discovery
+from .task_notes import task_notes
 
 console = Console()
 logger = logging.getLogger(__name__)
 
-# Configure debug logging to file
-def setup_debug_logging():
-    """Setup debug logging to redirect verbose output to log files."""
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+def _safe_log_data(data: Any, max_chars: int = 500) -> str:
+    """
+    Create a safe, concise representation of data for logging.
+    Prevents console spam from large data structures.
     
-    # Create debug file handler
-    debug_handler = logging.FileHandler(log_dir / "rag_debug.log")
-    debug_handler.setLevel(logging.DEBUG)
-    debug_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    debug_handler.setFormatter(debug_formatter)
+    This function is critical for preventing the system from dumping massive
+    annotation catalogs (1000+ KEGG + 1000+ PFAM entries) to the console,
+    which was causing the "console spam" issue when processing large datasets.
     
-    # Add handler to logger
-    debug_logger = logging.getLogger(__name__)
-    debug_logger.addHandler(debug_handler)
-    debug_logger.setLevel(logging.DEBUG)
-
-def _safe_log_data(data: Any, max_length: int = 200, description: str = "data") -> str:
-    """Safely log data structures with length limits to prevent console spam."""
-    try:
-        if isinstance(data, (dict, list)):
-            data_str = str(data)
-            if len(data_str) > max_length:
-                if isinstance(data, dict):
-                    return f"<large_dict: {len(data)} keys, {len(data_str)} chars>"
-                elif isinstance(data, list):
-                    return f"<large_list: {len(data)} items, {len(data_str)} chars>"
-            return data_str
+    Args:
+        data: Any data structure to log
+        max_chars: Maximum characters before truncation
+        
+    Returns:
+        Safe string representation suitable for logging
+    """
+    if isinstance(data, dict):
+        if len(str(data)) > max_chars:
+            if "annotation_catalog" in str(data) and isinstance(data, dict):
+                # Special handling for annotation catalogs
+                catalog_summary = {}
+                for key, value in data.items():
+                    if isinstance(value, dict):
+                        catalog_summary[key] = {cat: f"{len(items)} items" for cat, items in value.items()}
+                    elif isinstance(value, list):
+                        catalog_summary[key] = f"<list: {len(value)} items>"
+                    else:
+                        catalog_summary[key] = value
+                return f"annotation_catalog: {catalog_summary}"
+            else:
+                return f"<large_dict: {len(data)} keys, {len(str(data))} chars>"
         else:
-            data_str = str(data)
-            if len(data_str) > max_length:
-                return f"<large_{type(data).__name__}: {len(data_str)} chars>"
+            return str(data)
+    elif isinstance(data, list):
+        if len(data) > 10:
+            return f"<list: {len(data)} items, sample: {data[:2]}...>"
+        else:
+            return str(data)
+    else:
+        data_str = str(data)
+        if len(data_str) > max_chars:
+            return f"{data_str[:max_chars]}... <truncated, total: {len(data_str)} chars>"
+        else:
             return data_str
-    except Exception as e:
-        return f"<error_logging_{description}: {str(e)}>"
-
-# Initialize debug logging
-setup_debug_logging()
 
 # ===== RESULT STREAMING FOR LARGE DATASETS =====
 
@@ -457,19 +463,7 @@ except ImportError:
         }
     CODE_INTERPRETER_AVAILABLE = False
 
-AVAILABLE_TOOLS = {
-    "literature_search": literature_search,
-    "code_interpreter": code_interpreter_tool,
-    "sequence_viewer": sequence_viewer,
-    "annotation_explorer": annotation_explorer,
-    "functional_classifier": functional_classifier,
-    "annotation_selector": annotation_selector,
-    "pathway_based_annotation_selector": pathway_based_annotation_selector,
-    "operon_prospector": prospect_operonic_proteins,
-    "operon_assessor": assess_operon_context,
-    "enrich_proteins_with_context": enrich_proteins_with_context,
-    "comprehensive_protein_discovery": comprehensive_protein_discovery,
-}
+AVAILABLE_TOOLS = {\n    \"literature_search\": literature_search,\n    \"code_interpreter\": code_interpreter_tool,\n    \"sequence_viewer\": sequence_viewer,\n    \"annotation_explorer\": annotation_explorer,\n    \"functional_classifier\": functional_classifier,\n    \"annotation_selector\": annotation_selector,\n    \"pathway_based_annotation_selector\": pathway_based_annotation_selector,\n    \"operon_prospector\": prospect_operonic_proteins,\n    \"operon_assessor\": assess_operon_context,\n    \"comprehensive_discovery\": comprehensive_protein_discovery,\n}
 
 # ===== ENHANCED DSPy SIGNATURES FOR AGENTIC PLANNING =====
 
@@ -515,11 +509,7 @@ class PlannerAgent(dspy.Signature):
      - operon_prospector: Find proteins in operons using LLM-powered assessment
        Args: functional_category="central_metabolism", min_examples=2, max_candidates=50
      - operon_assessor: Assess whether a protein occurs in a functionally coherent operon
-       Args: protein_data, genomic_neighborhood, target_function="central_metabolism"
-     - enrich_proteins_with_context: Add comprehensive genomic context to protein IDs
-       Args: protein_ids=["list", "of", "protein", "ids"], max_proteins=50
-     - comprehensive_protein_discovery: Complete workflow from functional category to enriched proteins
-       Args: functional_category="central_metabolism", max_proteins=100, include_enrichment=true, batch_size=25     
+       Args: protein_data, genomic_neighborhood, target_function="central_metabolism"     
      TASK TYPES:
     - atomic_query: Query the local knowledge graph for known facts
     - tool_call: Execute external tools for additional information
@@ -577,28 +567,42 @@ class PlannerAgent(dspy.Signature):
          ]
      }
      
-     FUNCTIONAL CLASSIFICATION EXAMPLE:
-     {
-         "tasks": [
-             {
-                 "id": "comprehensive_discovery",
-                 "type": "tool_call",
-                 "tool_name": "comprehensive_protein_discovery",
-                 "tool_args": {"functional_category": "central_metabolism", "max_proteins": 150, "include_enrichment": true},
-                 "dependencies": []
-             },
-             {
-                 "id": "view_sequences",
-                 "type": "tool_call",
-                 "tool_name": "sequence_viewer",
-                 "tool_args": {"protein_ids": "from comprehensive_discovery", "analysis_context": "central metabolism analysis"},
-                 "dependencies": ["comprehensive_discovery"]
-             },
-             {
-                 "id": "synthesize_results",
-                 "type": "aggregate",
-                 "dependencies": ["comprehensive_discovery", "view_sequences"]
-             }
+      FUNCTIONAL PROTEIN DISCOVERY EXAMPLE (4-step process):
+      {
+          "tasks": [
+              {
+                  "id": "explore_annotations",
+                  "type": "tool_call",
+                  "tool_name": "annotation_explorer",
+                  "tool_args": {"annotation_types": ["KEGG", "PFAM"], "functional_category": "central_metabolism"},
+                  "dependencies": []
+              },
+              {
+                  "id": "classify_functions",
+                  "type": "tool_call",
+                  "tool_name": "functional_classifier",
+                  "tool_args": {"annotation_catalog": "explore_annotations", "functional_category": "central_metabolism"},
+                  "dependencies": ["explore_annotations"]
+              },
+              {
+                  \"id\": \"comprehensive_discovery\",
+                  \"type\": \"tool_call\",\n                  \"tool_name\": \"comprehensive_discovery\",\n                  \"tool_args\": {\"relevant_annotations\": \"from classify_functions\", \"functional_category\": \"central_metabolism\", \"batch_size\": 25},
+                  "dependencies": ["classify_functions"]
+              },
+              {
+                  "id": "view_sequences",
+                  "type": "tool_call",
+                  "tool_name": "sequence_viewer",
+                  \"tool_args\": {\"protein_ids\": \"from comprehensive_discovery\", \"analysis_context\": \"functional protein analysis\"},
+                  \"dependencies\": [\"comprehensive_discovery\"]
+              },
+              {
+                  "id": "synthesize_results",
+                  "type": "aggregate",
+                  \"dependencies\": [\"comprehensive_discovery\", \"view_sequences\"]
+              }
+          ]
+      }
          ]
      }            }
         ]
@@ -619,7 +623,7 @@ class PlannerAgent(dspy.Signature):
     
     user_query = dspy.InputField(desc="User query about genomic data")
     requires_planning = dspy.OutputField(desc="Boolean: true if query needs multi-step agentic planning with external tools, false for simple direct queries using local data only")
-    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'. FOR TRANSPORT PROTEIN QUERIES: Use 4-task intelligent annotation discovery: 1) annotation_explorer, 2) transport_classifier, 3) transport_selector, 4) sequence_viewer.")
+    task_plan = dspy.OutputField(desc="JSON task graph with tasks, dependencies, and execution strategy. MUST include 'tool_name' field for tool_call tasks. ONLY provide JSON if requires_planning is true, otherwise return 'N/A'. FOR SIMPLE FUNCTIONAL QUERIES (counts, summaries, lists): Use requires_planning=false for direct Neo4j queries. FOR COMPLEX FUNCTIONAL PROTEIN DISCOVERY: Use 4-step process: 1) annotation_explorer (get KO catalog), 2) functional_classifier (find relevant KOs), 3) atomic_query (find proteins with those KOs), 4) sequence_viewer (get sequences). The atomic_query step is CRITICAL - it converts KO IDs to actual protein records via Neo4j.")
     reasoning = dspy.OutputField(desc="Explanation of why planning is or isn't needed and the chosen strategy")
 
 @dataclass
@@ -658,7 +662,6 @@ class QueryClassifier(dspy.Signature):
     📊 GENERAL: Use for:
     - Database overviews and statistics
     - Broad exploratory queries without specific targets
-    - BGC (biosynthetic gene cluster) information requests
     → Primary: Neo4j aggregation queries
     """
     
@@ -682,16 +685,6 @@ class ContextRetriever(dspy.Signature):
            g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
            collect(DISTINCT dom.id) AS pfam_accessions
     LIMIT 3
-
-    EXAMPLE BGC TEMPLATE:
-    MATCH (genome:Genome)-[:HASBGC]->(bgc:Bgc)
-    OPTIONAL MATCH (bgc)<-[:PARTOFBGC]-(gene:Gene)<-[:ENCODEDBY]-(protein:Protein)
-    OPTIONAL MATCH (protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)
-    RETURN genome.genomeId, bgc.bgcId, bgc.bgcProduct, bgc.contig,
-           bgc.startCoordinate, bgc.endCoordinate, bgc.lengthNt, bgc.proteinCount,
-           count(gene) as genes_in_bgc,
-           collect(DISTINCT ko.koId) as ko_functions
-    ORDER BY bgc.bgcId
     
      CRITICAL RULES:
      - Node labels: Protein, KEGGOrtholog, Gene, Domain, DomainAnnotation (ONLY these exist)
@@ -878,7 +871,7 @@ class GenomicRAG(dspy.Module):
         if hasattr(retrieval_plan, 'template_choice'):
             console.print(f"🔧 Using Template {retrieval_plan.template_choice} for query generation")
         
-        context = await self._retrieve_context(classification.query_type, retrieval_plan, question)
+        context = await self._retrieve_context(classification.query_type, retrieval_plan)
         
         # NEW: Check for TaskRepairAgent messages first
         if 'repair_message' in context.metadata:
@@ -952,7 +945,9 @@ class GenomicRAG(dspy.Module):
                 raise ValueError("Task plan contains no tasks")
             
             console.print(f"📋 Executing {len(task_plan.get('tasks', []))} tasks")
-            logger.info(f"🔍 DEBUG: Raw task plan from DSPy: {task_plan}")
+            # Debug: Log task count and types only (not full plan to avoid API length limits)
+            task_types = [task.get('type', 'unknown') for task in task_plan.get('tasks', [])]
+            logger.debug(f"🔍 Task plan summary: {len(task_plan.get('tasks', []))} tasks of types: {task_types}")
             
             # Create task graph
             graph = TaskGraph()
@@ -1064,14 +1059,27 @@ class GenomicRAG(dspy.Module):
     async def _execute_task(self, task: Task, previous_results: Dict[str, Any]) -> Any:
         """Execute a single task based on its type."""
         if task.task_type == TaskType.ATOMIC_QUERY:
-            # Execute database query
-            classification = self.classifier(question=task.query)
+            # Execute database query with context from previous tasks
+            enhanced_query = task.query
+            
+            # Inject classified KO list if available from functional_classifier
+            if "classify_functions" in previous_results:
+                classify_result = previous_results["classify_functions"]
+                if "tool_result" in classify_result and classify_result["tool_result"].get("success"):
+                    classification_data = classify_result["tool_result"].get("classification", {})
+                    relevant_kos = classification_data.get("RELEVANT", [])
+                    if relevant_kos:
+                        ko_list = "', '".join(relevant_kos[:50])  # Limit to 50 KOs to avoid query length issues
+                        enhanced_query = f"{task.query} - Use these specific KEGG orthologs: ['{ko_list}']"
+                        logger.info(f"🔧 Enhanced atomic query with {len(relevant_kos)} classified KO IDs")
+            
+            classification = self.classifier(question=enhanced_query)
             retrieval_plan = self.retriever(
                 db_schema=NEO4J_SCHEMA,
-                question=task.query,
+                question=enhanced_query,
                 query_type=classification.query_type
             )
-            context = await self._retrieve_context(classification.query_type, retrieval_plan, task.query)
+            context = await self._retrieve_context(classification.query_type, retrieval_plan)
             
             if 'retrieval_error' in context.metadata:
                 raise Exception(f"Query execution failed: {context.metadata['retrieval_error']}")
@@ -1116,8 +1124,9 @@ class GenomicRAG(dspy.Module):
                 current_protein_ids = task.tool_args.get("protein_ids")
                 logger.debug(f"🔬 Sequence viewer task - current protein_ids: {current_protein_ids}")
                 # Log summary of tool_args to avoid dumping massive data structures
-                tool_args_summary = {key: _safe_log_data(value, description=f'tool_arg_{key}') for key, value in task.tool_args.items()}
-                logger.debug(f"🔬 Task tool_args summary: {tool_args_summary}")
+                tool_args_summary = {key: _safe_log_data(value) for key, value in task.tool_args.items()}
+                logger.info(f"🔬 DEBUG: task.tool_args summary after template resolution: {tool_args_summary}")
+                logger.info(f"🔬 DEBUG: task.tool_args type: {type(task.tool_args)}")
                 
                 # Check if protein_ids contains unresolved template variables
                 needs_auto_population = (
@@ -1130,7 +1139,7 @@ class GenomicRAG(dspy.Module):
                 if needs_auto_population:
                     logger.info("🔍 Auto-populating sequence viewer with protein IDs from previous results")
                     logger.info(f"🔍 DEBUG: previous_results keys: {list(previous_results.keys())}")
-                    logger.info(f"🔍 DEBUG: previous_results structure: {previous_results}")
+                    logger.info(f"🔍 DEBUG: previous_results structure: {_safe_log_data(previous_results)}")
                     
                     # Extract protein IDs from code interpreter results
                     protein_ids = []
@@ -1167,7 +1176,7 @@ class GenomicRAG(dspy.Module):
                     
                     task.tool_args["protein_ids"] = unique_ids
                     logger.info(f"✅ Auto-populated sequence viewer with {len(unique_ids)} protein IDs")
-                    logger.debug(f"🧬 Final protein IDs for sequence viewer: {_safe_log_data(unique_ids, description='final_protein_ids')}")
+                    logger.debug(f"🧬 Final protein IDs for sequence viewer: {unique_ids}")
             
             # Handle both sync and async tool functions
             if asyncio.iscoroutinefunction(tool_function):
@@ -1183,13 +1192,54 @@ class GenomicRAG(dspy.Module):
             return {"tool_result": result, "tool_name": task.tool_name}
             
         elif task.task_type == TaskType.AGGREGATE:
-            # Combine results from dependencies
+            # Combine results from dependencies with enhanced summary statistics
             combined_data = []
+            summary_stats = {}
+            
             for dep_id in task.dependencies:
                 if dep_id in previous_results:
-                    combined_data.append(previous_results[dep_id])
+                    result = previous_results[dep_id]
+                    combined_data.append(result)
+                    
+                    # Extract summary statistics from different result types
+                    if isinstance(result, list):
+                        summary_stats[f"{dep_id}_count"] = len(result)
+                    elif isinstance(result, dict):
+                        if "protein_count" in result:
+                            summary_stats[f"{dep_id}_protein_count"] = result["protein_count"]
+                        if "ko_count" in result:
+                            summary_stats[f"{dep_id}_ko_count"] = result["ko_count"]
+                        if "RELEVANT" in result:
+                            summary_stats[f"{dep_id}_relevant_annotations"] = len(result["RELEVANT"])
+                        if "sequences" in result:
+                            summary_stats[f"{dep_id}_sequence_count"] = len(result["sequences"])
             
-            return {"aggregated_results": combined_data}
+            # Calculate total protein count across all results
+            total_proteins = 0
+            unique_proteins = set()
+            ko_functions = set()
+            
+            for result in combined_data:
+                if isinstance(result, list):
+                    for item in result:
+                        if isinstance(item, dict):
+                            if "protein_id" in item:
+                                unique_proteins.add(item["protein_id"])
+                            if "ko_id" in item:
+                                ko_functions.add(item["ko_id"])
+                            
+            summary_stats["total_unique_proteins"] = len(unique_proteins)
+            summary_stats["total_unique_ko_functions"] = len(ko_functions)
+            
+            return {
+                "aggregated_results": combined_data,
+                "summary_statistics": summary_stats,
+                "protein_breakdown": {
+                    "total_proteins_found": len(unique_proteins),
+                    "unique_ko_functions": len(ko_functions),
+                    "data_sources": list(summary_stats.keys())
+                }
+            }
         
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
@@ -1302,7 +1352,6 @@ class GenomicRAG(dspy.Module):
         protein_ids = set()
         
         for task_id, result in previous_results.items():
-            # Extract from context (traditional query results)
             if "context" in result:
                 context = result["context"]
                 structured_data = context.structured_data
@@ -1312,32 +1361,10 @@ class GenomicRAG(dspy.Module):
                     protein_id = item.get('protein_id', '')
                     if protein_id:
                         protein_ids.add(protein_id)
-            
-            # Extract from tool results (comprehensive discovery, enrichment, etc.)
-            elif "tool_result" in result:
-                tool_result = result["tool_result"]
-                
-                # From comprehensive_protein_discovery
-                if result.get("tool_name") == "comprehensive_protein_discovery":
-                    if tool_result.get("success") and "discovered_proteins" in tool_result:
-                        for protein_data in tool_result["discovered_proteins"]:
-                            pid = protein_data.get('protein_id', '')
-                            if pid:
-                                protein_ids.add(pid)
-                
-                # From enrich_proteins_with_context
-                elif result.get("tool_name") == "enrich_proteins_with_context":
-                    if tool_result.get("success") and "enriched_proteins" in tool_result:
-                        for protein_data in tool_result["enriched_proteins"]:
-                            pid = protein_data.get('protein_id', '')
-                            if pid:
-                                protein_ids.add(pid)
         
         # Create enhanced code with sequence database setup
         if protein_ids:
-            # Use all proteins if reasonable count, otherwise limit for performance
-            max_proteins_for_code = 500  # Configurable limit for code interpreter
-            protein_list = list(protein_ids)[:max_proteins_for_code]
+            protein_list = list(protein_ids)[:10]  # Limit to first 10 for performance and stability
             
             protein_ids_code = '\n'.join([f'    "{pid}",' for pid in protein_list])
             enhanced_code = f"""
@@ -1480,11 +1507,11 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
             logger.debug(f"Protein IDs found: {list(protein_ids)[:3]}...")  # Log first 3 IDs
         else:
             logger.warning("No protein IDs found in previous results - code interpreter may not have sequence access")
-            logger.debug(f"Previous results structure: {_safe_log_data(list(previous_results.keys()), description='prev_results_keys')}")
+            logger.debug(f"Previous results structure: {list(previous_results.keys())}")
             # Log what's actually in the previous results for debugging
             for task_id, result in previous_results.items():
                 if isinstance(result, dict):
-                    logger.debug(f"Task {task_id}: {_safe_log_data(list(result.keys()), description='task_result_keys')}")
+                    logger.debug(f"Task {task_id}: {list(result.keys())}")
                     if 'context' in result:
                         context = result['context']
                         if hasattr(context, 'structured_data'):
@@ -1533,57 +1560,7 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                     else:
                         tool_result_summary = str(tool_result)
                         tool_results.append(f"=== Protein Sequences: {task_id} ===\n{tool_result_summary}")
-                elif tool_name == "comprehensive_protein_discovery":
-                    # For comprehensive protein discovery, format the rich protein data properly
-                    if isinstance(tool_result, dict) and tool_result.get("success") and "discovered_proteins" in tool_result:
-                        proteins = tool_result["discovered_proteins"]
-                        discovery_count = tool_result.get("discovery_count", len(proteins))
-                        functional_category = tool_result.get("functional_category", "unknown")
-                        
-                        # Create a comprehensive summary with rich context
-                        summary_lines = [
-                            f"Comprehensive Protein Discovery Results: {discovery_count} {functional_category} proteins",
-                            f"Functional Category: {functional_category}",
-                            f"Enrichment Status: {'✅ Full genomic context included' if tool_result.get('enrichment_included') else '⚠️ Basic data only'}",
-                            "",
-                            "DISCOVERED PROTEINS WITH RICH GENOMIC CONTEXT:"
-                        ]
-                        
-                        # Add detailed protein information (show all proteins)
-                        for i, protein in enumerate(proteins):  # Show all discovered proteins with full context
-                            protein_id = protein.get('protein_id', 'Unknown')
-                            gene_start = protein.get('gene_start', 'N/A')
-                            gene_end = protein.get('gene_end', 'N/A')
-                            gene_strand = protein.get('gene_strand', 'N/A')
-                            kegg_functions = protein.get('kegg_functions', [])
-                            kegg_descriptions = protein.get('kegg_descriptions', [])
-                            domain_descriptions = protein.get('domain_descriptions', [])
-                            neighbor_count = protein.get('neighbor_count', 0)
-                            
-                            summary_lines.append(f"Protein {i+1}: {protein_id}")
-                            summary_lines.append(f"  Coordinates: {gene_start}-{gene_end} bp ({gene_strand} strand)")
-                            if kegg_functions:
-                                summary_lines.append(f"  KEGG: {', '.join(kegg_functions[:3])} - {', '.join(kegg_descriptions[:3])}")
-                            if domain_descriptions:
-                                summary_lines.append(f"  Domains: {', '.join(domain_descriptions[:5])}")
-                            if neighbor_count > 0:
-                                summary_lines.append(f"  Genomic Context: {neighbor_count} neighbors within 5kb")
-                            summary_lines.append("")
-                        
-                        # No truncation - show all proteins discovered
-                        
-                        tool_result_summary = "\\n".join(summary_lines)
-                        tool_results.append(f"=== Comprehensive Discovery: {task_id} ===\\n{tool_result_summary}")
-                    else:
-                        tool_result_summary = str(tool_result)
-                        tool_results.append(f"=== Discovery Tool: {tool_name} ({task_id}) ===\\n{tool_result_summary}")
-                elif tool_name == "literature_search":
-                    # For literature search, truncate long results
-                    if len(str(tool_result)) > 2000:
-                        tool_result_summary = str(tool_result)[:2000] + "\\n\\n[... Additional results truncated for context efficiency ...]"
-                    else:
-                        tool_result_summary = str(tool_result)
-                    tool_results.append(f"=== External Literature: {tool_name} ({task_id}) ===\\n{tool_result_summary}")
+                elif tool_name == \"literature_search\":\n                    # For literature search, truncate long results\n                    if len(str(tool_result)) > 2000:\n                        tool_result_summary = str(tool_result)[:2000] + \"\\n\\n[... Additional results truncated for context efficiency ...]\"\n                    else:\n                        tool_result_summary = str(tool_result)\n                    tool_results.append(f\"=== External Literature: {tool_name} ({task_id}) ===\\n{tool_result_summary}\")\n                \n                elif tool_name == \"comprehensive_discovery\":\n                    # Special formatting for comprehensive discovery results\n                    if tool_result.get(\"success\"):\n                        proteins = tool_result.get(\"proteins\", [])\n                        stats = tool_result.get(\"discovery_statistics\", {})\n                        insights = tool_result.get(\"biological_insights\", {})\n                        \n                        discovery_summary = f\"\"\"COMPREHENSIVE PROTEIN DISCOVERY RESULTS\n📊 Discovery Statistics:\n  • Total proteins discovered: {stats.get('total_proteins_discovered', 0)}\n  • Functional annotations covered: {stats.get('annotations_covered', 0)}\n  • KEGG orthologs: {stats.get('kegg_orthologs_covered', 0)}\n  • PFAM domains: {stats.get('pfam_domains_covered', 0)}\n  • Average proteins per annotation: {stats.get('avg_proteins_per_annotation', 0):.1f}\n\n🧬 Biological Insights:\n  • Functional diversity: {insights.get('functional_diversity', {}).get('unique_ko_functions', 0)} unique KEGG functions\n  • Multi-functional proteins: {insights.get('functional_diversity', {}).get('multi_functional_proteins', 0)} ({insights.get('functional_diversity', {}).get('multi_functional_percentage', 0):.1f}%)\n  • Interpretation: {insights.get('biological_interpretation', 'Analysis pending')}\n\n📋 Protein Details:\n{self._format_protein_list_for_context(proteins[:20])}  # Show first 20 proteins\n{f'... and {len(proteins) - 20} additional proteins' if len(proteins) > 20 else ''}\"\"\"\n                        \n                        tool_results.append(f\"=== Comprehensive Discovery: {task_id} ===\\n{discovery_summary}\")\n                    else:\n                        tool_results.append(f\"=== Comprehensive Discovery: {task_id} ===\\nDiscovery failed: {tool_result.get('error', 'Unknown error')}\")
                 else:
                     # For other tools, truncate if too long
                     if len(str(tool_result)) > 2000:
@@ -1613,7 +1590,7 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
         
         return combined_context
     
-    async def _retrieve_context(self, query_type: str, retrieval_plan, question: str = "") -> GenomicContext:
+    async def _retrieve_context(self, query_type: str, retrieval_plan) -> GenomicContext:
         """Retrieve context based on query type and plan."""
         import time
         start_time = time.time()
@@ -1814,29 +1791,11 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                         metadata['lancedb_execution_time'] = lancedb_result.execution_time
             
             if query_type == "general":
-                # Check if this is a BGC-specific question
-                if any(term in question.lower() for term in ['bgc', 'biosynthetic', 'cluster', 'secondary metabolite']):
-                    # Use BGC-specific query
-                    bgc_query = """
-                    MATCH (genome:Genome)-[:HASBGC]->(bgc:Bgc)
-                    OPTIONAL MATCH (bgc)<-[:PARTOFBGC]-(gene:Gene)<-[:ENCODEDBY]-(protein:Protein)
-                    OPTIONAL MATCH (protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)
-                    RETURN genome.genomeId, bgc.bgcId, bgc.bgcProduct, bgc.contig,
-                           bgc.startCoordinate, bgc.endCoordinate, bgc.lengthNt, bgc.proteinCount,
-                           count(gene) as genes_in_bgc,
-                           collect(DISTINCT ko.koId) as ko_functions
-                    ORDER BY bgc.bgcId
-                    """
-                    neo4j_result = await self.neo4j_processor.process_query(
-                        bgc_query,
-                        query_type="cypher"
-                    )
-                else:
-                    # General database overview
-                    neo4j_result = await self.neo4j_processor.process_query(
-                        "database overview",
-                        query_type="auto"
-                    )
+                # General database overview
+                neo4j_result = await self.neo4j_processor.process_query(
+                    "database overview",
+                    query_type="auto"
+                )
                 structured_data = neo4j_result.results
                 metadata['neo4j_execution_time'] = neo4j_result.execution_time
             
@@ -1874,15 +1833,7 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                     task_ref = value
                     logger.info(f"🔧 Resolving direct task reference: {value} -> task_ref: {task_ref}")
                     
-                    # For annotation_catalog, pass the entire tool result
-                    if key == "annotation_catalog":
-                        task_result = previous_results[task_ref]
-                        if "tool_result" in task_result and task_result["tool_result"].get("success"):
-                            resolved_value = task_result["tool_result"].get("annotation_catalog", {})
-                            logger.info(f"🔧 Resolved annotation_catalog with {len(resolved_value)} categories")
-                        else:
-                            logger.warning(f"⚠️ No valid annotation_catalog found in task {task_ref}")
-                            resolved_value = {}
+                    # For annotation_catalog, pass the entire tool result\n                    if key == \"annotation_catalog\":\n                        task_result = previous_results[task_ref]\n                        if \"tool_result\" in task_result and task_result[\"tool_result\"].get(\"success\"):\n                            resolved_value = task_result[\"tool_result\"].get(\"annotation_catalog\", {})\n                            logger.info(f\"🔧 Resolved annotation_catalog with {len(resolved_value)} categories\")\n                        else:\n                            logger.warning(f\"⚠️ No valid annotation_catalog found in task {task_ref}\")\n                            resolved_value = {}\n                    \n                    # For relevant_annotations, extract from functional classifier results\n                    elif key == \"relevant_annotations\":\n                        task_result = previous_results[task_ref]\n                        if \"tool_result\" in task_result and task_result[\"tool_result\"].get(\"success\"):\n                            resolved_value = task_result[\"tool_result\"].get(\"relevant_annotations\", [])\n                            logger.info(f\"🔧 Resolved relevant_annotations with {len(resolved_value)} annotations\")\n                        else:\n                            logger.warning(f\"⚠️ No valid relevant_annotations found in task {task_ref}\")\n                            resolved_value = []
                     else:
                         # Default behavior: extract protein IDs
                         protein_ids = self._extract_protein_ids_from_task(task_ref, previous_results)
@@ -1951,9 +1902,9 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
             
             resolved_args[key] = resolved_value
         
-        # Log template resolution with safe data truncation
-        original_summary = {key: _safe_log_data(value, description=f'original_{key}') for key, value in tool_args.items()}
-        resolved_summary = {key: _safe_log_data(value, description=f'resolved_{key}') for key, value in resolved_args.items()}
+        # Create a summary of resolved args for logging (avoid dumping massive data structures)
+        resolved_summary = {key: _safe_log_data(value) for key, value in resolved_args.items()}
+        
         logger.info(f"🔧 Template resolution complete. Original keys: {list(tool_args.keys())} -> Resolved: {resolved_summary}")
         return resolved_args
     
@@ -1985,35 +1936,7 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                     if pid:
                         protein_ids.append(pid)
         
-        # Handle tool call results
-        elif "tool_result" in result:
-            tool_result = result["tool_result"]
-            
-            # Extract from comprehensive_protein_discovery
-            if result.get("tool_name") == "comprehensive_protein_discovery":
-                if tool_result.get("success") and "discovered_proteins" in tool_result:
-                    for protein_data in tool_result["discovered_proteins"]:
-                        pid = protein_data.get('protein_id', '')
-                        if pid:
-                            protein_ids.append(pid)
-                    logger.info(f"🧬 Extracted {len(protein_ids)} proteins from comprehensive discovery")
-            
-            # Extract from enrich_proteins_with_context
-            elif result.get("tool_name") == "enrich_proteins_with_context":
-                if tool_result.get("success") and "enriched_proteins" in tool_result:
-                    for protein_data in tool_result["enriched_proteins"]:
-                        pid = protein_data.get('protein_id', '')
-                        if pid:
-                            protein_ids.append(pid)
-                    logger.info(f"🧬 Extracted {len(protein_ids)} proteins from enrichment")
-            
-            # Extract from code interpreter output
-            elif result.get("tool_name") == "code_interpreter":
-                stdout = tool_result.get("stdout", "")
-                # Look for protein IDs in the output
-                import re
-                protein_id_patterns = re.findall(r'protein:[\w_]+', stdout)
-                protein_ids.extend(protein_id_patterns)
+        # Handle tool call results\n        elif \"tool_result\" in result:\n            tool_result = result[\"tool_result\"]\n            \n            # Handle comprehensive discovery results\n            if result.get(\"tool_name\") == \"comprehensive_discovery\" and tool_result.get(\"success\"):\n                proteins = tool_result.get(\"proteins\", [])\n                for protein in proteins:\n                    pid = protein.get('protein_id', '')\n                    if pid:\n                        protein_ids.append(pid)\n                logger.info(f\"🔧 Extracted {len(protein_ids)} protein IDs from comprehensive discovery\")\n            \n            # Extract from code interpreter output\n            elif result.get(\"tool_name\") == \"code_interpreter\":\n                stdout = tool_result.get(\"stdout\", \"\")\n                # Look for protein IDs in the output\n                import re\n                protein_id_patterns = re.findall(r'protein:[\\w_]+', stdout)\n                protein_ids.extend(protein_id_patterns)
         
         # Handle aggregated results
         elif "aggregated_results" in result:
@@ -2021,8 +1944,7 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 sub_ids = self._extract_protein_ids_from_task("temp", {"temp": sub_result})
                 protein_ids.extend(sub_ids)
         
-        logger.info(f"🔧 Extracted {len(protein_ids)} protein IDs from '{task_ref}': {protein_ids[:3]}...")
-        return protein_ids
+        logger.info(f\"🔧 Extracted {len(protein_ids)} protein IDs from '{task_ref}': {protein_ids[:3]}...\")\n        return protein_ids\n    \n    def _format_protein_list_for_context(self, proteins: List[Dict]) -> str:\n        \"\"\"Format protein list for LLM context with key biological information.\"\"\"\n        if not proteins:\n            return \"No proteins found.\"\n        \n        formatted_lines = []\n        for i, protein in enumerate(proteins[:20], 1):  # Limit to first 20\n            protein_id = protein.get('protein_id', 'Unknown')\n            ko_annotations = protein.get('ko_annotations', [])\n            pfam_annotations = protein.get('pfam_annotations', [])\n            \n            # Format coordinates if available\n            coords = \"\"\n            if protein.get('start_coordinate') and protein.get('end_coordinate'):\n                start = protein.get('start_coordinate')\n                end = protein.get('end_coordinate')\n                strand = protein.get('strand', '?')\n                coords = f\" ({start}-{end}, {strand} strand)\"\n            \n            # Format annotations\n            annotations = []\n            if ko_annotations:\n                annotations.extend([f\"KEGG:{ko}\" for ko in ko_annotations[:2]])  # Show first 2\n            if pfam_annotations:\n                annotations.extend([f\"PFAM:{pf}\" for pf in pfam_annotations[:2]])  # Show first 2\n            \n            annotation_str = \", \".join(annotations) if annotations else \"No annotations\"\n            if len(ko_annotations) + len(pfam_annotations) > 4:\n                annotation_str += f\" (+{len(ko_annotations) + len(pfam_annotations) - 4} more)\"\n            \n            formatted_lines.append(f\"  {i:2d}. {protein_id}{coords} - {annotation_str}\")\n        \n        return \"\\n\".join(formatted_lines)
     
     def _format_context(self, context: GenomicContext) -> str:
         """Format context for LLM consumption with enhanced genomic intelligence and quantitative insights."""
@@ -2180,11 +2102,6 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 for item in context.structured_data
             )
             
-            is_bgc_query = any(
-                'bgc.bgcId' in item or 'bgcId' in item 
-                for item in context.structured_data
-            )
-            
             if is_count_query:
                 formatted_parts.append("QUANTITATIVE ANALYSIS:")
                 
@@ -2311,77 +2228,6 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                         protein_id = d['protein_id'].replace('protein:', '') if d['protein_id'].startswith('protein:') else d['protein_id']
                         formatted_parts.append(f"    {i}. Protein: {protein_id}")
                         formatted_parts.append(f"       Position: {d['position']} aa")
-            
-            # Handle BGC-specific information
-            if is_bgc_query:
-                formatted_parts.append("\\nBIOSYNTHETIC GENE CLUSTER (BGC) ANALYSIS:")
-                
-                for item in context.structured_data:
-                    genome_id = item.get('genome.genomeId', 'Unknown')
-                    bgc_id = item.get('bgc.bgcId', 'Unknown')
-                    bgc_product = item.get('bgc.bgcProduct', 'Unknown')
-                    contig = item.get('bgc.contig', 'Unknown')
-                    start_coord = item.get('bgc.startCoordinate', 'N/A')
-                    end_coord = item.get('bgc.endCoordinate', 'N/A')
-                    length_nt = item.get('bgc.lengthNt', 'N/A')
-                    protein_count = item.get('bgc.proteinCount', 'N/A')
-                    genes_in_bgc = item.get('genes_in_bgc', 0)
-                    ko_functions = item.get('ko_functions', [])
-                    
-                    # GECCO probability scores
-                    avg_prob = item.get('bgc.averageProbability', 'N/A')
-                    max_prob = item.get('bgc.maxProbability', 'N/A')
-                    alkaloid_prob = item.get('bgc.alkaloidProbability', 'N/A')
-                    nrp_prob = item.get('bgc.nrpProbability', 'N/A')
-                    polyketide_prob = item.get('bgc.polyketideProbability', 'N/A')
-                    ripp_prob = item.get('bgc.rippProbability', 'N/A')
-                    saccharide_prob = item.get('bgc.saccharideProbability', 'N/A')
-                    terpene_prob = item.get('bgc.terpeneProbability', 'N/A')
-                    domains = item.get('bgc.domains', 'N/A')
-                    
-                    formatted_parts.append(f"\\n• BGC: {bgc_id}")
-                    formatted_parts.append(f"  - Genome: {genome_id}")
-                    formatted_parts.append(f"  - Product Type: {bgc_product}")
-                    formatted_parts.append(f"  - Location: {contig} ({_safe_format_int(start_coord)}-{_safe_format_int(end_coord)} bp)")
-                    formatted_parts.append(f"  - Size: {_safe_format_int(length_nt)} nucleotides")
-                    formatted_parts.append(f"  - Genes: {_safe_format_int(genes_in_bgc)} genes")
-                    
-                    # GECCO confidence scores
-                    formatted_parts.append(f"  - GECCO Confidence:")
-                    formatted_parts.append(f"    * Average: {_safe_format_float(avg_prob, precision=3)}")
-                    formatted_parts.append(f"    * Maximum: {_safe_format_float(max_prob, precision=3)}")
-                    
-                    # Product-specific probabilities (only show high confidence ones)
-                    product_probs = []
-                    if _safe_format_float(alkaloid_prob, precision=3, default=0) != 0:
-                        product_probs.append(f"Alkaloid: {_safe_format_float(alkaloid_prob, precision=3)}")
-                    if _safe_format_float(nrp_prob, precision=3, default=0) != 0:
-                        product_probs.append(f"NRP: {_safe_format_float(nrp_prob, precision=3)}")
-                    if _safe_format_float(polyketide_prob, precision=3, default=0) != 0:
-                        product_probs.append(f"Polyketide: {_safe_format_float(polyketide_prob, precision=3)}")
-                    if _safe_format_float(ripp_prob, precision=3, default=0) != 0:
-                        product_probs.append(f"RiPP: {_safe_format_float(ripp_prob, precision=3)}")
-                    if _safe_format_float(saccharide_prob, precision=3, default=0) != 0:
-                        product_probs.append(f"Saccharide: {_safe_format_float(saccharide_prob, precision=3)}")
-                    if _safe_format_float(terpene_prob, precision=3, default=0) != 0:
-                        product_probs.append(f"Terpene: {_safe_format_float(terpene_prob, precision=3)}")
-                    
-                    if product_probs:
-                        formatted_parts.append(f"  - Product Probabilities: {', '.join(product_probs)}")
-                    
-                    # PFAM domains in BGC
-                    if domains and domains != 'N/A':
-                        domain_list = domains.split(';') if isinstance(domains, str) else domains
-                        if domain_list and len(domain_list) > 0:
-                            formatted_parts.append(f"  - Key Domains: {', '.join(domain_list[:10])}{'...' if len(domain_list) > 10 else ''}")
-                    
-                    if ko_functions and ko_functions != [None]:
-                        # Filter out None values and show unique functions
-                        valid_kos = [ko for ko in ko_functions if ko and ko != 'None']
-                        if valid_kos:
-                            formatted_parts.append(f"  - KEGG Functions: {', '.join(valid_kos[:8])}{'...' if len(valid_kos) > 8 else ''}")
-                    
-                return "\\n".join(formatted_parts)
             
             # Handle protein-specific information with enhanced genomic context
             formatted_parts.append("\\nPROTEIN ANALYSIS:")

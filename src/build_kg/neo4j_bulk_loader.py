@@ -269,7 +269,7 @@ class Neo4jBulkLoader:
 
 def main():
     """Main execution function."""
-    csv_dir = Path("data/stage05_kg/csv")
+    csv_dir = Path("data/stage07_kg/csv")
     
     if not csv_dir.exists():
         console.print(f"[red]CSV directory not found: {csv_dir}[/red]")
