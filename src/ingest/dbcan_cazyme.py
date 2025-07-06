@@ -81,19 +81,22 @@ def run_dbcan_analysis(
     genome_output_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # Run dbCAN using run_dbcan command
+        # Enhanced: Use absolute paths for better compatibility
+        abs_protein_file = protein_file.resolve()
+        abs_output_dir = genome_output_dir.resolve()
+        abs_db_dir = Path("data/dbcan_db").resolve()
+        
+        # Run dbCAN using CAZyme_annotation command with DIAMOND only
         cmd = [
             'run_dbcan',
-            str(protein_file),
-            'protein',
-            '--out_dir', str(genome_output_dir),
-            '--db_dir', '/opt/dbcan/db',  # Default dbCAN database location
-            '--hmm_cpu', str(threads),
-            '--tf_cpu', str(threads),
-            '--stp_cpu', str(threads),
-            '--out_pre', genome_id,
-            '--eCAMI', str(evalue_threshold),
-            '--coverage', str(coverage_threshold)
+            'CAZyme_annotation',
+            '--input_raw_data', str(abs_protein_file),
+            '--mode', 'protein',
+            '--output_dir', str(abs_output_dir),
+            '--db_dir', str(abs_db_dir),  # Use absolute path for database
+            '--methods', 'diamond',  # Use only DIAMOND method (CAZy.dmnd works)
+            '--threads', str(threads),
+            '--e_value_threshold', str(evalue_threshold)  # DIAMOND parameter
         ]
         
         logger.info(f"Running dbCAN for {genome_id}: {' '.join(cmd)}")
@@ -109,8 +112,8 @@ def run_dbcan_analysis(
             logger.error(f"dbCAN failed for {genome_id}: {result.stderr}")
             return None
             
-        # Parse dbCAN overview.txt output
-        overview_file = genome_output_dir / f"{genome_id}.overview.txt"
+        # Parse dbCAN overview.tsv output
+        overview_file = genome_output_dir / "overview.tsv"
         if not overview_file.exists():
             logger.error(f"dbCAN overview file not found: {overview_file}")
             return None
@@ -147,60 +150,133 @@ def run_dbcan_analysis(
 
 def parse_dbcan_overview(overview_file: Path) -> List[CAZymeAnnotation]:
     """
-    Parse dbCAN overview.txt file to extract CAZyme annotations.
+    Parse dbCAN overview.tsv file to extract CAZyme annotations.
     
     The overview file format:
-    Gene ID	EC#	HMMER	eCAMI	DIAMOND	#ofTools
-    protein_1	-	GH13(1-295)	GH13	-	2
+    Gene ID	EC#	dbCAN_hmm	dbCAN_sub	DIAMOND	#ofTools	Recommend Results
+    protein_1	-	GH13(1-295)	GH13	-	2	GH13
     """
     annotations = []
     
     try:
         df = pd.read_csv(overview_file, sep='\t')
         
+        # Load substrate mapping for enhanced annotations
+        substrate_mapping = load_cazyme_substrate_mapping()
+        
         for _, row in df.iterrows():
             protein_id = row['Gene ID']
             
-            # Parse HMMER column for family and coordinates
-            hmmer_result = row.get('HMMER', '-')
-            if hmmer_result == '-' or pd.isna(hmmer_result):
+            # Try different columns for CAZyme family information
+            # DIAMOND column should be prioritized for DIAMOND-only runs
+            cazyme_result = None
+            for col in ['DIAMOND', 'dbCAN_hmm', 'HMMER', 'Recommend Results']:
+                if col in row and row[col] not in ['-', ''] and not pd.isna(row[col]):
+                    cazyme_result = row[col]
+                    break
+            
+            if not cazyme_result:
                 continue
                 
-            # Parse format like "GH13(1-295)"
-            if '(' in hmmer_result and ')' in hmmer_result:
-                family = hmmer_result.split('(')[0]
-                coords = hmmer_result.split('(')[1].rstrip(')')
-                start_pos, end_pos = map(int, coords.split('-'))
+            # Handle multiple families in DIAMOND results (e.g., "CBM48+GH13_8")
+            families = []
+            if '+' in cazyme_result:
+                # Split on + and process each family
+                family_parts = cazyme_result.split('+')
+                for part in family_parts:
+                    families.append(part.strip())
             else:
-                family = hmmer_result
-                start_pos, end_pos = 0, 0
-                
-            # Determine family type
-            family_type = get_cazyme_family_type(family)
+                families = [cazyme_result]
             
-            # Get EC number if available
-            ec_number = row.get('EC#', '-')
-            if ec_number == '-' or pd.isna(ec_number):
-                ec_number = None
+            # Process each family found
+            for family_result in families:
+                # Parse format like "GH13(1-295)" or just "GH13"
+                if '(' in family_result and ')' in family_result:
+                    family = family_result.split('(')[0]
+                    coords = family_result.split('(')[1].rstrip(')')
+                    try:
+                        start_pos, end_pos = map(int, coords.split('-'))
+                    except ValueError:
+                        start_pos, end_pos = 0, 0
+                else:
+                    family = family_result.strip()
+                    start_pos, end_pos = 0, 0
+                    
+                # Determine family type
+                family_type = get_cazyme_family_type(family)
                 
-            annotation = CAZymeAnnotation(
-                protein_id=protein_id,
-                cazyme_family=family,
-                family_type=family_type,
-                evalue=1e-16,  # Default for overview format
-                coverage=0.8,  # Default for overview format
-                start_pos=start_pos,
-                end_pos=end_pos,
-                hmm_length=end_pos - start_pos + 1,
-                ec_number=ec_number
-            )
-            
-            annotations.append(annotation)
+                # Get EC number if available
+                ec_number = row.get('EC#', '-')
+                if ec_number == '-' or pd.isna(ec_number):
+                    ec_number = None
+                    
+                # Enhanced: Add substrate prediction from mapping
+                substrate_prediction = substrate_mapping.get(family, None)
+                    
+                annotation = CAZymeAnnotation(
+                    protein_id=protein_id,
+                    cazyme_family=family,
+                    family_type=family_type,
+                    evalue=1e-16,  # Default for overview format
+                    coverage=0.8,  # Default for overview format
+                    start_pos=start_pos,
+                    end_pos=end_pos,
+                    hmm_length=max(end_pos - start_pos + 1, 0) if end_pos > start_pos else 0,
+                    substrate_prediction=substrate_prediction,
+                    ec_number=ec_number
+                )
+                
+                annotations.append(annotation)
             
     except Exception as e:
         logger.error(f"Error parsing dbCAN overview file {overview_file}: {e}")
         
     return annotations
+
+
+def load_cazyme_substrate_mapping() -> Dict[str, str]:
+    """
+    Load CAZyme family to substrate mapping from fam-substrate-mapping.tsv.
+    
+    Returns:
+        Dictionary mapping CAZyme family IDs to substrate descriptions
+    """
+    mapping = {}
+    
+    try:
+        # Look for substrate mapping file
+        mapping_file = Path("data/dbcan_db/fam-substrate-mapping.tsv")
+        if not mapping_file.exists():
+            logger.warning(f"CAZyme substrate mapping file not found: {mapping_file}")
+            return {}
+            
+        if mapping_file.stat().st_size == 0:
+            logger.warning("CAZyme substrate mapping file is empty")
+            return {}
+            
+        df = pd.read_csv(mapping_file, sep='\t')
+        
+        # New format: Family, Substrate_high_level, Substrate_curated  
+        if 'Family' in df.columns and 'Substrate_high_level' in df.columns:
+            for _, row in df.iterrows():
+                family = row['Family']
+                substrate_high = row['Substrate_high_level']
+                substrate_curated = row.get(' Substrate_curated', '') # Note the space
+                
+                if pd.notna(family) and pd.notna(substrate_high):
+                    # Use high-level substrate, with curated details if available
+                    substrate = str(substrate_high)
+                    if pd.notna(substrate_curated) and str(substrate_curated).strip():
+                        substrate += f" ({substrate_curated.strip()})"
+                    mapping[str(family)] = substrate
+        else:
+            logger.warning(f"Unexpected format in substrate mapping file: {list(df.columns)}")
+            
+    except Exception as e:
+        logger.warning(f"Could not load CAZyme substrate mapping: {e}")
+        
+    logger.info(f"Loaded substrate predictions for {len(mapping)} CAZyme families")
+    return mapping
 
 
 def get_cazyme_family_type(family: str) -> str:

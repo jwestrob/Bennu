@@ -32,7 +32,9 @@ class RDFToCSVConverter:
             "gene": "http://genome-kg.org/genes/",
             "pfam": "http://pfam.xfam.org/family/",
             "ko": "http://www.genome.jp/kegg/ko/",
-            "kg": "http://genome-kg.org/ontology/"
+            "kg": "http://genome-kg.org/ontology/",
+            "cazyme": "http://genome-kg.org/cazyme/",
+            "pathway": "http://genomics.ai/kg/pathway/"
         }
         
         # Track all nodes and their properties
@@ -158,8 +160,8 @@ class RDFToCSVConverter:
         for prefix, namespace in self.namespaces.items():
             if uri.startswith(namespace):
                 local_id = uri.replace(namespace, "")
-                # Preserve namespace prefix for nodes to distinguish protein:X from gene:X
-                if prefix in ['protein', 'gene']:
+                # Preserve namespace prefix for nodes to distinguish protein:X from gene:X from cazyme:X
+                if prefix in ['protein', 'gene', 'cazyme']:
                     return f"{prefix}:{local_id}"
                 return local_id
         return uri.split("/")[-1]
