@@ -567,6 +567,14 @@ class GenomeKGBuilder:
                 if "ec_number" in annotation and annotation["ec_number"]:
                     self.graph.add((annotation_uri, KG.ecNumber, Literal(annotation["ec_number"])))
                 
+                # Enhanced: Add substrate prediction if available
+                if "substrate_prediction" in annotation and annotation["substrate_prediction"]:
+                    self.graph.add((annotation_uri, KG.substrateSpecificity, Literal(annotation["substrate_prediction"])))
+                
+                # Enhanced: Add HMM length if available
+                if "hmm_length" in annotation:
+                    self.graph.add((annotation_uri, KG.hmmLength, Literal(annotation["hmm_length"], datatype=XSD.integer)))
+                
                 # Create CAZyme family if not already added
                 if cazyme_family not in families_added:
                     family_uri = CAZYME_NS[f"family_{cazyme_family}"]
@@ -575,6 +583,10 @@ class GenomeKGBuilder:
                     
                     if "family_type" in annotation:
                         self.graph.add((family_uri, KG.cazymeType, Literal(annotation["family_type"])))
+                    
+                    # Enhanced: Add substrate prediction to family level too
+                    if "substrate_prediction" in annotation and annotation["substrate_prediction"]:
+                        self.graph.add((family_uri, KG.substrateSpecificity, Literal(annotation["substrate_prediction"])))
                     
                     families_added.add(cazyme_family)
                     family_count += 1

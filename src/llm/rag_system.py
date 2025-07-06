@@ -668,11 +668,25 @@ class QueryClassifier(dspy.Signature):
     primary_database = dspy.OutputField(desc="Primary database: 'lancedb', 'neo4j', or 'both'")
 
 
-class ContextRetriever(dspy.Signature):
+class ContextRetrieverV2(dspy.Signature):
     """Generate database queries to retrieve relevant genomic context.
 
+    🚨🚨🚨 CRITICAL: CAZyme nodes are Cazymeannotation and Cazymefamily (these are the actual database labels) 🚨🚨🚨
+
+    ❌ WRONG PATTERN (NEVER USE): MATCH (p:Protein)-[:HASCAZYME]->(ca:CAZymeAnnotation)-[:CAZYMEFAMILY]->(cf:CAZymeFamily)
+    ✅ CORRECT PATTERN (ALWAYS USE): MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily)
+
+    🧪 MANDATORY CAZYME TEMPLATE (USE FOR: CAZyme, carbohydrate, glycoside, Cazymeannotation):
+    MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)
+    OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+    OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+    RETURN p.id AS protein_id, ca.cazymeType AS cazyme_family, ca.substrateSpecificity AS substrate,
+           ca.evalue AS cazyme_evalue, ca.coverage AS cazyme_coverage,
+           ko.id AS ko_id, ko.description AS ko_description,
+           g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand
+    LIMIT 20
+
     EXAMPLE QUERY TEMPLATE FOR TRANSPORT PROTEINS:
-    
     MATCH (ko:KEGGOrtholog) 
     WHERE toLower(ko.description) CONTAINS 'transport'
     MATCH (p:Protein)-[:HASFUNCTION]->(ko)
@@ -694,9 +708,9 @@ class ContextRetriever(dspy.Signature):
     ORDER BY bgc.bgcId
     
      CRITICAL RULES:
-     - Node labels: Protein, KEGGOrtholog, Gene, Domain, DomainAnnotation (ONLY these exist)
-     - Relationships: HASFUNCTION, ENCODEDBY, HASDOMAIN, DOMAINFAMILY (ALL UPPERCASE)
-     - Properties: p.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand
+     - Node labels: Protein, KEGGOrtholog, Gene, Domain, DomainAnnotation, Cazymeannotation, Cazymefamily (ONLY these exist)
+     - Relationships: HASFUNCTION, ENCODEDBY, HASDOMAIN, DOMAINFAMILY, HASCAZYME, CAZYMEFAMILY (ALL UPPERCASE)
+     - Properties: p.id, ko.description, g.startCoordinate, g.endCoordinate, g.strand, cf.familyId, ca.substrateSpecificity, ca.evalue, ca.coverage, cf.cazymeType
      - DO NOT use: Function, f.name, f.kegg_id, p.accession, g.start, g.end, exists()
      - USE: ko.description IS NOT NULL (not exists())
      - NEVER use parameterized queries with $ symbols (e.g., $proteinIds) - always use literal values
@@ -716,10 +730,10 @@ class GenomicAnswerer(dspy.Signature):
     """Generate specific, data-driven genomic analysis with concrete biological insights."""
     
     question = dspy.InputField(desc="Original user question")
-    context = dspy.InputField(desc="Retrieved genomic data including domain descriptions, KEGG functions, and quantitative metrics")
-    answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) If NO relevant data was retrieved, clearly state 'We don't have that kind of information in our database' and explain what data IS available, 2) Ground all statements in specific data points (coordinates, counts, IDs) when data exists, 3) For sequence-based analyses, ANALYZE the provided amino acid sequences directly when available - examine length, composition, N/C termini, hydrophobic regions, and functional motifs, 4) When genomic neighborhood context is provided, analyze neighboring proteins and their functions to understand biological context, 5) Calculate and report specific distances between genes when coordinate data exists, 6) OPERON ANALYSIS (only when genomic neighborhood data is provided AND when it's biologically relevant): If the context includes neighboring genes with coordinates and the analysis would provide meaningful biological insights, perform operon structure analysis: a) Only analyze genomic context if proteins are functionally related or part of potential operons, b) Identify gene clusters on the same strand with <500bp intergenic spacing, c) Calculate precise intergenic distances and report exact spacing (e.g., 'hmuT-hmuU: 23bp, hmuU-hmuV: 31bp'), d) Assess functional coherence by analyzing whether neighboring genes encode related biological processes or pathway components, e) Predict operon boundaries and transcriptional units based on spacing and functional relationships, f) Use biological knowledge to identify canonical operon architectures (e.g., ABC transporter operons typically contain binding protein + permease + ATPase genes), g) Example output: 'hmuTUV genes form a 3-gene operon (total span: 2,847bp, intergenic spacers: 23bp and 31bp) encoding a complete heme ABC transport system with canonical architecture', 7) DOMAIN ARCHITECTURE ANALYSIS (only when multiple PFAM domains are present): For proteins containing TWO OR MORE PFAM domains, analyze architectural significance: a) Only perform this analysis if the context contains multiple PFAM accessions or domain information for the same protein, b) Identify canonical domain combinations and their biological meanings (e.g., PF01032+PF00950+PF00005 = ABC transporter system), c) Predict functional modules and their interactions within the protein, d) Analyze domain order and organization for functional insights, e) Identify unusual or novel domain arrangements that might indicate specialized functions, f) Compare architecture to known protein families and functional classes, g) Example output: 'N-terminal periplasmic binding domain (PF01032) + central transmembrane permease domains (PF00950) + C-terminal cytoplasmic ATPase domain (PF00005) = complete ABC import system architecture', 8) Use specific protein/domain names from the actual retrieved data, 9) Organize response logically: Data Availability → Genomic Context → Operon Analysis (if neighborhood data available and biologically relevant) → Domain Architecture (if multiple PFAM domains present) → Sequence Analysis → Functional Analysis → Biological Significance. CRITICAL: When protein sequences are provided in the context, ANALYZE them directly rather than referring to external databases.")
+    context = dspy.InputField(desc="Retrieved genomic data including CAZyme annotations (cazyme_family, substrate, cazyme_evalue, cazyme_coverage), domain descriptions, KEGG functions, and quantitative metrics")
+    answer = dspy.OutputField(desc="Structured biological analysis that MUST: 1) If NO relevant data was retrieved, clearly state 'We don't have that kind of information in our database' and explain what data IS available, 2) Ground all statements in specific data points (coordinates, counts, IDs) when data exists, 3) CAZYME ANALYSIS (when CAZyme data is provided): When context includes CAZyme annotations (cazyme_family, substrate, cazyme_evalue, cazyme_coverage), provide detailed analysis: a) Report CAZyme family IDs and types (GH, GT, PL, CE, AA, CBM), b) Describe substrate specificities and enzymatic activities, c) Include quality metrics (e-values, coverage percentages), d) Group by family types and identify enzyme classes, e) Count total CAZymes and family distribution, f) Analyze carbohydrate metabolism capabilities, g) Example output: 'Found 15 CAZymes across 8 families: 6 glycoside hydrolases (GH3, GH23, GH72), 4 glycosyltransferases (GT2, GT4), 3 carbohydrate esterases (CE4, CE8), 2 carbohydrate-binding modules (CBM50)', 4) For sequence-based analyses, ANALYZE the provided amino acid sequences directly when available - examine length, composition, N/C termini, hydrophobic regions, and functional motifs, 5) When genomic neighborhood context is provided, analyze neighboring proteins and their functions to understand biological context, 7) Calculate and report specific distances between genes when coordinate data exists, 8) OPERON ANALYSIS (only when genomic neighborhood data is provided AND when it's biologically relevant): If the context includes neighboring genes with coordinates and the analysis would provide meaningful biological insights, perform operon structure analysis: a) Only analyze genomic context if proteins are functionally related or part of potential operons, b) Identify gene clusters on the same strand with <500bp intergenic spacing, c) Calculate precise intergenic distances and report exact spacing (e.g., 'hmuT-hmuU: 23bp, hmuU-hmuV: 31bp'), d) Assess functional coherence by analyzing whether neighboring genes encode related biological processes or pathway components, e) Predict operon boundaries and transcriptional units based on spacing and functional relationships, f) Use biological knowledge to identify canonical operon architectures (e.g., ABC transporter operons typically contain binding protein + permease + ATPase genes), g) Example output: 'hmuTUV genes form a 3-gene operon (total span: 2,847bp, intergenic spacers: 23bp and 31bp) encoding a complete heme ABC transport system with canonical architecture', 7) DOMAIN ARCHITECTURE ANALYSIS (only when multiple PFAM domains are present): For proteins containing TWO OR MORE PFAM domains, analyze architectural significance: a) Only perform this analysis if the context contains multiple PFAM accessions or domain information for the same protein, b) Identify canonical domain combinations and their biological meanings (e.g., PF01032+PF00950+PF00005 = ABC transporter system), c) Predict functional modules and their interactions within the protein, d) Analyze domain order and organization for functional insights, e) Identify unusual or novel domain arrangements that might indicate specialized functions, f) Compare architecture to known protein families and functional classes, g) Example output: 'N-terminal periplasmic binding domain (PF01032) + central transmembrane permease domains (PF00950) + C-terminal cytoplasmic ATPase domain (PF00005) = complete ABC import system architecture', 8) Use specific protein/domain names from the actual retrieved data, 9) Organize response logically: Data Availability → Genomic Context → Operon Analysis (if neighborhood data available and biologically relevant) → Domain Architecture (if multiple PFAM domains present) → Sequence Analysis → Functional Analysis → Biological Significance. CRITICAL: When protein sequences are provided in the context, ANALYZE them directly rather than referring to external databases.")
     confidence = dspy.OutputField(desc="Confidence level with reasoning based on data quality for the specific query: 'high - complete data available for all requested analyses', 'medium - partial data available, some gaps in requested information', 'low - minimal data available, significant limitations', 'none - no relevant data found in database'. Only mention literature if literature search was actually performed as part of the analysis.")
-    citations = dspy.OutputField(desc="Specific data sources: PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, code interpreter sessions, PubMed search terms used, or 'None - no data retrieved' if appropriate")
+    citations = dspy.OutputField(desc="Specific data sources: CAZyme families (GH##, GT##, PL##, CE##, AA##, CBM##), PFAM accessions (PF#####), KEGG orthologs (K#####), domain names, genome IDs, code interpreter sessions, PubMed search terms used, or 'None - no data retrieved' if appropriate")
 
 
 class GenomicRAG(dspy.Module):
@@ -732,7 +746,7 @@ class GenomicRAG(dspy.Module):
         
         # Initialize original DSPy components
         self.classifier = dspy.ChainOfThought(QueryClassifier)
-        self.retriever = dspy.ChainOfThought(ContextRetriever)
+        self.retriever = dspy.ChainOfThought(ContextRetrieverV2)
         self.answerer = dspy.ChainOfThought(GenomicAnswerer)
         
         # Initialize NEW agentic components
@@ -1831,6 +1845,23 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                         bgc_query,
                         query_type="cypher"
                     )
+                # Check if this is a CAZyme-specific question
+                elif any(term in question.lower() for term in ['cazyme', 'carbohydrate', 'glycoside', 'hydrolase', 'transferase']):
+                    # Use CAZyme-specific detailed query (not aggregation)
+                    cazyme_query = """
+                    MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)
+                    OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+                    OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+                    RETURN p.id AS protein_id, ca.cazymeType AS cazyme_family, ca.substrateSpecificity AS substrate,
+                           ca.evalue AS cazyme_evalue, ca.coverage AS cazyme_coverage,
+                           ko.id AS ko_id, ko.description AS ko_description,
+                           g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand
+                    LIMIT 50
+                    """
+                    neo4j_result = await self.neo4j_processor.process_query(
+                        cazyme_query,
+                        query_type="cypher"
+                    )
                 else:
                     # General database overview
                     neo4j_result = await self.neo4j_processor.process_query(
@@ -1863,11 +1894,24 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
             
             # Handle different template patterns
             if isinstance(value, str):
-                # Pattern 1: "from task_name" 
+                # Pattern 1: "from task_name" or "from task_name (modifier)"
                 if value.startswith("from "):
-                    task_ref = value.replace("from ", "").strip()
-                    logger.info(f"🔧 Resolving 'from' template: {value} -> task_ref: {task_ref}")
-                    resolved_value = self._extract_protein_ids_from_task(task_ref, previous_results)
+                    full_ref = value.replace("from ", "").strip()
+                    logger.info(f"🔧 Resolving 'from' template: {value} -> task_ref: {full_ref}")
+                    
+                    # Parse task name and modifier (e.g., "find_duf_proteins (first 3 selected)")
+                    task_name, modifier = self._parse_task_reference(full_ref)
+                    resolved_value = self._extract_protein_ids_from_task(task_name, previous_results)
+                    
+                    # Apply modifier if present
+                    if modifier and resolved_value:
+                        resolved_value = self._apply_modifier(resolved_value, modifier)
+                
+                # Pattern 1.1: Cross-task references like "same 3 proteins"
+                elif value.startswith("same ") and "proteins" in value:
+                    logger.info(f"🔧 Resolving cross-reference: {value}")
+                    # Find the first task that produced protein IDs and use those
+                    resolved_value = self._resolve_cross_reference(value, previous_results)
                 
                 # Pattern 1.5: Direct task name reference (e.g., "explore_annotations")
                 elif value in previous_results:
@@ -2023,6 +2067,96 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
         
         logger.info(f"🔧 Extracted {len(protein_ids)} protein IDs from '{task_ref}': {protein_ids[:3]}...")
         return protein_ids
+    
+    def _parse_task_reference(self, full_ref: str) -> tuple[str, str]:
+        """Parse task reference into task name and modifier.
+        
+        Examples:
+        - "find_duf_proteins (first 3 selected)" → ("find_duf_proteins", "first 3 selected")
+        - "find_duf_proteins" → ("find_duf_proteins", "")
+        """
+        import re
+        match = re.match(r'^([^(]+)(?:\s*\(([^)]+)\))?', full_ref.strip())
+        if match:
+            task_name = match.group(1).strip()
+            modifier = match.group(2).strip() if match.group(2) else ""
+            return task_name, modifier
+        return full_ref.strip(), ""
+    
+    def _apply_modifier(self, protein_ids: List[str], modifier: str) -> List[str]:
+        """Apply modifier to protein ID list.
+        
+        Examples:
+        - "first 3 selected" → return first 3 items
+        - "last 5" → return last 5 items
+        - "random 10" → return 10 random items
+        """
+        if not protein_ids or not modifier:
+            return protein_ids
+        
+        modifier = modifier.lower()
+        
+        # Handle "first N" pattern
+        if modifier.startswith("first "):
+            try:
+                n = int(modifier.split()[1])
+                result = protein_ids[:n]
+                logger.info(f"🔧 Applied modifier '{modifier}': {len(protein_ids)} → {len(result)} proteins")
+                return result
+            except (IndexError, ValueError):
+                logger.warning(f"⚠️ Invalid modifier '{modifier}', returning all proteins")
+                return protein_ids
+        
+        # Handle "last N" pattern  
+        elif modifier.startswith("last "):
+            try:
+                n = int(modifier.split()[1])
+                result = protein_ids[-n:] if n <= len(protein_ids) else protein_ids
+                logger.info(f"🔧 Applied modifier '{modifier}': {len(protein_ids)} → {len(result)} proteins")
+                return result
+            except (IndexError, ValueError):
+                logger.warning(f"⚠️ Invalid modifier '{modifier}', returning all proteins")
+                return protein_ids
+        
+        # Handle "random N" pattern
+        elif modifier.startswith("random "):
+            try:
+                import random
+                n = int(modifier.split()[1])
+                result = random.sample(protein_ids, min(n, len(protein_ids)))
+                logger.info(f"🔧 Applied modifier '{modifier}': {len(protein_ids)} → {len(result)} proteins")
+                return result
+            except (IndexError, ValueError):
+                logger.warning(f"⚠️ Invalid modifier '{modifier}', returning all proteins")
+                return protein_ids
+        
+        logger.warning(f"⚠️ Unknown modifier '{modifier}', returning all proteins")
+        return protein_ids
+    
+    def _resolve_cross_reference(self, value: str, previous_results: Dict[str, Any]) -> List[str]:
+        """Resolve cross-task references like 'same 3 proteins'.
+        
+        Finds the first task that produced protein IDs and returns them.
+        """
+        # Extract number if specified (e.g., "same 3 proteins" → 3)
+        import re
+        match = re.search(r'same (\d+)', value.lower())
+        target_count = int(match.group(1)) if match else None
+        
+        # Look for tasks that produced protein IDs (in execution order)
+        for task_name, result in previous_results.items():
+            protein_ids = self._extract_protein_ids_from_task(task_name, {task_name: result})
+            if protein_ids:
+                if target_count:
+                    result_ids = protein_ids[:target_count]
+                    logger.info(f"🔧 Cross-reference '{value}': found {len(protein_ids)} proteins in '{task_name}', returning first {len(result_ids)}")
+                else:
+                    result_ids = protein_ids
+                    logger.info(f"🔧 Cross-reference '{value}': found {len(protein_ids)} proteins in '{task_name}'")
+                return result_ids
+        
+        logger.warning(f"⚠️ Cross-reference '{value}': no tasks with protein IDs found")
+        return []
     
     def _format_context(self, context: GenomicContext) -> str:
         """Format context for LLM consumption with enhanced genomic intelligence and quantitative insights."""
@@ -2403,7 +2537,20 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
             
             logger.info(f"🔧 DEBUG: Found {len(unique_proteins)} unique proteins for formatting")
             
-            for i, (protein_id, item) in enumerate(list(unique_proteins.items())[:2]):  # Show max 2 proteins
+            # Determine how many proteins to show based on context
+            max_proteins_to_show = 2  # Default for general queries
+            
+            # For CAZyme queries, show more proteins
+            if any('cazyme' in str(item).lower() for item in context.structured_data):
+                max_proteins_to_show = 50  # Show up to 50 CAZymes for comprehensive analysis
+            
+            # For domain queries, show more if it's a comprehensive request
+            elif is_domain_query and len(unique_proteins) > 10:
+                max_proteins_to_show = 20  # Show more for domain analysis
+            
+            proteins_to_show = list(unique_proteins.items())[:max_proteins_to_show]
+            
+            for i, (protein_id, item) in enumerate(proteins_to_show):
                 # Clean protein ID (remove 'protein:' prefix if present)
                 clean_protein_id = protein_id.replace('protein:', '') if protein_id.startswith('protein:') else protein_id
                 
@@ -2519,6 +2666,27 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                     descriptions = [d for d in kegg_desc if d and d != 'None']
                     if descriptions:
                         formatted_parts.append(f"  • Function: {', '.join(descriptions)}")
+                
+                # Enhanced CAZyme information
+                cazyme_family = item.get('cazyme_family')
+                substrate = item.get('substrate') 
+                cazyme_evalue = item.get('cazyme_evalue')
+                cazyme_coverage = item.get('cazyme_coverage')
+                
+                # Debug logging for CAZyme fields (can be removed in production)
+                # logger.info(f"🔧 DEBUG CAZyme: protein={protein_id}, cazyme_family='{cazyme_family}', substrate='{substrate}', evalue='{cazyme_evalue}', coverage='{cazyme_coverage}'")
+                
+                if cazyme_family and cazyme_family != 'None' and cazyme_family is not None:
+                    formatted_parts.append(f"  • CAZyme Family: {cazyme_family}")
+                    
+                    if substrate and substrate != 'None' and substrate is not None:
+                        formatted_parts.append(f"    - Substrate: {substrate}")
+                    
+                    if cazyme_evalue and cazyme_evalue != 'None' and cazyme_evalue is not None:
+                        formatted_parts.append(f"    - E-value: {_safe_format_float(cazyme_evalue, precision=2)}")
+                    
+                    if cazyme_coverage and cazyme_coverage != 'None' and cazyme_coverage is not None:
+                        formatted_parts.append(f"    - Coverage: {_safe_format_float(cazyme_coverage, precision=1)}%")
                 
                 # Handle new neighbor analysis format from DSPy queries
                 neighbors = item.get('neighbors', [])
@@ -2726,6 +2894,28 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                                 formatted_parts.append(f"    \n    Operon Analysis: No evidence for co-transcription (no same-strand close neighbors)")
                         else:
                             formatted_parts.append(f"  • Genomic Neighborhood: {len(neighbors)} proteins (coordinates not available for distance analysis)")
+            
+            # Add summary if we truncated the results
+            if len(unique_proteins) > max_proteins_to_show:
+                remaining = len(unique_proteins) - max_proteins_to_show
+                formatted_parts.append(f"\n... and {remaining} additional proteins with similar annotations")
+                
+                # For CAZyme queries, provide family distribution summary
+                if any('cazyme' in str(item).lower() for item in context.structured_data):
+                    # Count CAZyme families from all proteins
+                    family_counts = {}
+                    for protein_id, item in unique_proteins.items():
+                        cazyme_family = item.get('cazyme_family')
+                        if cazyme_family and cazyme_family != 'None':
+                            family_counts[cazyme_family] = family_counts.get(cazyme_family, 0) + 1
+                    
+                    if family_counts:
+                        formatted_parts.append(f"\nCAZyme Family Distribution Summary ({len(unique_proteins)} total CAZymes):")
+                        sorted_families = sorted(family_counts.items(), key=lambda x: x[1], reverse=True)
+                        for family, count in sorted_families[:10]:  # Show top 10 families
+                            formatted_parts.append(f"  • {family}: {count} proteins")
+                        if len(sorted_families) > 10:
+                            formatted_parts.append(f"  • ... and {len(sorted_families) - 10} more families")
                 
         # Handle general structured data that doesn't match specific patterns
         if context.structured_data and not any(['p.id' in str(item) or 'protein_id' in str(item) for item in context.structured_data]):
