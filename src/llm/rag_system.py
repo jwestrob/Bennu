@@ -2560,24 +2560,16 @@ print(f"Database contains {{stats['total_sequences']}} total sequences across {{
                 # Use clean protein ID for display
                 gene_id = clean_protein_id
                 
-                # Extract genome name from protein ID structure
-                # Example: protein:RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_...
-                genome_id = 'N/A'
+                # Use correct genome_id from Neo4j data (not from protein header parsing)
+                # The corrected protein-to-genome mapping provides proper filename-based genome IDs
+                genome_id = item.get('genome_id') or 'N/A'
+                
+                # Extract contig ID from protein name for additional context
                 contig_id = 'N/A'
-                if '_FULL_' in protein_id:
-                    parts = protein_id.split('_FULL_')
+                if '_' in gene_id:
+                    parts = gene_id.split('_')
                     if len(parts) > 1:
-                        genome_part = parts[1].split('_')
-                        if len(genome_part) > 0:
-                            genome_id = genome_part[0]  # Extract first part after _FULL_
-                        
-                        # Extract contig ID (full protein name with last '_'-delimited field removed)
-                        # Example: RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609_2 
-                        #       -> RIFCSPHIGHO2_01_FULL_Gammaproteobacteria_61_200_rifcsphigho2_01_scaffold_513609
-                        if '_' in gene_id:
-                            parts = gene_id.split('_')
-                            if len(parts) > 1:
-                                contig_id = '_'.join(parts[:-1])  # Remove last field
+                        contig_id = '_'.join(parts[:-1])  # Remove last field
                 
                 formatted_parts.append(f"\nProtein {i+1}:")
                 formatted_parts.append(f"  • Protein ID: {clean_protein_id}")

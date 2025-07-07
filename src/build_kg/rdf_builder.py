@@ -66,6 +66,108 @@ def parse_prodigal_header(header_line: str) -> Dict[str, Any]:
     return gene_data
 
 
+def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef], 
+                                   genome_uris: Dict[str, URIRef]) -> Dict[str, str]:
+    """
+    Build mapping from protein header IDs to correct filename-based genome IDs.
+    
+    This resolves the mismatch between:
+    - Protein IDs: RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_X_Y
+    - Genome IDs: Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960_contigs
+    
+    Args:
+        protein_uris: Map of protein_id -> protein_uri from RDF building
+        genome_uris: Map of genome_id -> genome_uri from RDF building
+        
+    Returns:
+        Dict mapping protein_id -> correct_genome_id
+    """
+    protein_to_genome = {}
+    
+    # Extract common identifiers from genome IDs for matching
+    genome_patterns = {}
+    for genome_id in genome_uris.keys():
+        # Special handling for PLM0 genomes: use "PLM0_60" pattern
+        if genome_id.startswith('PLM0_'):
+            plm_parts = genome_id.split('_')
+            if len(plm_parts) >= 2 and plm_parts[1].isdigit():
+                pattern = f"PLM0_{plm_parts[1]}"
+                genome_patterns[pattern] = genome_id
+                logger.debug(f"PLM0 pattern mapping: {pattern} -> {genome_id}")
+        
+        # For RIFCS genomes, use the RIFCS prefix + number pattern  
+        elif 'RIFCS' in genome_id:
+            # Extract patterns like "RIFCSPHIGHO2_01_FULL_64_960" or "RIFCSPLOWO2_01_FULL_41_220"
+            parts = genome_id.split('_')
+            rifcs_pattern = None
+            for i, part in enumerate(parts):
+                if part.startswith('RIFCS') and i + 4 < len(parts):
+                    # Build pattern like "RIFCSPHIGHO2_01_FULL_64_960"
+                    if parts[i+3].isdigit() and parts[i+4].isdigit():
+                        rifcs_pattern = f"{parts[i]}_{parts[i+1]}_{parts[i+2]}_{parts[i+3]}_{parts[i+4]}"
+                        genome_patterns[rifcs_pattern] = genome_id
+                        logger.debug(f"RIFCS pattern mapping: {rifcs_pattern} -> {genome_id}")
+                        break
+        
+        # Fallback: Extract pattern like "64_960" from any genome
+        if genome_id not in genome_patterns.values():
+            parts = genome_id.split('_')
+            for i in range(len(parts) - 1):
+                if parts[i].isdigit() and parts[i+1].isdigit():
+                    pattern = f"{parts[i]}_{parts[i+1]}"
+                    if pattern not in genome_patterns:  # Avoid conflicts
+                        genome_patterns[pattern] = genome_id
+                        logger.debug(f"Genome pattern mapping: {pattern} -> {genome_id}")
+                        break
+    
+    # Map each protein ID to correct genome ID using pattern matching
+    for protein_id in protein_uris.keys():
+        # Extract pattern from protein ID like "RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_..." or "PLM0_60_b1_sep16_..."
+        
+        # Handle PLM0 proteins first
+        if protein_id.startswith('PLM0_'):
+            plm_parts = protein_id.split('_')
+            if len(plm_parts) >= 2 and plm_parts[1].isdigit():
+                pattern = f"PLM0_{plm_parts[1]}"
+                if pattern in genome_patterns:
+                    correct_genome_id = genome_patterns[pattern]
+                    protein_to_genome[protein_id] = correct_genome_id
+                    logger.debug(f"PLM0 protein mapping: {protein_id} -> {correct_genome_id}")
+                    continue
+        
+        # Handle RIFCS proteins with full RIFCS pattern matching
+        elif 'RIFCS' in protein_id:
+            parts = protein_id.split('_')
+            for i, part in enumerate(parts):
+                if part.startswith('RIFCS') and i + 4 < len(parts):
+                    # Look for pattern like "RIFCSPHIGHO2_01_FULL_64_960" in the protein ID
+                    if parts[i+3].isdigit() and parts[i+4].isdigit():
+                        rifcs_pattern = f"{parts[i]}_{parts[i+1]}_{parts[i+2]}_{parts[i+3]}_{parts[i+4]}"
+                        if rifcs_pattern in genome_patterns:
+                            correct_genome_id = genome_patterns[rifcs_pattern]
+                            protein_to_genome[protein_id] = correct_genome_id
+                            logger.debug(f"RIFCS protein mapping: {protein_id} -> {correct_genome_id}")
+                            break
+        
+        # Fallback: Handle other protein patterns with consecutive digit sequences
+        if protein_id not in protein_to_genome:
+            parts = protein_id.split('_')
+            for i in range(len(parts) - 1):
+                if parts[i].isdigit() and parts[i+1].isdigit():
+                    pattern = f"{parts[i]}_{parts[i+1]}"
+                    if pattern in genome_patterns:
+                        correct_genome_id = genome_patterns[pattern]
+                        protein_to_genome[protein_id] = correct_genome_id
+                        logger.debug(f"Protein mapping: {protein_id} -> {correct_genome_id}")
+                        break
+        
+        if protein_id not in protein_to_genome:
+            logger.warning(f"Could not map protein {protein_id} to any genome")
+    
+    logger.info(f"Built protein-to-genome mapping: {len(protein_to_genome)} proteins mapped to correct genomes")
+    return protein_to_genome
+
+
 def build_contig_to_genome_index_from_proteins(graph: Graph, protein_uris: Dict[str, URIRef]) -> Dict[str, URIRef]:
     """Build efficient contig -> genome URI mapping by querying existing protein-genome relationships.
     
@@ -602,6 +704,110 @@ class GenomeKGBuilder:
         
         logger.info(f"Added {annotation_count} CAZyme annotations and {family_count} CAZyme families")
     
+    def add_cazyme_annotations_with_correct_genomes(self, cazyme_data: Dict[str, Any], 
+                                                   genome_uris: Dict[str, URIRef],
+                                                   protein_uris: Dict[str, URIRef],
+                                                   protein_to_genome: Dict[str, str]):
+        """Add CAZyme family annotations with correct protein-to-genome mapping."""
+        annotation_count = 0
+        family_count = 0
+        families_added = set()
+        mapping_stats = {'mapped': 0, 'unmapped': 0}
+        
+        # Define CAZyme namespace
+        CAZYME_NS = Namespace("http://genome-kg.org/cazyme/")
+        
+        # Process CAZyme annotations
+        for annotation in cazyme_data.get("annotations", []):
+            protein_id = annotation.get("protein_id")
+            cazyme_family = annotation.get("cazyme_family")
+            
+            if not protein_id or not cazyme_family:
+                continue
+                
+            # Find matching protein URI using exact matching or suffix matching
+            matching_protein_uri = None
+            for existing_protein_id, protein_uri in protein_uris.items():
+                if existing_protein_id == protein_id or existing_protein_id.endswith(protein_id):
+                    matching_protein_uri = protein_uri
+                    break
+            
+            if matching_protein_uri:
+                # Use protein-to-genome mapping to get the correct genome
+                correct_genome_id = None
+                for existing_protein_id in protein_uris.keys():
+                    if existing_protein_id == protein_id or existing_protein_id.endswith(protein_id):
+                        correct_genome_id = protein_to_genome.get(existing_protein_id)
+                        break
+                
+                if correct_genome_id:
+                    mapping_stats['mapped'] += 1
+                    logger.debug(f"Mapped CAZyme protein {protein_id} to genome {correct_genome_id}")
+                else:
+                    mapping_stats['unmapped'] += 1
+                    logger.warning(f"Could not map CAZyme protein {protein_id} to any genome")
+                
+                # Create CAZyme annotation instance
+                annotation_id = f"{protein_id}_{cazyme_family}_{annotation_count}"
+                annotation_uri = CAZYME_NS[annotation_id]
+                
+                self.graph.add((annotation_uri, RDF.type, KG.CAZymeAnnotation))
+                self.graph.add((annotation_uri, KG.annotationId, Literal(annotation_id)))
+                
+                # Add annotation properties
+                if "family_type" in annotation:
+                    self.graph.add((annotation_uri, KG.cazymeType, Literal(annotation["family_type"])))
+                
+                if "evalue" in annotation:
+                    self.graph.add((annotation_uri, KG.evalue, Literal(annotation["evalue"], datatype=XSD.float)))
+                
+                if "coverage" in annotation:
+                    self.graph.add((annotation_uri, KG.coverage, Literal(annotation["coverage"], datatype=XSD.float)))
+                
+                if "start_pos" in annotation and "end_pos" in annotation:
+                    self.graph.add((annotation_uri, KG.startPosition, Literal(annotation["start_pos"], datatype=XSD.integer)))
+                    self.graph.add((annotation_uri, KG.endPosition, Literal(annotation["end_pos"], datatype=XSD.integer)))
+                
+                if "ec_number" in annotation and annotation["ec_number"]:
+                    self.graph.add((annotation_uri, KG.ecNumber, Literal(annotation["ec_number"])))
+                
+                # Enhanced: Add substrate prediction if available
+                if "substrate_prediction" in annotation and annotation["substrate_prediction"]:
+                    self.graph.add((annotation_uri, KG.substrateSpecificity, Literal(annotation["substrate_prediction"])))
+                
+                # Enhanced: Add HMM length if available
+                if "hmm_length" in annotation:
+                    self.graph.add((annotation_uri, KG.hmmLength, Literal(annotation["hmm_length"], datatype=XSD.integer)))
+                
+                # Create CAZyme family if not already added
+                if cazyme_family not in families_added:
+                    family_uri = CAZYME_NS[f"family_{cazyme_family}"]
+                    self.graph.add((family_uri, RDF.type, KG.CAZymeFamily))
+                    self.graph.add((family_uri, KG.familyId, Literal(cazyme_family)))
+                    
+                    if "family_type" in annotation:
+                        self.graph.add((family_uri, KG.cazymeType, Literal(annotation["family_type"])))
+                    
+                    # Enhanced: Add substrate prediction to family level too
+                    if "substrate_prediction" in annotation and annotation["substrate_prediction"]:
+                        self.graph.add((family_uri, KG.substrateSpecificity, Literal(annotation["substrate_prediction"])))
+                    
+                    families_added.add(cazyme_family)
+                    family_count += 1
+                
+                # Link annotation to family and protein
+                family_uri = CAZYME_NS[f"family_{cazyme_family}"]
+                self.graph.add((annotation_uri, KG.cazymeFamily, family_uri))
+                self.graph.add((matching_protein_uri, KG.hasCAZyme, annotation_uri))
+                
+                annotation_count += 1
+            else:
+                logger.warning(f"Could not find matching protein for CAZyme annotation: {protein_id}")
+                mapping_stats['unmapped'] += 1
+        
+        logger.info(f"Added {annotation_count} CAZyme annotations and {family_count} CAZyme families")
+        logger.info(f"Protein mapping stats: {mapping_stats['mapped']} mapped, {mapping_stats['unmapped']} unmapped")
+    
     def add_provenance(self, pipeline_data: Dict[str, Any]):
         """Add provenance information for the knowledge graph."""
         kg_uri = URIRef("http://genome-kg.org/this-kg")
@@ -667,6 +873,7 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     
     # Build protein URIs mapping for linking annotations
     protein_uris = {}
+    genome_uris = {}  # Track genome ID -> URI mapping for protein mapping
     
     # Process each genome from prodigal results
     for genome_result in prodigal_manifest['genomes']:
@@ -681,6 +888,7 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
             'quality_metrics': {}  # TODO: Load from QUAST results
         }
         genome_uri = builder.add_genome_entity(genome_data)
+        genome_uris[genome_id] = genome_uri  # Store for protein mapping
         
         # Load protein sequences from prodigal output for this genome
         protein_file = stage03_dir / "genomes" / genome_id / f"{genome_id}.faa"
@@ -928,8 +1136,12 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     cazyme_stats = {'annotations': 0, 'families': 0}
     if cazyme_results:
         if genome_uris:
-            first_genome_uri = list(genome_uris.values())[0]
-            builder.add_cazyme_annotations(cazyme_results, first_genome_uri, protein_uris)
+            # Build protein-to-genome mapping to correctly assign CAZyme annotations
+            logger.info("Building protein-to-genome mapping for CAZyme annotations...")
+            protein_to_genome = build_protein_to_genome_mapping(protein_uris, genome_uris)
+            
+            # Add CAZyme annotations with correct genome assignments
+            builder.add_cazyme_annotations_with_correct_genomes(cazyme_results, genome_uris, protein_uris, protein_to_genome)
             cazyme_stats['annotations'] = len(cazyme_results.get('annotations', []))
             # Count unique families
             families = set(ann.get('cazyme_family') for ann in cazyme_results.get('annotations', []))
