@@ -59,6 +59,15 @@ class ErrorPatternRegistry:
                 repair_strategy=RepairStrategy.PARAMETER_SUBSTITUTION,
                 confidence_threshold=0.9,
                 description="Query uses parameters without providing values"
+            ),
+            
+            # BELONGSTO Relationship Warning Pattern
+            ErrorPattern(
+                pattern_type="belongsto_warning",
+                regex_pattern=r"missing relationship type is: BELONGSTO",
+                repair_strategy=RepairStrategy.RELATIONSHIP_MAPPING,
+                confidence_threshold=0.95,
+                description="DSPy generated BELONGSTO instead of BELONGSTOGENOME"
             )
         ]
     
@@ -103,6 +112,8 @@ class RelationshipMapper:
         "LINKS_TO": "HASDOMAIN",
         "ASSOCIATED_WITH": "HASFUNCTION",
         "BELONGS_TO": "ENCODEDBY",
+        "BELONGSTO": "BELONGSTOGENOME",  # Critical: DSPy often generates BELONGSTO instead of BELONGSTOGENOME
+        "HASGENE": "BELONGSTOGENOME",   # Critical: DSPy often generates HASGENE but this relationship doesn't exist
         "CONTAINS": "HASDOMAIN"
     }
     
@@ -114,7 +125,7 @@ class RelationshipMapper:
     @classmethod
     def get_valid_relationships(cls) -> List[str]:
         """Get list of all valid relationship types"""
-        return ["ENCODEDBY", "HASDOMAIN", "DOMAINFAMILY", "HASFUNCTION"]
+        return ["ENCODEDBY", "HASDOMAIN", "DOMAINFAMILY", "HASFUNCTION", "BELONGSTOGENOME", "HASCAZYME", "CAZYMEFAMILY"]
 
 
 class EntitySuggester:

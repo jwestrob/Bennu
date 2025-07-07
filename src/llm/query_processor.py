@@ -168,6 +168,18 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
     
     async def _execute_cypher(self, cypher: str) -> List[Dict[str, Any]]:
         """Execute raw Cypher query."""
+        # Proactive repair: Fix BELONGSTO -> BELONGSTOGENOME
+        if "BELONGSTO" in cypher and "BELONGSTOGENOME" not in cypher:
+            logger.info("Detected BELONGSTO relationship, auto-repairing to BELONGSTOGENOME")
+            cypher = cypher.replace("[:BELONGSTO]", "[:BELONGSTOGENOME]")
+            cypher = cypher.replace("-[:BELONGSTO]->", "-[:BELONGSTOGENOME]->")
+        
+        # Proactive repair: Fix HASGENE -> BELONGSTOGENOME (reverse direction)
+        if "HASGENE" in cypher:
+            logger.info("Detected HASGENE relationship, auto-repairing to BELONGSTOGENOME")
+            cypher = cypher.replace("[:HASGENE]", "[:BELONGSTOGENOME]")
+            cypher = cypher.replace("-[:HASGENE]->", "<-[:BELONGSTOGENOME]-")  # Reverse direction
+        
         with self.driver.session() as session:
             result = session.run(cypher)
             return [dict(record) for record in result]

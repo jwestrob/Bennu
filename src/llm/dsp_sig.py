@@ -55,8 +55,17 @@ if DSPY_AVAILABLE:
         Q: "Search CAZymeannotation" OR "show CAZyme examples"
         A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) RETURN p.id, ca.cazymeType, cf.familyId, ca.substrateSpecificity, ca.evalue, ca.coverage, g.startCoordinate, g.endCoordinate LIMIT 100
         
+        🚨🚨🚨 CRITICAL RELATIONSHIP ERRORS TO AVOID 🚨🚨🚨
+        🚨 NEVER USE [:HASGENE] - THIS RELATIONSHIP DOES NOT EXIST! 🚨
+        🚨 NEVER USE [:BELONGSTO] - USE [:BELONGSTOGENOME] INSTEAD! 🚨
+        🚨 Genomes do NOT have direct [:HASGENE] relationships to genes! 🚨
+        🚨 Correct path: (genome:Genome)<-[:BELONGSTOGENOME]-(g:Gene) 🚨
+        
         Q: "comprehensive CAZyme analysis" OR "all CAZyme proteins" OR "complete CAZyme dataset"
-        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN p.id AS protein_id, ca.cazymeType AS cazyme_family, cf.familyId AS family_id, ca.substrateSpecificity AS substrate, ca.evalue AS cazyme_evalue, ca.coverage AS cazyme_coverage, ko.id AS ko_id, ko.description AS ko_description, g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand
+        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (g)-[:BELONGSTOGENOME]->(genome:Genome) OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN genome.genomeId AS genome_id, p.id AS protein_id, ca.cazymeType AS cazyme_family, cf.familyId AS family_id, ca.substrateSpecificity AS substrate, ca.evalue AS cazyme_evalue, ca.coverage AS cazyme_coverage, ko.id AS ko_id, ko.description AS ko_description, g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand
+        
+        Q: "CAZyme distribution by genome" OR "genome-specific CAZyme analysis"
+        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (g)-[:BELONGSTOGENOME]->(genome:Genome) RETURN genome.genomeId AS genome_id, ca.cazymeType AS cazyme_family, count(*) AS count_per_family ORDER BY genome_id, cazyme_family
         
         For DUF/Domain searches:
         Q: "Find proteins with DUF domains"
@@ -256,12 +265,16 @@ ORDER BY bgc.maxProbability DESC, bgc.bgcId
 - Access substrate specificity via `ca.substrateSpecificity` property
 - Include quality metrics: `ca.evalue`, `ca.coverage`, `ca.startPosition`, `ca.endPosition`
 
-**Pattern 4 - CAZyme Search (RECOMMENDED for carbohydrate enzymes):**
+**Pattern 4 - CAZyme Search with Genome Info (RECOMMENDED for carbohydrate enzymes):**
+🚨🚨🚨 CRITICAL: NEVER USE [:BELONGSTO] - THE CORRECT RELATIONSHIP IS [:BELONGSTOGENOME] 🚨🚨🚨
+🚨 ALWAYS WRITE: (g:Gene)-[:BELONGSTOGENOME]->(genome:Genome) 🚨
+🚨 NEVER WRITE: (g:Gene)-[:BELONGSTO]->(genome:Genome) 🚨
 ```cypher
 MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily)
 OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+OPTIONAL MATCH (g)-[:BELONGSTOGENOME]->(genome:Genome)
 OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
-RETURN p.id AS protein_id, cf.familyId AS cazyme_family, cf.cazymeType AS cazyme_type, ca.substrateSpecificity AS substrate,
+RETURN genome.genomeId AS genome_id, p.id AS protein_id, cf.familyId AS cazyme_family, cf.cazymeType AS cazyme_type, ca.substrateSpecificity AS substrate,
        ca.evalue AS cazyme_evalue, ca.coverage AS cazyme_coverage,
        ko.id AS ko_id, ko.description AS ko_description,
        g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand
