@@ -162,7 +162,7 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
     
     try:
         # Code interpreter service endpoint
-        base_url = kwargs.get('base_url', 'http://localhost:8888')
+        base_url = kwargs.get('base_url', 'http://localhost:8000')
         
         # Prepare request
         request_data = {
@@ -250,7 +250,7 @@ def list_available_tools() -> Dict[str, str]:
     return tool_descriptions
 
 # Health check function for code interpreter
-async def check_code_interpreter_health(base_url: str = 'http://localhost:8888') -> bool:
+async def check_code_interpreter_health(base_url: str = 'http://localhost:8000') -> bool:
     """Check if code interpreter service is healthy."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

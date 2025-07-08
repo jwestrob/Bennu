@@ -25,6 +25,7 @@ class GenomicContext:
     semantic_data: List[Dict[str, Any]]
     metadata: Dict[str, Any]
     query_time: float
+    compressed_context: str = ""  # New field for compressed context string
 
 # Example questions for CLI interface
 EXAMPLE_GENOMIC_QUESTIONS = [

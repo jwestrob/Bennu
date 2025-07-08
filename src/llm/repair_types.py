@@ -14,6 +14,7 @@ class RepairStrategy(Enum):
     RELATIONSHIP_MAPPING = "relationship_mapping"
     SCHEMA_VALIDATION = "schema_validation"
     PARAMETER_SUBSTITUTION = "parameter_substitution"
+    SYNTAX_ERROR = "syntax_error"
     FALLBACK_MESSAGE = "fallback_message"
 
 

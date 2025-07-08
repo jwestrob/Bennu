@@ -168,6 +168,23 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
     
     async def _execute_cypher(self, cypher: str) -> List[Dict[str, Any]]:
         """Execute raw Cypher query."""
+        # Debug: Log the actual query being executed
+        logger.info(f"🔍 Executing Cypher query: {cypher}")
+        
+        # SAFETY NET: Strip comments before processing
+        cypher = self._strip_comments_aggressively(cypher)
+        
+        # Clean up potential multi-query output (should be rare with improved prompts)
+        try:
+            cypher = self._extract_first_query(cypher)
+        except ValueError as e:
+            logger.error(f"❌ Query validation failed: {e}")
+            # Return empty results instead of crashing
+            return []
+        
+        # Normalize genome IDs - fix common format issues
+        cypher = self._normalize_genome_ids(cypher)
+        
         # Proactive repair: Fix BELONGSTO -> BELONGSTOGENOME
         if "BELONGSTO" in cypher and "BELONGSTOGENOME" not in cypher:
             logger.info("Detected BELONGSTO relationship, auto-repairing to BELONGSTOGENOME")
@@ -180,9 +197,159 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             cypher = cypher.replace("[:HASGENE]", "[:BELONGSTOGENOME]")
             cypher = cypher.replace("-[:HASGENE]->", "<-[:BELONGSTOGENOME]-")  # Reverse direction
         
-        with self.driver.session() as session:
-            result = session.run(cypher)
-            return [dict(record) for record in result]
+        try:
+            with self.driver.session() as session:
+                result = session.run(cypher)
+                return [dict(record) for record in result]
+        except Exception as e:
+            logger.error(f"❌ Query failed with error: {e}")
+            logger.error(f"📝 Full failing query: {repr(cypher)}")
+            raise
+    
+    def _extract_first_query(self, cypher: str) -> str:
+        """Extract the first valid Cypher query from potentially multiple queries."""
+        import re
+        
+        # ULTRA AGGRESSIVE: Check for multiple queries and reject immediately
+        # Count how many times we see MATCH at the start of lines (after comments)
+        lines = cypher.strip().split('\n')
+        match_count = 0
+        semicolon_count = cypher.count(';')
+        
+        # First pass: count MATCH statements and detect comments
+        has_comments = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('/*') or '*/' in stripped:
+                has_comments = True
+            if stripped.startswith('MATCH ') and not stripped.startswith('MATCH ('):
+                # This is likely a malformed query
+                continue
+            if stripped.startswith('MATCH ('):
+                match_count += 1
+        
+        # Check for actual multi-query scenarios (separated by semicolons or RETURN...MATCH patterns)
+        # Multiple MATCH statements without semicolons are valid in Cypher
+        return_statements = cypher.upper().count('RETURN ')
+        
+        # True multi-query indicators:
+        # 1. Multiple RETURN statements (multiple complete queries)
+        # 2. Semicolons separating queries
+        # 3. Comments with numbered sections (like "1)", "2)")
+        numbered_sections = len([line for line in lines if re.match(r'^\s*\d+\)', line.strip())])
+        
+        if return_statements > 1 or semicolon_count > 1 or numbered_sections > 0:
+            logger.error(f"❌ MULTI-QUERY DETECTED: {return_statements} RETURN statements, {semicolon_count} semicolons, {numbered_sections} numbered sections, comments: {has_comments}")
+            logger.error(f"📝 Raw input: {repr(cypher)}")
+            # CRITICAL: Raise exception instead of returning ERROR string that could be executed
+            raise ValueError("Multiple queries detected. Use only one complete query with one RETURN statement.")
+        
+        # Reject CALL statements completely
+        if 'CALL' in cypher.upper():
+            logger.error("❌ CALL STATEMENT DETECTED")
+            # CRITICAL: Raise exception instead of returning ERROR string that could be executed
+            raise ValueError("CALL statements not supported. Use simple MATCH patterns only.")
+        
+        # Clean up single query - remove empty lines and comments
+        cleaned_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('/*') or stripped.startswith('--') or stripped.startswith('*/'):
+                continue
+            # Skip comment-style numbered sections like "1)", "2)"
+            if re.match(r'^\d+\)', stripped):
+                continue
+            # Skip dashed section headers
+            if stripped.startswith('---') or stripped.endswith('---'):
+                continue
+            
+            cleaned_lines.append(stripped)
+        
+        # Join cleaned lines
+        result = ' '.join(cleaned_lines)
+        
+        # Remove any remaining comment markers
+        result = re.sub(r'/\*.*?\*/', '', result, flags=re.DOTALL)
+        result = re.sub(r'--.*$', '', result, flags=re.MULTILINE)
+        
+        # Clean up whitespace
+        result = ' '.join(result.split())
+        
+        # Final validation: ensure it's a single, complete query
+        if not result.strip():
+            logger.error("❌ Empty query after cleaning")
+            raise ValueError("Empty query after cleaning.")
+        
+        if not result.upper().startswith('MATCH') and not result.upper().startswith('WITH'):
+            logger.error(f"❌ Query doesn't start with MATCH or WITH: {result[:50]}...")
+            raise ValueError("Query must start with MATCH or WITH.")
+        
+        if not 'RETURN' in result.upper():
+            logger.error(f"❌ Query missing RETURN statement: {result[:50]}...")
+            raise ValueError("Query must include RETURN statement.")
+        
+        # Check for multiple complete queries (not just multiple MATCH statements)
+        if result.upper().count('RETURN ') > 1:
+            logger.error(f"❌ Multiple complete queries after cleaning: {result[:100]}...")
+            raise ValueError("Multiple complete queries with RETURN statements detected.")
+        
+        if result != cypher.strip():
+            logger.info(f"🔧 Cleaned multi-part input to single query")
+            logger.info(f"📝 Final query: {result}")
+        
+        return result
+    
+    def _strip_comments_aggressively(self, cypher: str) -> str:
+        """Aggressively strip all comments from Cypher query as safety net."""
+        import re
+        
+        original_cypher = cypher
+        
+        # Remove // line comments
+        lines = cypher.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # Remove everything after //
+            if '//' in line:
+                line = line.split('//')[0]
+            
+            # Remove everything after --
+            if '--' in line:
+                line = line.split('--')[0]
+            
+            # Remove lines that are just comments or empty
+            stripped = line.strip()
+            if stripped and not stripped.startswith('//') and not stripped.startswith('--'):
+                cleaned_lines.append(stripped)
+        
+        # Remove /* */ block comments
+        cypher = ' '.join(cleaned_lines)
+        cypher = re.sub(r'/\*.*?\*/', '', cypher, flags=re.DOTALL)
+        
+        # Clean up whitespace
+        cypher = ' '.join(cypher.split())
+        
+        if cypher != original_cypher.strip():
+            logger.info(f"🧹 Stripped comments from query")
+            logger.debug(f"Original: {original_cypher[:100]}...")
+            logger.debug(f"Cleaned: {cypher[:100]}...")
+        
+        return cypher
+    
+    def _normalize_genome_ids(self, cypher: str) -> str:
+        """Normalize genome IDs to match the actual database format."""
+        # Fix PLM0 genome ID format: .contigs -> _contigs
+        if "PLM0_60_b1_sep16_Maxbin2_047_curated.contigs" in cypher:
+            logger.info("Normalizing PLM0 genome ID: .contigs -> _contigs")
+            cypher = cypher.replace(
+                "PLM0_60_b1_sep16_Maxbin2_047_curated.contigs",
+                "PLM0_60_b1_sep16_Maxbin2_047_curated_contigs"
+            )
+        
+        # Could add other genome ID normalizations here if needed
+        return cypher
     
     async def _get_genome_overview(self, genome_id: str) -> List[Dict[str, Any]]:
         """Get comprehensive genome information."""

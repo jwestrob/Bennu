@@ -19,106 +19,47 @@ logger = logging.getLogger(__name__)
 if DSPY_AVAILABLE:
     
     class GenomicQuery(dspy.Signature):
-        """
-        🚨🚨🚨 MANDATORY: CAZyme nodes are Cazymeannotation and Cazymefamily 🚨🚨🚨
-        NEVER USE: CAZymeAnnotation, CAZymeFamily (these don't exist in database)
-        ALWAYS USE: Cazymeannotation, Cazymefamily (these are the actual database labels)
-        
-        🚨 CRITICAL RELATIONSHIP DIRECTION RULES 🚨
-        
-        ⚠️ ALWAYS START WITH (p:Protein) AND FOLLOW ARROWS FORWARD! ⚠️
-        
-        ❌ WRONG: (da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)<-[:HASDOMAIN]-(p:Protein)
-        ✅ CORRECT: (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
-        
-        🚨 CRITICAL: CAZyme nodes are CAZymeAnnotation and CAZymeFamily (NOT Cazymeannotation/Cazymefamily) 🚨
-        
-        🔥 MANDATORY PATTERNS - COPY EXACTLY 🔥
-        
-        🧪 For CAZyme/carbohydrate enzyme searches (USE THESE FOR ANY CAZYME QUERY):
-        🚨 MUST USE: Cazymeannotation and Cazymefamily (these are the actual database labels) 🚨
-        
-        ❌ WRONG EXAMPLE (NEVER USE):
-        MATCH (p:Protein)-[:HASCAZYME]->(ca:CAZymeAnnotation)-[:CAZYMEFAMILY]->(cf:CAZymeFamily)
-        
-        ✅ CORRECT EXAMPLES (ALWAYS USE):
-        
-        Q: "Tell me about CAZymes" OR "comprehensive CAZyme analysis" OR "all CAZymes"
-        A: MATCH (ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) MATCH (p:Protein)-[:HASCAZYME]->(ca) RETURN cf.cazymeType AS family_type, cf.familyId AS family_id, cf.substrateSpecificity AS family_description, ca.substrateSpecificity AS substrate_specificity, count(p) AS protein_count ORDER BY family_type, family_id
-        
-        Q: "Count CAZymes" OR "how many CAZymes"
-        A: MATCH (ca:Cazymeannotation) RETURN count(ca) as total_cazymes
-        
-        Q: "CAZyme family distribution"
-        A: MATCH (ca:Cazymeannotation) RETURN ca.cazymeType, count(*) as count ORDER BY count DESC
-        
-        Q: "Search CAZymeannotation" OR "show CAZyme examples"
-        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) RETURN p.id, ca.cazymeType, cf.familyId, ca.substrateSpecificity, ca.evalue, ca.coverage, g.startCoordinate, g.endCoordinate
-        
-        🚨🚨🚨 CRITICAL RELATIONSHIP ERRORS TO AVOID 🚨🚨🚨
-        🚨 NEVER USE [:HASGENE] - THIS RELATIONSHIP DOES NOT EXIST! 🚨
-        🚨 NEVER USE [:BELONGSTO] - USE [:BELONGSTOGENOME] INSTEAD! 🚨
-        🚨 Genomes do NOT have direct [:HASGENE] relationships to genes! 🚨
-        🚨 Correct path: (genome:Genome)<-[:BELONGSTOGENOME]-(g:Gene) 🚨
-        
-        Q: "comprehensive CAZyme analysis" OR "all CAZyme proteins" OR "complete CAZyme dataset"
-        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (g)-[:BELONGSTOGENOME]->(genome:Genome) OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN genome.genomeId AS genome_id, p.id AS protein_id, ca.cazymeType AS cazyme_family, cf.familyId AS family_id, ca.substrateSpecificity AS substrate, ca.evalue AS cazyme_evalue, ca.coverage AS cazyme_coverage, ko.id AS ko_id, ko.description AS ko_description, g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand
-        
-        Q: "CAZyme distribution by genome" OR "genome-specific CAZyme analysis"
-        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (g)-[:BELONGSTOGENOME]->(genome:Genome) RETURN genome.genomeId AS genome_id, ca.cazymeType AS cazyme_family, count(*) AS count_per_family ORDER BY genome_id, cazyme_family
-        
-        For DUF/Domain searches:
-        Q: "Find proteins with DUF domains"
-        A: MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WHERE toLower(dom.id) CONTAINS 'duf' RETURN p.id, dom.id
-        
-        For function searches:
-        Q: "Find transport proteins"
-        A: MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'transport' MATCH (p:Protein)-[:HASFUNCTION]->(ko) RETURN p.id, ko.description
-        
-        🎯 QUERY SELECTION RULES:
-        - CAZyme/carbohydrate/glycoside → USE Cazymeannotation pattern
-        - "How many CAZymes" OR "CAZyme count" → USE Pattern 7 (total count)
-        - "CAZyme distribution" OR "CAZyme families" → USE Pattern 5 or 6 (distribution)
-        - "Comprehensive CAZyme analysis" → USE Pattern 6 (families with counts)
-        - DUF/domain → USE Domain pattern  
-        - Function/transport/metabolism → USE KEGGOrtholog pattern
-        
-        🚨 IMPORTANT LIMITS:
-        - For CAZyme queries: NO LIMIT (show all 1,845 CAZymes)
-        - For counting/distribution: NO LIMIT
-        - For comprehensive analysis: NO LIMIT
-        - Only use LIMIT for very specific examples (like "show 5 examples")
-        """
+        """You must generate exactly one Cypher query. DO NOT generate multiple queries.
+
+CRITICAL: If user asks for comprehensive analysis of metabolism and lifestyle, focus on the MOST IMPORTANT aspect only (like KEGG functions) in a single query.
+
+FORBIDDEN:
+- Multiple MATCH statements in sequence
+- Comments like /* comment */
+- Semicolons separating queries
+- Section headers or numbers
+
+REQUIRED FORMAT:
+MATCH (genome:Genome {genomeId: "GENOME_ID"})<-[:BELONGSTOGENOME]-(g:Gene)<-[:ENCODEDBY]-(p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN ko.id, ko.description, count(p) ORDER BY count(p) DESC
+
+For comprehensive questions, choose ONE of:
+1. KEGG functions (most important for metabolism)
+2. CAZyme families (for carbohydrate metabolism)  
+3. BGC clusters (for secondary metabolism)
+
+Never combine multiple approaches in one response."""
         question = dspy.InputField(desc="Question about genomic data")
         context = dspy.InputField(desc="Relevant genomic context and schema information")
-        query = dspy.OutputField(desc="A Cypher query to retrieve the information.")
+        query = dspy.OutputField(desc="ONE Cypher query only. No comments. No multiple queries.")
 
     NEO4J_SCHEMA = """
-🚨🚨🚨 CRITICAL RELATIONSHIP DIRECTION RULES 🚨🚨🚨
+CRITICAL RELATIONSHIP DIRECTION RULES:
 
-🔥 MANDATORY: START WITH (p:Protein) - NEVER BACKWARDS! 🔥
+MANDATORY: START WITH (p:Protein) - NEVER BACKWARDS!
 
-❌ DEADLY WRONG: (da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)<-[:HASDOMAIN]-(p:Protein)
-✅ ALWAYS RIGHT: (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
+WRONG: (da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)<-[:HASDOMAIN]-(p:Protein)
+CORRECT: (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
 
-🎯 PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
+PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 
-**Neo4j Graph Schema for Microbial Genomics**
+**ACTUAL DATABASE SCHEMA - ONLY USE THESE PROPERTIES**
 
-This document outlines the schema of the Neo4j knowledge graph. The graph is built from an RDF ontology, so node labels, properties, and relationships are derived from ontology classes and properties.
+**Node Labels and ONLY Available Properties:**
 
-**Node Labels and Properties:**
-
-*   **`Genome`**
-    *   Represents a single genome assembly.
-    *   **Properties:**
-        *   `id`: (String) Unique identifier for the genome (e.g., `Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960.contigs`).
-        *   `name`: (String) The name of the genome.
-        *   `total_length`: (Integer) Total length of the assembly in base pairs.
-        *   `n50`: (Integer) N50 metric for the assembly.
-        *   `num_contigs`: (Integer) Number of contigs in the assembly.
-        *   `completeness`: (Float) Estimated genome completeness percentage.
-        *   `contamination`: (Float) Estimated genome contamination percentage.
+*   **`Genome`** - ONLY 2 properties available:
+    *   `id`: (String) Unique identifier (e.g., `PLM0_60_b1_sep16_Maxbin2_047_curated.contigs`)
+    *   `genomeId`: (String) Internal genome identifier
+    *   FORBIDDEN: taxon, total_length, n50, num_contigs, completeness, contamination (DO NOT USE - THESE DO NOT EXIST)
 
 *   **`Protein`**
     *   Represents a protein sequence translated from a gene.
@@ -253,20 +194,20 @@ RETURN genome.genomeId, bgc.bgcId, bgc.bgcProduct, bgc.contig,
 ORDER BY bgc.maxProbability DESC, bgc.bgcId
 ```
 
-🧪🧪🧪 CRITICAL QUERY PATTERNS FOR CAZYME ANNOTATIONS 🧪🧪🧪
+CRITICAL QUERY PATTERNS FOR CAZYME ANNOTATIONS:
 
-🔥 MANDATORY: When user mentions CAZyme, carbohydrate, glycoside, Cazymeannotation → USE THESE PATTERNS 🔥
+MANDATORY: When user mentions CAZyme, carbohydrate, glycoside, Cazymeannotation → USE THESE PATTERNS
 
-**For carbohydrate-active enzymes, glycoside hydrolases, glycosyltransferases:**
-- ⚠️ ALWAYS use `Cazymeannotation` and `Cazymefamily` nodes, NEVER Domain/PFAM search
+For carbohydrate-active enzymes, glycoside hydrolases, glycosyltransferases:
+- ALWAYS use `Cazymeannotation` and `Cazymefamily` nodes, NEVER Domain/PFAM search
 - Filter by `cazymeType`: 'GH' (glycoside hydrolases), 'GT' (glycosyltransferases), 'PL' (polysaccharide lyases), 'CE' (carbohydrate esterases), 'AA' (auxiliary activities), 'CBM' (carbohydrate-binding modules)
 - Access substrate specificity via `ca.substrateSpecificity` property
 - Include quality metrics: `ca.evalue`, `ca.coverage`, `ca.startPosition`, `ca.endPosition`
 
-**Pattern 4 - CAZyme Search with Genome Info (RECOMMENDED for carbohydrate enzymes):**
-🚨🚨🚨 CRITICAL: NEVER USE [:BELONGSTO] - THE CORRECT RELATIONSHIP IS [:BELONGSTOGENOME] 🚨🚨🚨
-🚨 ALWAYS WRITE: (g:Gene)-[:BELONGSTOGENOME]->(genome:Genome) 🚨
-🚨 NEVER WRITE: (g:Gene)-[:BELONGSTO]->(genome:Genome) 🚨
+Pattern 4 - CAZyme Search with Genome Info (RECOMMENDED for carbohydrate enzymes):
+CRITICAL: NEVER USE [:BELONGSTO] - THE CORRECT RELATIONSHIP IS [:BELONGSTOGENOME]
+ALWAYS WRITE: (g:Gene)-[:BELONGSTOGENOME]->(genome:Genome)
+NEVER WRITE: (g:Gene)-[:BELONGSTO]->(genome:Genome)
 ```cypher
 MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily)
 OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
