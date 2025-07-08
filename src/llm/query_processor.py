@@ -279,7 +279,6 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
                ko.description as function_description,
                collect(p.id) as proteins,
                collect(DISTINCT g.id) as genomes
-        LIMIT 20
         """
         
         with self.driver.session() as session:

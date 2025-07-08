@@ -1,0 +1,132 @@
+# MkDocs Configuration for Microbial Claude Matter Documentation
+
+site_name: Microbial Claude Matter - Genomic AI Platform
+site_description: Transform microbial genome assemblies into intelligent, queryable knowledge graphs with LLM-powered biological insights
+site_author: Genomic AI Team
+site_url: https://genomic-ai-platform.local
+
+# Repository
+repo_name: microbial_claude_matter
+repo_url: https://github.com/your-org/microbial_claude_matter
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2025 Genomic AI Platform
+
+# Configuration
+theme:
+  name: material
+  features:
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - navigation.expand
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  favicon: assets/favicon.png
+  icon:
+    logo: material/dna
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+
+# Customization
+extra:
+  annotate:
+    json: [.s2]
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-org/microbial_claude_matter
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/genomic-ai/platform
+
+# Extensions
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: your-org
+      repo: microbial_claude_matter
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Page tree
+nav:
+  - Home: index.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Pipeline Stages: architecture/pipeline-stages.md
+    - Modular RAG: architecture/modular-rag.md
+  - Tutorials:
+    - Basic Queries: tutorials/basic-queries.md
+    - Complex Analysis: tutorials/complex-analysis.md
+    - Agentic Workflows: tutorials/agentic-workflows.md
+  - API Reference:
+    - CLI Commands: api-reference/cli-commands.md
+    - Python API: api-reference/python-api.md
+    - Configuration: api-reference/configuration.md
+  - Examples:
+    - Question Gallery: examples/genomic-questions.md
+    - Case Studies: examples/case-studies.md
+    - Performance: examples/performance.md

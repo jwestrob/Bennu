@@ -291,6 +291,57 @@ conda activate genome-kg
 python scripts/run_tests.py
 ```
 
+## Example prompts and outputs
+
+- Prompt: "Show me the distribution of CAZymes among each genome in the dataset; compare and contrast." 
+- Output: 
+```
+🤖 Answer:
+Overview
+Carbohydrate-active enzymes (CAZymes) fall into several functional classes: glycoside hydrolases (GH, hydrolysis of complex carbohydrates), glycosyltransferases (GT, biosynthetic transfer of sugar moieties), carbohydrate-binding modules (CBM, 
+substrate targeting), carbohydrate esterases (CE, removal of acetyl/other esters), polysaccharide lyases (PL, β-elimination cleavage) and auxiliary activities (AA, redox enzymes that boost lignocellulose degradation).  Comparing four genomes 
+reveals clear differences in both repertoire size and functional emphasis.
+
+Per-genome CAZyme profiles
+1. Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960
+   • Total CAZymes: 1 056
+   • GH 436 (41.3%), GT 356 (33.7%), CBM 163 (15.4%), AA 56 (5.3%), CE 34, PL 10, Unknown 1
+   Interpretation: A very large, GH-rich toolkit accompanied by many CBMs suggests an organism specialised for aggressive breakdown of diverse plant-derived polysaccharides and efficient substrate binding.  The sizeable AA complement indicates
+oxidative support for lignocellulose attack.
+
+2. PLM0_60_b1_sep16_Maxbin2_047
+   • Total CAZymes: 425
+   • GT 178 (41.9%), GH 156 (36.7%), CBM 53 (12.5%), CE 24, AA 13, PL 1
+   Interpretation: Similar overall size to genome 2 but inverted emphasis: slightly more GTs than GHs points to a greater investment in cell-wall/ EPS biosynthesis or glycan remodelling rather than pure hydrolysis.  A single PL hints at 
+limited pectate/alginate degradation capacity.
+
+3. Candidatus_Muproteobacteria_bacterium_RIFCSPHIGHO2_01_FULL_61_200
+   • Total CAZymes: 264
+   • GH 105 (39.8%), GT 103 (39.0%), CBM 42 (15.9%), CE 7, AA 6, Unknown 1
+   Interpretation: Mid-sized repertoire with nearly 1:1 GH:GT ratio; capable of both glycan synthesis and moderate degradation.  Fewer AAs/CEs suggest less capacity for recalcitrant biomass turnover compared with Burkholderiales.
+
+4. Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220
+   • Total CAZymes: 100
+   • GH 43 (43%), GT 42 (42%), CBM 10 (10%), CE 3, AA 2
+   Interpretation: The smallest genome and CAZyme complement in the set.  Balanced but low absolute GH/GT numbers indicate a limited niche—perhaps scavenging small oligosaccharides rather than degrading bulk polysaccharide.
+
+Key contrasts
+• Repertoire size spans >10-fold (100 vs 1 056 CAZymes).  Burkholderiales clearly stands out as a carbohydrate-degrader, whereas Nomurabacteria appears streamlined.
+• GH dominance vs GT dominance: Burkholderiales (GH-heavy) likely secretes an extensive hydrolytic arsenal, while PLM0_60_b1 (GT-heavy) invests more in glycan assembly/modification—possibly for biofilm or capsule formation.
+• CBM support: High CBM counts in Burkholderiales reinforce a plant-biomass lifestyle; lower counts in others reflect reduced need for tight substrate binding.
+• Auxiliary redox enzymes (AA) are most abundant in Burkholderiales, enabling oxidative cleavage of lignin-like compounds; minimal in Nomurabacteria, suggesting reliance on already-processed carbohydrates.
+• Polysaccharide lyases are found only in Burkholderiales and PLM0_60_b1, indicating that pectin/alginate degradation capacity is restricted to these two genomes.
+
+Biological implications
+The data outline a possible trophic hierarchy: Burkholderiales may act as a primary degrader in its environment, opening complex plant polymers for the community.  The Muproteobacteria and PLM0_60 genomes could serve as secondary 
+consumers—either continuing hydrolysis or synthesising extracellular polysaccharides.  Nomurabacteria seems adapted to utilising simpler sugars released by others.
+
+Such functional partitioning is common in soil and rhizosphere microbiomes, where synergy between hydrolytic specialists and organisms focused on biosynthesis or scavenging underpins efficient carbon cycling.
+
+
+Confidence: high
+Sources: Results 1-7, 8-13, 14-18, 19-24
+```
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.
