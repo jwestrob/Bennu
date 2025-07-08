@@ -1,20 +1,25 @@
 # PROJECT FILE MAP: Microbial Claude Matter - Genomic AI Platform
 
-**Generated**: June 30, 2025  
+**Generated**: July 7, 2025  
 **Purpose**: Comprehensive file mapping for LLM context understanding  
 **Project**: Next-generation genomic intelligence platform with AI-powered biological insights
 
 ## Project Overview
 
-This is an advanced genomic AI platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with LLM-powered biological insights. The system combines traditional bioinformatics workflows with cutting-edge AI/ML technologies to create a comprehensive 7-stage pipeline culminating in an intelligent question-answering system.
+This is an advanced genomic AI platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with LLM-powered biological insights. The system combines traditional bioinformatics workflows with cutting-edge AI/ML technologies to create a comprehensive 8-stage pipeline culminating in an intelligent question-answering system.
 
 ### Key Achievements
-- **276,856 RDF triples** linking genomes, proteins, domains, and functions
+- **373,587 RDF triples** linking genomes, proteins, domains, and functions (UPDATED)
 - **1,145 PFAM families + 813 KEGG orthologs** enriched with authoritative functional descriptions
+- **287 KEGG pathways** with 4,937 KO-pathway relationships integrated
+- **Enhanced GECCO BGC Integration** with 17 quantitative properties per BGC including confidence scores and product-specific probabilities (NEW)
+- **BGC and CAZyme annotation support** with GECCO and dbCAN integration fully tested end-to-end
 - **10,102 proteins** with 320-dimensional ESM2 semantic embeddings
 - **Sub-millisecond vector similarity search** with LanceDB
+- **Sophisticated BGC analysis** with GECCO probability scores, product prediction, and pathway reconstruction (NEW)
 - **High-confidence biological insights** using DSPy-powered RAG system
 - **Apple Silicon M4 Max optimization** (~85 proteins/second processing rate)
+- **Production-ready bulk Neo4j loading** with 48K nodes and 95K relationships imported in <10 seconds (NEW)
 
 ---
 
@@ -96,7 +101,7 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
 #### **src/cli.py**
 - **Purpose**: Main command-line interface using Typer framework
 - **Commands**:
-  - `build`: Execute 7-stage genomic processing pipeline (stages 0-6)
+  - `build`: Execute 8-stage genomic processing pipeline (stages 0-8)
   - `ask`: Natural language question answering over genomic data
   - `version`: Show version information
 - **Key Features**:
@@ -110,8 +115,10 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
   - Stage 2: DFAST_QC taxonomic classification (optional)
   - Stage 3: Prodigal gene prediction
   - Stage 4: Astra functional annotation (PFAM/KOFAM)
-  - Stage 5: Knowledge graph construction (RDF triples)
-  - Stage 6: ESM2 protein embeddings (semantic search)
+  - Stage 5: GECCO BGC detection (NEW)
+  - Stage 6: dbCAN CAZyme annotation (NEW)
+  - Stage 7: Knowledge graph construction (RDF triples) (ENHANCED)
+  - Stage 8: ESM2 protein embeddings (semantic search)
 
 ### Data Ingestion Pipeline (`src/ingest/`)
 
@@ -166,8 +173,34 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
   - KOFAM hits in `data/stage04_astra/kofam_results/`
   - Combined annotation tables (TSV format)
 
+#### **src/ingest/gecco_bgc.py**
+- **Purpose**: Stage 5 - GECCO BGC (Biosynthetic Gene Cluster) detection (NEW)
+- **Functionality**:
+  - Python-native GECCO integration (replaces AntiSMASH Docker issues)
+  - Biosynthetic gene cluster prediction with confidence scores
+  - 17 quantitative properties per BGC including product-specific probabilities
+  - Graceful error handling for tool compatibility issues
+  - Workflow continuation even when pyrodigal compatibility problems occur
+- **Output**: 
+  - BGC predictions in `data/stage05_gecco/`
+  - Cluster boundaries and gene assignments
+  - Confidence scores and product predictions
+
+#### **src/ingest/dbcan_cazyme.py**
+- **Purpose**: Stage 6 - dbCAN CAZyme (Carbohydrate-Active enZyme) annotation (NEW)
+- **Functionality**:
+  - Carbohydrate-active enzyme annotation using dbCAN
+  - Comprehensive CAZy family classification (GH, GT, PL, CE, AA, CBM)
+  - Substrate specificity prediction
+  - E-value and coverage quality metrics
+  - Domain boundary mapping for sub-protein localization
+- **Output**:
+  - CAZyme annotations in `data/stage06_dbcan/`
+  - Family classifications and substrate predictions
+  - Quality metrics for annotation confidence
+
 #### **src/ingest/06_esm2_embeddings.py**
-- **Purpose**: Stage 6 - ESM2 protein embeddings for semantic search
+- **Purpose**: Stage 8 - ESM2 protein embeddings for semantic search (UPDATED STAGE NUMBER)
 - **Functionality**:
   - 320-dimensional protein embeddings using ESM2 transformer
   - Apple Silicon MPS acceleration (~85 proteins/second)
@@ -175,38 +208,44 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
   - Batch processing with memory management
   - Progress tracking and error handling
 - **Output**:
-  - Protein embeddings in `data/stage06_esm2/protein_embeddings.h5`
-  - LanceDB indices in `data/stage06_esm2/lancedb/`
+  - Protein embeddings in `data/stage08_esm2/protein_embeddings.h5`
+  - LanceDB indices in `data/stage08_esm2/lancedb/`
   - Embedding manifest with metadata
 
 ### Knowledge Graph Construction (`src/build_kg/`)
 
 #### **src/build_kg/rdf_builder.py**
-- **Purpose**: Stage 5 - RDF triple generation for knowledge graph construction
+- **Purpose**: Stage 7 - RDF triple generation for knowledge graph construction (ENHANCED)
 - **Functionality**:
   - Parses Prodigal headers to extract genomic coordinates and metadata
   - Processes functional annotations from PFAM/KOFAM results
-  - Generates 276,856+ RDF triples linking genomes, proteins, domains, functions
+  - Integrates GECCO BGC annotations with 17 quantitative properties per BGC
+  - Integrates dbCAN CAZyme annotations with family classifications
+  - Generates 373,587+ RDF triples linking genomes, proteins, domains, functions, BGCs, and CAZymes
   - Integrates functional enrichment and pathway information
   - Creates comprehensive biological ontology relationships
 - **Key Features**:
   - Rich genomic metadata (coordinates, strand, GC content, start codons)
   - Functional annotation integration with confidence scores
+  - BGC schema integration with probability scores and product predictions
+  - CAZyme family classification and substrate specificity
   - Namespace management for biological entities
   - Provenance tracking and data lineage
-- **Output**: Knowledge graph in RDF format (`data/stage05_kg/knowledge_graph.ttl`)
+- **Output**: Knowledge graph in RDF format (`data/stage07_kg/knowledge_graph.ttl`)
 
 #### **src/build_kg/functional_enrichment.py**
-- **Purpose**: Enrich knowledge graph with authoritative functional descriptions
+- **Purpose**: Enrich knowledge graph with authoritative functional descriptions (ENHANCED)
 - **Functionality**:
   - Parses PFAM Stockholm format files for family descriptions
   - Processes KEGG KO list for ortholog definitions
-  - Adds 1,145 PFAM families + 813 KEGG orthologs with descriptions
+  - Adds CAZy family descriptions from dbCAN database
+  - Adds 1,145 PFAM families + 813 KEGG orthologs + CAZyme families with descriptions
   - Replaces hardcoded biological knowledge with reference databases
 - **Data Classes**:
   - `PfamEntry`: PFAM family with accession, description, type, clan
   - `KoEntry`: KEGG ortholog with definition, threshold, score type
-- **Impact**: Transforms knowledge graph from ~242K to 276,856 RDF triples
+  - `CazyEntry`: CAZy family with classification and substrate information
+- **Impact**: Transforms knowledge graph from ~242K to 373,587 RDF triples (UPDATED)
 
 #### **src/build_kg/neo4j_bulk_loader.py**
 - **Purpose**: High-performance Neo4j database loading (100x faster than Python MERGE)
@@ -613,8 +652,29 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
   - `PFAM_hits_df.tsv` & `KOFAM_hits_df.tsv`: Annotation tables
   - `astra_search_log.txt`: Search logs
 
-#### **data/stage06_esm2/**
-- **Purpose**: ESM2 protein embeddings and similarity search
+#### **data/stage05_gecco/**
+- **Purpose**: GECCO BGC detection results (NEW)
+- **Structure**:
+  - BGC cluster predictions with confidence scores
+  - Product-specific probability assessments
+  - Cluster boundary definitions and gene assignments
+
+#### **data/stage06_dbcan/**
+- **Purpose**: dbCAN CAZyme annotation results (NEW)
+- **Structure**:
+  - CAZyme family classifications (GH, GT, PL, CE, AA, CBM)
+  - Substrate specificity predictions
+  - E-value and coverage quality metrics
+
+#### **data/stage07_kg/**
+- **Purpose**: Enhanced knowledge graph with BGC and CAZyme integration (UPDATED)
+- **Structure**:
+  - `knowledge_graph.ttl`: Complete RDF knowledge graph (373,587+ triples)
+  - `csv/`: Neo4j bulk import format
+  - BGC and CAZyme schema integration
+
+#### **data/stage08_esm2/**
+- **Purpose**: ESM2 protein embeddings and similarity search (UPDATED STAGE)
 - **Structure**:
   - `lancedb/protein_embeddings.lance/`: LanceDB vector database
   - `protein_embeddings.h5`: HDF5 embedding storage
@@ -709,8 +769,10 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
 This genomic AI platform represents a comprehensive system with:
 
 ### **Core Capabilities**
-- **7-Stage Bioinformatics Pipeline**: From raw genomes to intelligent insights
-- **Knowledge Graph**: 276,856 RDF triples with rich biological relationships
+- **8-Stage Bioinformatics Pipeline**: From raw genomes to intelligent insights (UPDATED)
+- **Knowledge Graph**: 373,587 RDF triples with rich biological relationships (UPDATED)
+- **BGC Analysis**: Enhanced GECCO integration with 17 quantitative properties per BGC (NEW)
+- **CAZyme Annotation**: Comprehensive carbohydrate-active enzyme classification (NEW)
 - **Vector Search**: 10,102+ proteins with 320-dimensional ESM2 embeddings
 - **Agentic RAG System**: Multi-step reasoning with code execution capabilities
 - **Secure Code Interpreter**: 60+ scientific packages in isolated environment
@@ -720,9 +782,11 @@ This genomic AI platform represents a comprehensive system with:
 - **Testing**: 30+ test files with comprehensive coverage
 - **Scripts**: 20+ utility scripts for development and analysis
 - **Documentation**: 10+ documentation files for users and developers
-- **Data Pipeline**: Structured data flow through 7 processing stages
+- **Data Pipeline**: Structured data flow through 8 processing stages (UPDATED)
 
 ### **Key Innovations**
+- **Enhanced Multi-Database Integration**: GECCO BGC + dbCAN CAZyme support (NEW)
+- **Docker-Free BGC Detection**: Python-native GECCO eliminates compatibility issues (NEW)
 - **Intelligent Annotation Discovery**: Solves "ATP synthase problem" with biological reasoning
 - **Multi-Stage Query Processing**: Neo4j → LanceDB similarity expansion
 - **Task Repair Agent**: Autonomous error detection and repair

@@ -636,6 +636,114 @@ You might want to try searching for proteins, genes, or domains instead.
 - **Graceful Degradation**: Transforms technical failures into educational opportunities
 - **Professional Output**: Maintains genomic analysis quality while providing helpful guidance
 
+## 🎉 **Phase 2B: Iterative Data Analysis with Code Interpreter** ✅ **COMPLETED**
+
+### **Objective**: Transform Large Dataset Analysis Through Interactive Code Execution
+
+**Problem Solved**: Traditional approach hit context limits when analyzing large datasets (e.g., 1,845 CAZymes vs 20-50 item limits)
+
+**Solution Implemented**: LLM now works iteratively with raw data files through persistent code interpreter sessions, mimicking how human data scientists approach complex analysis.
+
+### **Implementation Strategy**
+
+#### **Core Capabilities Being Developed**:
+
+1. **Direct Data File Access** 🗂️
+   - Mount knowledge graph CSV files (`cazymeannotations.csv`, `proteins.csv`, `genomes.csv`) 
+   - Provide pandas DataFrame access to full 1,845 CAZyme dataset
+   - Enable exploration of raw stage outputs (dbCAN, GECCO, etc.)
+
+2. **Iterative Analysis Workflow** 🔄
+   - **Step 1**: Load and explore dataset structure 
+   - **Step 2**: Generate summary statistics and identify patterns
+   - **Step 3**: Deep-dive analysis based on initial findings
+   - **Step 4**: Create visualizations and comparative analysis
+   - **Step 5**: Synthesize findings into comprehensive biological report
+
+3. **Session Persistence** 💾
+   - Maintain variable state across multiple code execution tasks
+   - Build complex analyses incrementally
+   - Enable LLM to revise analysis based on intermediate results
+
+4. **Context-Aware Data Loading** 🎯
+   - Automatically determine relevant datasets based on query type
+   - Intelligent file selection (CAZyme analysis → load CAZyme + genome + protein CSVs)
+   - Dynamic data integration and merging for comprehensive analysis
+
+### **Expected Workflow Example**:
+
+```python
+# Task 1: Initial Exploration
+"Load CAZyme dataset and show basic statistics"
+→ Discovers 1,845 CAZymes across 4 genomes
+
+# Task 2: Pattern Detection  
+"Based on the distribution, analyze GH family patterns"
+→ Identifies 21 GH families with genome-specific preferences
+
+# Task 3: Comparative Analysis
+"Create visualizations comparing CAZyme profiles between genomes"
+→ Generates heatmaps, distributions, statistical comparisons
+
+# Task 4: Biological Interpretation
+"Synthesize findings into ecological interpretation"
+→ Professional genomic analysis with functional insights
+```
+
+### **Technical Implementation**:
+
+#### **Enhanced Code Interpreter Integration** (`src/llm/rag_system.py`)
+- **Function**: `_enhance_code_interpreter_with_files()`
+- **Data Access**: Automatic CSV file mounting and DataFrame preparation
+- **Imports**: Scientific computing stack (pandas, matplotlib, seaborn, scipy)
+- **Session State**: Persistent variables and intermediate results
+
+#### **Context-Aware Limiting Strategy**
+Instead of hard-coded limits (20, 50), implement intelligent analysis routing:
+
+```python
+def determine_analysis_strategy(query_intent: str, dataset_size: int) -> str:
+    if dataset_size > 200 and ("distribution" in query_intent or "all" in query_intent):
+        return "iterative_code_analysis"  # Use code interpreter
+    elif "example" in query_intent:
+        return "sample_in_context"        # Traditional approach
+    else:
+        return "hybrid_approach"          # Mixed strategy
+```
+
+### **Benefits of Iterative Approach**:
+
+1. **Unlimited Dataset Size**: No more 20-50 item constraints
+2. **Rich Analysis**: Statistical analysis, visualizations, correlations
+3. **Biological Intelligence**: Context-aware interpretation and insights
+4. **Reproducible**: Code execution provides audit trail
+5. **Interactive**: LLM can explore data, discover patterns, refine analysis
+
+### **✅ IMPLEMENTATION COMPLETED - July 7, 2025**: 
+- **✅ Code Interpreter**: Secure execution environment operational
+- **✅ Session Persistence**: Multi-task workflows validated  
+- **✅ File Access Integration**: Docker volume mounting enables direct CSV access
+- **✅ Testing**: Multi-step CAZyme analysis successfully validates 1,845 CAZymes across 4 genomes
+
+### **🎯 Demonstrated Results**:
+**Before**: Limited to 20-50 CAZymes due to context window constraints
+**After**: Complete analysis of all 1,845 CAZymes with:
+- **740 Glycoside hydrolases (GH)** - 40% (plant/bacterial cell wall degradation)
+- **679 Glycosyltransferases (GT)** - 37% (biosynthesis and modification)  
+- **268 Carbohydrate-binding modules (CBM)** - 15% (substrate targeting)
+- **77 Auxiliary activities (AA)** - 4% (oxidative cleavage)
+- **68 Carbohydrate esterases (CE)** - 3.7% (deacetylation)
+- **11 Polysaccharide lyases (PL)** - 0.6% (pectin/alginate degradation)
+
+This represents a fundamental shift from **context-limited querying** to **interactive data science**, enabling the platform to handle comprehensive genomic analyses that would otherwise exceed API context windows.
+
+### **Technical Implementation Success**:
+1. **Enhanced Code Interpreter**: `_enhance_code_interpreter_with_files()` automatically detects large dataset queries
+2. **Docker Volume Mounting**: `- ../../data:/app/data:ro` enables secure file access
+3. **Multi-Stage Workflow**: Query sampling → Code execution with full dataset → Synthesis
+4. **Session Persistence**: Variables maintained across multiple analysis steps
+5. **Intelligent Routing**: System automatically chooses traditional vs iterative analysis based on dataset size
+
 ### Phase 3: Advanced Agent Capabilities (Medium Priority)
 **Objective**: Transform platform into truly autonomous biological intelligence with specialized error repair and knowledge gap filling agents
 
@@ -716,7 +824,28 @@ You might want to try searching for proteins, genes, or domains instead.
 - **[ ] Biological Validation**: Accuracy of repairs, relevance of gap-filling
 - **[ ] User Experience**: Query suggestion quality, workflow transparency
 
-### Phase 4: Production Readiness (Medium Priority)
+### Phase 4: Large Dataset Handling Strategy (High Priority)
+**Objective**: Handle datasets from 1,000 to 100,000+ annotations efficiently
+
+**✅ Strategy 1: Intelligent Data Tiering (IMPLEMENTED)**
+- **Small datasets** (≤100 proteins): Full context + full code interpreter access
+- **Medium datasets** (100-1000): Sample for context + full file access via CSV
+- **Large datasets** (>1000): Minimal context + aggregated Neo4j queries + file-based analysis
+
+**🔄 Strategy 2: Streaming Analysis (FUTURE - HIGH PRIORITY)**
+- **Objective**: Process large datasets in manageable chunks for comprehensive analysis
+- **Implementation**: Break datasets into chunks (100-500 proteins each)
+- **Features**: 
+  - Process each chunk separately in code interpreter
+  - Aggregate results across chunks with progress tracking
+  - Show incremental progress and intermediate results to user
+  - Combine chunk analyses into comprehensive final report
+- **Use Cases**: Full protein sequence analysis, detailed functional annotation, complex visualizations
+- **Timeline**: Implement when we reach 10K+ protein datasets or complex multi-step analyses
+
+**Current Approach for CAZyme Analysis**: Use Neo4j aggregation queries for counts and distribution (genome stratification) rather than individual protein retrieval - much more efficient for statistical analysis.
+
+### Phase 5: Production Readiness (Medium Priority)
 **Objective**: Scale system for production deployment
 
 **Implementation Areas**:

@@ -560,7 +560,6 @@ async def prospect_operonic_proteins(
             RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
                    g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
                    collect(DISTINCT dom.id) AS pfam_accessions
-            LIMIT 20
             """
             
             result = await query_processor.process_query(query, query_type="cypher")

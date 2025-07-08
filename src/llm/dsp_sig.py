@@ -53,7 +53,7 @@ if DSPY_AVAILABLE:
         A: MATCH (ca:Cazymeannotation) RETURN ca.cazymeType, count(*) as count ORDER BY count DESC
         
         Q: "Search CAZymeannotation" OR "show CAZyme examples"
-        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) RETURN p.id, ca.cazymeType, cf.familyId, ca.substrateSpecificity, ca.evalue, ca.coverage, g.startCoordinate, g.endCoordinate LIMIT 100
+        A: MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene) RETURN p.id, ca.cazymeType, cf.familyId, ca.substrateSpecificity, ca.evalue, ca.coverage, g.startCoordinate, g.endCoordinate
         
         🚨🚨🚨 CRITICAL RELATIONSHIP ERRORS TO AVOID 🚨🚨🚨
         🚨 NEVER USE [:HASGENE] - THIS RELATIONSHIP DOES NOT EXIST! 🚨
@@ -69,11 +69,11 @@ if DSPY_AVAILABLE:
         
         For DUF/Domain searches:
         Q: "Find proteins with DUF domains"
-        A: MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WHERE toLower(dom.id) CONTAINS 'duf' RETURN p.id, dom.id LIMIT 10
+        A: MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain) WHERE toLower(dom.id) CONTAINS 'duf' RETURN p.id, dom.id
         
         For function searches:
         Q: "Find transport proteins"
-        A: MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'transport' MATCH (p:Protein)-[:HASFUNCTION]->(ko) RETURN p.id, ko.description LIMIT 10
+        A: MATCH (ko:KEGGOrtholog) WHERE toLower(ko.description) CONTAINS 'transport' MATCH (p:Protein)-[:HASFUNCTION]->(ko) RETURN p.id, ko.description
         
         🎯 QUERY SELECTION RULES:
         - CAZyme/carbohydrate/glycoside → USE Cazymeannotation pattern
@@ -223,7 +223,6 @@ OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Dom
 RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
        g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
        collect(DISTINCT dom.id) AS pfam_accessions
-LIMIT 500
 ```
 
 **Pattern 2 - PFAM Domain Search:**
@@ -236,7 +235,6 @@ OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
 RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
        g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
        collect(DISTINCT dom.id) AS pfam_accessions
-LIMIT 500
 ```
 
 **Pattern 3 - BGC Search:**

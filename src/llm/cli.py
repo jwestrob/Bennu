@@ -194,7 +194,34 @@ async def _process_question(question: str, config: LLMConfig) -> dict:
     
     try:
         response = await rag.ask(question)
-        return response
+        
+        # Convert string response to expected dict format
+        if isinstance(response, str):
+            return {
+                'answer': response,
+                'confidence': 'medium',
+                'citations': 'Query processed through modular RAG system',
+                'query_metadata': {
+                    'query_type': 'genomic',
+                    'retrieval_time': 0.0,
+                    'source': 'modular_rag'
+                }
+            }
+        elif isinstance(response, dict):
+            # Already in correct format
+            return response
+        else:
+            # Fallback for unexpected format
+            return {
+                'answer': str(response),
+                'confidence': 'unknown',
+                'citations': 'Response format conversion applied',
+                'query_metadata': {
+                    'query_type': 'unknown',
+                    'retrieval_time': 0.0,
+                    'source': 'fallback'
+                }
+            }
     finally:
         rag.close()
 
