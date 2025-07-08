@@ -342,6 +342,66 @@ Such functional partitioning is common in soil and rhizosphere microbiomes, wher
 Confidence: high
 Sources: Results 1-7, 8-13, 14-18, 19-24
 ```
+
+- Prompt: (genome-kg) jacob@Mac ~/Documents/Sandbox/microbial_claude_matter main $ python3 -m src.cli ask "Tell me everything you can reasonably conclude about the metabolism and lifestyle of Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220.contigs (genome id)"
+- Output:
+```
+🤖 Answer:
+Below is a genome-scale “snapshot” of what can be inferred for  
+Candidatus Nomurabacteria bacterium RIFCSPLOWO2_01_FULL_41_220.contigs.
+
+1. General genome characteristics  
+• 305 KEGG Orthologous (KO) functions – very low for free-living bacteria, typical of Candidate Phyla Radiation (CPR) organisms that have streamlined genomes (often ≤1 Mb).  
+• GC content ≈ 40 % (Step 1) – moderate/low.  
+• 95 CAZyme-annotated proteins but only 18 predicted transporters (Step 5) – suggests ability to hydrolyse extracellular carbohydrates yet a limited membrane protein repertoire, again consistent with CPR.  
+• No biosynthetic gene clusters, CRISPR arrays or other defence systems detected (Step 8).
+
+2. Central carbon metabolism  
+Detected glycolytic enzymes (sample KOs, Step 9):  
+ K01689 (fructose-bisphosphate aldolase)  
+ K01869 (GAPDH)  
+ K01887 (phosphoglycerate kinase)  
+ K01876 (enolase)  
+→ an almost complete Embden–Meyerhof glycolysis is present, enabling substrate-level ATP generation from hexoses.
+
+No genes for the tricarboxylic-acid (TCA) cycle, oxidative phosphorylation complexes, ATP synthase or alternative respiratory complexes were recovered.  Hence energy conservation is most likely limited to fermentation.
+
+3. Carbon acquisition  
+• 95 CAZymes span glycoside hydrolase (GH), glycosyl-transferase (GT), carbohydrate-binding (CBM) and other families (Step 5 & 9).  
+  – GH3 & GH16 families (seen in Step 2 for related scaffolds) typically target β-glucans, cello-oligosaccharides and laminarin.  
+  – Presence of these enzymes, together with even a small number of transporters, points to uptake of simple sugars/oligosaccharides released after extracellular hydrolysis.
+
+• No CO₂-fixing pathways or autotrophic markers (RuBisCO, Wood–Ljungdahl, etc.; Step 5), so the organism is an obligate heterotroph.
+
+4. Nitrogen, sulfur, and other inorganic metabolisms  
+Searches in Steps 6–7 returned no nitrogen fixation, nitrification/denitrification, dissimilatory sulfur or sulfide oxidation genes for this genome. Assimilatory pathways are probably incomplete, implying environmental or host-derived sources 
+of reduced nitrogen/sulfur compounds.
+
+5. Biosynthetic capacities and potential auxotrophies  
+Small CPR genomes characteristically lack full amino-acid, nucleotide and cofactor biosynthetic pathways. The limited KO set here contains primarily core informational machinery (rpo, ftsZ, secA, ribosomal proteins, etc.) but few anabolic 
+enzymes, indicating extensive dependence on exogenous metabolites.
+
+6. Stress response, motility, interaction traits  
+No chemotaxis, flagellar, secretion, toxin, defence or CRISPR elements were identified (Steps 7–8).  Coupled with the low transporter count, this suggests a sedentary, host- or community-associated lifestyle rather than an actively motile 
+free-living cell.
+
+7. Ecological and lifestyle model  
+Taken together, the data support the following scenario:  
+• An anaerobic/micro-aerophilic, carbohydrate-fermenting bacterium that relies on substrate-level phosphorylation.  
+• Streamlined genome and minimal biosynthetic repertoire imply an obligate symbiotic or episymbiotic lifestyle, scavenging amino acids, vitamins and nucleotides from neighbouring microbes or a eukaryotic host.  
+• The CAZyme complement allows it to hydrolyse environmental or host-derived polysaccharides to short sugars it can ferment.  
+• Lack of defence systems and motility hints that it occupies a protected niche (e.g., inside biofilms, on host surfaces, or in subsurface sediments).
+
+These features are consistent with published observations for Nomurabacteria and other CPR members, which are frequently found in groundwater, sediments and animal microbiomes as ultra-small, metabolically reduced symbionts.
+
+Confidence: medium
+Sources: Data steps 1-9 in supplied context.  
+Representative literature on CPR/ Nomurabacteria physiology:  
+1. Brown et al. “Unusual biology across a group comprising more than 15 % of domain Bacteria.” Nature 2015.  
+2. Anantharaman et al. “Thousands of microbial genomes shed light on interconnected geochemical processes in an aquifer system.” Nat. Comm. 2016.  
+3. Castelle & Banfield. “Major new microbial groups expand diversity and alter our understanding of the tree of life.” Cell 2018.
+```
+
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.

@@ -68,6 +68,42 @@ class ErrorPatternRegistry:
                 repair_strategy=RepairStrategy.RELATIONSHIP_MAPPING,
                 confidence_threshold=0.95,
                 description="DSPy generated BELONGSTO instead of BELONGSTOGENOME"
+            ),
+            
+            # Multi-Query Pattern
+            ErrorPattern(
+                pattern_type="multi_query_syntax",
+                regex_pattern=r"Multiple queries detected|Expected exactly one statement|CALL \{.*?\}.*?CALL \{",
+                repair_strategy=RepairStrategy.SYNTAX_ERROR,
+                confidence_threshold=0.95,
+                description="Query contains multiple statements or invalid CALL blocks"
+            ),
+            
+            # Invalid CALL Statement Pattern  
+            ErrorPattern(
+                pattern_type="invalid_call_statement",
+                regex_pattern=r"CALL \{|Invalid input.*?expected.*?CALL",
+                repair_strategy=RepairStrategy.SYNTAX_ERROR,
+                confidence_threshold=0.9,
+                description="Query contains invalid CALL statement syntax"
+            ),
+            
+            # Comments Starting Query Pattern
+            ErrorPattern(
+                pattern_type="comment_prefix_query", 
+                regex_pattern=r"Query must start with MATCH|doesn't start with MATCH",
+                repair_strategy=RepairStrategy.SYNTAX_ERROR,
+                confidence_threshold=0.9,
+                description="Query starts with comments instead of MATCH"
+            ),
+            
+            # WITH Clause Error Pattern
+            ErrorPattern(
+                pattern_type="malformed_with_clause",
+                regex_pattern=r"Query cannot conclude with WITH|must be a RETURN clause",
+                repair_strategy=RepairStrategy.SYNTAX_ERROR, 
+                confidence_threshold=0.85,
+                description="Query has malformed WITH clause structure"
             )
         ]
     

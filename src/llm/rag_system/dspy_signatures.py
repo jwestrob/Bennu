@@ -63,8 +63,15 @@ if DSPY_AVAILABLE:
         """
         Generate retrieval strategy for genomic queries based on classification and schema.
         
-        Uses Neo4j schema to determine optimal query patterns and search strategies.
-        Considers data scaling (small vs large result sets) and user intent.
+        CRITICAL: Generate ONLY executable Cypher queries with NO COMMENTS.
+        
+        FORBIDDEN:
+        - Comments like /* comment */ or // comment
+        - Multiple MATCH statements
+        - Section headers or explanatory text
+        - Semicolons separating queries
+        
+        REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
         """
         
         db_schema = dspy.InputField(desc="Neo4j database schema with node types, relationships, and query patterns")
@@ -72,7 +79,7 @@ if DSPY_AVAILABLE:
         query_type = dspy.InputField(desc="Classified query type from QueryClassifier")
         
         search_strategy = dspy.OutputField(desc="Retrieval approach: direct_query, similarity_search, or hybrid_search")
-        cypher_query = dspy.OutputField(desc="Generated Cypher query for Neo4j database")
+        cypher_query = dspy.OutputField(desc="EXECUTABLE Cypher query with NO COMMENTS - must start with MATCH/WITH/OPTIONAL")
         reasoning = dspy.OutputField(desc="Explanation of retrieval strategy choice")
         expected_result_size = dspy.OutputField(desc="Estimated result size: small, medium, or large")
     
@@ -92,6 +99,27 @@ if DSPY_AVAILABLE:
         answer = dspy.OutputField(desc="Comprehensive answer with biological insights")
         confidence = dspy.OutputField(desc="Confidence level: high, medium, or low")
         citations = dspy.OutputField(desc="Data sources and references used")
+    
+    class GenomicSummarizer(dspy.Signature):
+        """
+        Summarize large genomic datasets while preserving essential biological information.
+        
+        Designed for context compression in multi-stage RAG systems where large datasets
+        need to be condensed to fit within token limits while maintaining scientific accuracy.
+        
+        Focus areas:
+        - Functional annotations (KEGG, PFAM domains)
+        - Unique biological insights and patterns
+        - Quantitative summaries (counts, distributions)
+        - Key examples representative of larger datasets
+        """
+        
+        genomic_data = dspy.InputField(desc="Large genomic dataset to summarize")
+        target_length = dspy.InputField(desc="Target length: brief, medium, or detailed")
+        focus_areas = dspy.InputField(desc="Specific biological aspects to emphasize")
+        summary = dspy.OutputField(desc="Concise summary preserving essential biological information")
+        key_findings = dspy.OutputField(desc="Most important biological insights from the data")
+        data_statistics = dspy.OutputField(desc="Quantitative summary of the dataset")
         
 else:
     # Fallback classes when DSPy is not available
@@ -115,7 +143,10 @@ else:
                 'expected_result_size': "small",
                 'answer': "DSPy not available - install dsp-ml package",
                 'confidence': "low",
-                'citations': "Mock response"
+                'citations': "Mock response",
+                'summary': "DSPy not available - using fallback summary",
+                'key_findings': "No findings available without DSPy",
+                'data_statistics': "Statistics unavailable"
             })()
     
     class PlannerAgent(BaseMockSignature):
@@ -132,4 +163,8 @@ else:
     
     class GenomicAnswerer(BaseMockSignature):
         """Mock genomic answerer signature."""
+        pass
+    
+    class GenomicSummarizer(BaseMockSignature):
+        """Mock genomic summarizer signature."""
         pass
