@@ -88,6 +88,8 @@ class NoteKeeper:
             execution_mode="agentic"
         )
         
+        # Save metadata with temporary assignment
+        self.metadata = metadata
         self._save_metadata()
         return metadata
     
