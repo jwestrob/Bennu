@@ -118,8 +118,11 @@ class TaskExecutor:
         """
         logger.debug(f"Executing query task: {task.description}")
         
+        # Transform "for each" patterns to comparative language for better DSPy understanding
+        transformed_description = self._transform_for_each_patterns(task.description)
+        
         # Use DSPy to classify the query and generate appropriate strategy
-        classification = self.rag_system.classifier(question=task.description)
+        classification = self.rag_system.classifier(question=transformed_description)
         
         # Import schema
         from ..dsp_sig import NEO4J_SCHEMA
@@ -127,9 +130,16 @@ class TaskExecutor:
         # Generate retrieval strategy
         retrieval_plan = self.rag_system.retriever(
             db_schema=NEO4J_SCHEMA,
-            question=task.description,
+            question=transformed_description,
             query_type=classification.query_type
         )
+        
+        # Validate query for comparative questions (same as in core.py)
+        cypher_query = retrieval_plan.cypher_query
+        validated_query = self.rag_system._validate_comparative_query(task.description, cypher_query)
+        if validated_query != cypher_query:
+            logger.info("Fixed comparative query in task execution - removed inappropriate LIMIT")
+            retrieval_plan.cypher_query = validated_query
         
         # Execute the query
         context = await self.rag_system._retrieve_context(
@@ -207,6 +217,39 @@ class TaskExecutor:
                 args.update(self._prepare_code_interpreter_args(dependency_data, task))
         
         return args
+    
+    def _transform_for_each_patterns(self, description: str) -> str:
+        """
+        Transform 'for each' patterns into comparative query language.
+        
+        This helps DSPy understand that these should be comparative queries
+        showing all results, not single-item queries.
+        
+        Args:
+            description: Original task description
+            
+        Returns:
+            Transformed description that's clearer for DSPy
+        """
+        import re
+        
+        # Transform "for each genome" patterns
+        patterns = [
+            (r'\bfor\s+each\s+genome,?\s+', 'compare across all genomes to '),
+            (r'\bfor\s+each\s+protein,?\s+', 'compare across all proteins to '),
+            (r'\bfor\s+each\s+gene,?\s+', 'compare across all genes to '),
+            (r'\bfor\s+each\s+domain,?\s+', 'compare across all domains to '),
+        ]
+        
+        transformed = description
+        for pattern, replacement in patterns:
+            transformed = re.sub(pattern, replacement, transformed, flags=re.IGNORECASE)
+        
+        # If we transformed anything, log it
+        if transformed != description:
+            logger.debug(f"Transformed task description: '{description}' -> '{transformed}'")
+        
+        return transformed
     
     def _prepare_code_interpreter_args(self, dependency_data: List[Dict], task: Task) -> Dict[str, Any]:
         """

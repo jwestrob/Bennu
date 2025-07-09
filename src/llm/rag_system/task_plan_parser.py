@@ -254,9 +254,45 @@ class TaskPlanParser:
         This is a simplified approach - the actual query will be generated
         by the DSPy ContextRetriever during execution.
         """
+        # Transform "for each" patterns into comparative language
+        transformed_description = self._transform_for_each_patterns(description)
+        
         # For now, return the description as a query template
         # The actual Cypher generation will happen during execution
-        return f"# Query for: {description}"
+        return f"# Query for: {transformed_description}"
+    
+    def _transform_for_each_patterns(self, description: str) -> str:
+        """
+        Transform 'for each' patterns into comparative query language.
+        
+        This helps DSPy understand that these should be comparative queries
+        showing all results, not single-item queries.
+        
+        Args:
+            description: Original task description
+            
+        Returns:
+            Transformed description that's clearer for DSPy
+        """
+        import re
+        
+        # Transform "for each genome" patterns
+        patterns = [
+            (r'\bfor\s+each\s+genome,?\s+', 'compare across all genomes to '),
+            (r'\bfor\s+each\s+protein,?\s+', 'compare across all proteins to '),
+            (r'\bfor\s+each\s+gene,?\s+', 'compare across all genes to '),
+            (r'\bfor\s+each\s+domain,?\s+', 'compare across all domains to '),
+        ]
+        
+        transformed = description
+        for pattern, replacement in patterns:
+            transformed = re.sub(pattern, replacement, transformed, flags=re.IGNORECASE)
+        
+        # If we transformed anything, log it
+        if transformed != description:
+            logger.debug(f"Transformed task description: '{description}' -> '{transformed}'")
+        
+        return transformed
     
     def _extract_tool_args(self, description: str) -> Dict[str, Any]:
         """

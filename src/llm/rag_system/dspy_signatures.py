@@ -72,6 +72,29 @@ if DSPY_AVAILABLE:
         - Semicolons separating queries
         
         REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
+        
+        COMPARATIVE QUERY RULES - NEVER USE LIMIT FOR THESE PATTERNS:
+        - "Which genomes" → Show ALL genomes for comparison
+        - "Compare across genomes" → Show ALL genomes
+        - "Most/least among genomes" → Show ALL genomes ranked
+        - "For each genome" → Show ALL genomes with counts
+        - "All genomes" → Show ALL genomes
+        - "Across all genomes" → Show ALL genomes
+        - "Between genomes" → Show ALL genomes
+        - "What genome has the most" → Show ALL genomes (let user see ranking)
+        
+        ONLY USE LIMIT 1 FOR:
+        - "Show me ONE example"
+        - "Just give me the top one"
+        - "Only the best result"
+        - "A single protein"
+        
+        EXAMPLES:
+        ❌ BAD: "Which genome has most metal transporters?" → LIMIT 1
+        ✅ GOOD: "Which genome has most metal transporters?" → ORDER BY count DESC (no LIMIT)
+        
+        ❌ BAD: "For each genome, how many transport proteins?" → LIMIT 1  
+        ✅ GOOD: "For each genome, how many transport proteins?" → GROUP BY genome (no LIMIT)
         """
         
         db_schema = dspy.InputField(desc="Neo4j database schema with node types, relationships, and query patterns")
