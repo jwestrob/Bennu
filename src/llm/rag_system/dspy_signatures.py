@@ -155,6 +155,39 @@ if DSPY_AVAILABLE:
         summary = dspy.OutputField(desc="Concise summary preserving essential biological information")
         key_findings = dspy.OutputField(desc="Most important biological insights from the data")
         data_statistics = dspy.OutputField(desc="Quantitative summary of the dataset")
+    
+    class NotingDecision(dspy.Signature):
+        """
+        Decide whether task results warrant note-taking based on information value.
+        
+        Only record notes for:
+        - Significant biological insights or patterns
+        - Unexpected or contradictory findings
+        - Cross-genome comparisons with clear differences
+        - Quantitative results that inform broader analysis
+        - Findings that connect to other tasks or validate/contradict previous results
+        
+        Skip notes for:
+        - Routine lookups with expected results
+        - Single data points without broader context
+        - Redundant information already captured
+        - Low-confidence or unclear results
+        - Failed queries or error conditions
+        
+        Provide detailed observations and cross-task connections when recording notes.
+        """
+        
+        task_description = dspy.InputField(desc="Description of the task that was executed")
+        execution_result = dspy.InputField(desc="Results from task execution (structured data, context, etc.)")
+        existing_notes = dspy.InputField(desc="Summary of notes from previous tasks in this session")
+        
+        should_record = dspy.OutputField(desc="Boolean: Should we record notes for this task?")
+        importance_score = dspy.OutputField(desc="Importance score 1-10 for this information")
+        reasoning = dspy.OutputField(desc="Explanation of note-taking decision")
+        observations = dspy.OutputField(desc="If recording: key observations worth noting (list format)")
+        key_findings = dspy.OutputField(desc="If recording: important biological findings or patterns")
+        cross_connections = dspy.OutputField(desc="If recording: connections to other tasks (task_id:connection_type:description format)")
+        quantitative_data = dspy.OutputField(desc="If recording: important numerical data or metrics")
         
 else:
     # Fallback classes when DSPy is not available
@@ -203,3 +236,17 @@ else:
     class GenomicSummarizer(BaseMockSignature):
         """Mock genomic summarizer signature."""
         pass
+    
+    class NotingDecision(BaseMockSignature):
+        """Mock noting decision signature."""
+        
+        def __call__(self, **kwargs):
+            return type('MockResult', (), {
+                'should_record': False,
+                'importance_score': 5.0,
+                'reasoning': "DSPy not available - note-taking disabled",
+                'observations': [],
+                'key_findings': [],
+                'cross_connections': [],
+                'quantitative_data': {}
+            })()
