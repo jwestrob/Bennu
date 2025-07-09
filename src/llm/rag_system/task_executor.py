@@ -144,7 +144,8 @@ class TaskExecutor:
         # Execute the query
         context = await self.rag_system._retrieve_context(
             classification.query_type, 
-            retrieval_plan
+            retrieval_plan,
+            task.description
         )
         
         # Format results for consumption by downstream tasks

@@ -268,14 +268,33 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 "error": error_msg
             }
         
-        # Step 4: Use compressed context if available, otherwise format normally
-        if hasattr(context, 'compressed_context') and context.compressed_context:
-            formatted_context = context.compressed_context
-            compression_stats = context.metadata.get('compression_stats')
-            console.print(f"🗜️ Using compressed context: {compression_stats.original_count} → {compression_stats.compressed_count} results")
-        else:
-            formatted_context = self._format_context(context)
-            compression_stats = None
+        # Step 4: Format context and apply compression if needed
+        formatted_context = self._format_context(context)
+        compression_stats = None
+        
+        # Check if context is too large and apply compression
+        import tiktoken
+        try:
+            encoding = tiktoken.encoding_for_model(self.config.llm_model if hasattr(self.config, 'llm_model') else 'gpt-3.5-turbo')
+            token_count = len(encoding.encode(formatted_context))
+            
+            if token_count > 30000:
+                logger.info(f"🗜️ Context too large ({token_count} tokens), applying compression")
+                # Initialize context compressor only when needed
+                compressor = ContextCompressor()
+                
+                # Get raw results for compression
+                all_results = context.structured_data + context.semantic_data
+                compressed_context, compression_stats = compressor.compress_context(all_results, target_size=25)
+                
+                logger.info(f"Context compression: {compression_stats.original_count} -> {compression_stats.compressed_count} results")
+                formatted_context = compressed_context
+                console.print(f"🗜️ Applied compression: {compression_stats.original_count} → {compression_stats.compressed_count} results")
+            else:
+                logger.info(f"✅ Context size acceptable ({token_count} tokens), using full context")
+                
+        except Exception as e:
+            logger.warning(f"Token counting failed: {e}, using full context")
         
         # Step 5: Generate answer
         answer_result = self.answerer(
@@ -375,16 +394,30 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Organize context data for compression
             context_data = self._organize_results_for_compression(completed_results)
             
-            # Initialize context compressor
-            compressor = ContextCompressor(self.config.llm_model if hasattr(self.config, 'llm_model') else 'gpt-3.5-turbo')
+            # Organize context data for potential compression
+            organized_context = self._organize_context_for_synthesis(context_data)
             
-            # Compress context to fit within limits
-            compression_result = await compressor.compress_context(context_data, target_tokens=25000)
-            
-            logger.info(f"Context compression: {compression_result.original_size} -> {compression_result.compressed_size} tokens (ratio: {compression_result.compression_ratio:.2f})")
-            
-            # Use compressed context for synthesis
-            combined_context = compression_result.compressed_content
+            # Only compress if context is too large (>30k tokens)
+            import tiktoken
+            compression_result = None
+            try:
+                encoding = tiktoken.encoding_for_model(self.config.llm_model if hasattr(self.config, 'llm_model') else 'gpt-3.5-turbo')
+                token_count = len(encoding.encode(organized_context))
+                
+                if token_count > 30000:
+                    logger.info(f"🗜️ Context too large ({token_count} tokens), applying compression")
+                    # Initialize context compressor only when needed
+                    compressor = ContextCompressor(self.config.llm_model if hasattr(self.config, 'llm_model') else 'gpt-3.5-turbo')
+                    compression_result = await compressor.compress_context(context_data, target_tokens=25000)
+                    logger.info(f"Context compression: {compression_result.original_size} -> {compression_result.compressed_size} tokens (ratio: {compression_result.compression_ratio:.2f})")
+                    combined_context = compression_result.compressed_content
+                else:
+                    logger.info(f"✅ Context size acceptable ({token_count} tokens), using full context")
+                    combined_context = organized_context
+                    
+            except Exception as e:
+                logger.warning(f"Token counting failed: {e}, using full context")
+                combined_context = organized_context
             
             # Use GenomicAnswerer to synthesize final response
             if combined_context.strip():
@@ -406,24 +439,29 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             total_tasks = execution_summary.get("total", 0)
             completed_tasks = execution_summary.get("completed", 0)
             
+            metadata = {
+                "execution_mode": "agentic",
+                "total_tasks": total_tasks,
+                "completed_tasks": completed_tasks,
+                "execution_summary": execution_summary
+            }
+            
+            # Only include compression stats if compression occurred
+            if compression_result is not None:
+                metadata["compression_stats"] = {
+                    "original_tokens": compression_result.original_size,
+                    "compressed_tokens": compression_result.compressed_size,
+                    "compression_ratio": compression_result.compression_ratio,
+                    "compression_level": compression_result.compression_level.value,
+                    "chunks_processed": compression_result.chunks_processed
+                }
+            
             return {
                 "question": question,
                 "answer": answer,
                 "confidence": confidence,
                 "citations": citations,
-                "query_metadata": {
-                    "execution_mode": "agentic",
-                    "total_tasks": total_tasks,
-                    "completed_tasks": completed_tasks,
-                    "execution_summary": execution_summary,
-                    "compression_stats": {
-                        "original_tokens": compression_result.original_size,
-                        "compressed_tokens": compression_result.compressed_size,
-                        "compression_ratio": compression_result.compression_ratio,
-                        "compression_level": compression_result.compression_level.value,
-                        "chunks_processed": compression_result.chunks_processed
-                    }
-                }
+                "query_metadata": metadata
             }
             
         except Exception as e:
@@ -492,6 +530,107 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         return organized_data
     
+    def _organize_context_for_synthesis(self, context_data: Dict[str, Any]) -> str:
+        """
+        Organize context data into readable format for synthesis without compression.
+        
+        Args:
+            context_data: Organized context data from task results
+            
+        Returns:
+            Formatted context string for LLM synthesis
+        """
+        context_parts = []
+        
+        # Add structured data results
+        if context_data.get('structured_data'):
+            context_parts.append("=== STRUCTURED DATA RESULTS ===")
+            for i, item in enumerate(context_data['structured_data'], 1):
+                context_parts.append(f"Result {i}: {item}")
+            context_parts.append("")
+        
+        # Add semantic data results
+        if context_data.get('semantic_data'):
+            context_parts.append("=== SEMANTIC SIMILARITY RESULTS ===")
+            for i, item in enumerate(context_data['semantic_data'], 1):
+                context_parts.append(f"Similar {i}: {item}")
+            context_parts.append("")
+        
+        # Add tool execution results
+        if context_data.get('tool_results'):
+            context_parts.append("=== TOOL EXECUTION RESULTS ===")
+            for tool_result in context_data['tool_results']:
+                context_parts.append(f"Task {tool_result['task_id']} ({tool_result['tool_name']}):")
+                context_parts.append(f"  {tool_result['result']}")
+            context_parts.append("")
+        
+        # Add metadata
+        if context_data.get('metadata'):
+            context_parts.append("=== EXECUTION METADATA ===")
+            for task_id, metadata in context_data['metadata'].items():
+                context_parts.append(f"Task {task_id}: {metadata}")
+            context_parts.append("")
+        
+        return "\n".join(context_parts)
+    
+    def _format_context_for_token_check(self, results: List[Dict[str, Any]]) -> str:
+        """Format results into a string for token counting without full formatting."""
+        if not results:
+            return ""
+        
+        # Create a representative sample for token counting
+        formatted_parts = []
+        for i, result in enumerate(results[:10]):  # Sample first 10 for token estimation
+            formatted_parts.append(f"Result {i+1}: {str(result)}")
+        
+        # Estimate total size based on sample
+        sample_size = len("\n".join(formatted_parts))
+        estimated_total = sample_size * (len(results) / min(len(results), 10))
+        
+        # Return either sample or indication of size
+        if len(results) <= 10:
+            return "\n".join(formatted_parts)
+        else:
+            return "\n".join(formatted_parts) + f"\n... (estimated {estimated_total} characters for {len(results)} total results)"
+    
+    def _get_compression_target_size(self, retrieval_plan, results: List[Dict[str, Any]], question: str = "") -> int:
+        """
+        Determine appropriate compression target size based on query type and data characteristics.
+        
+        Args:
+            retrieval_plan: DSPy retrieval plan with query information
+            results: Raw results from database query
+            question: Original user question for context
+            
+        Returns:
+            Target size for compression
+        """
+        # Get query details
+        cypher_query = getattr(retrieval_plan, 'cypher_query', '')
+        search_strategy = getattr(retrieval_plan, 'search_strategy', '')
+        
+        # Check question and query for CAZyme-related queries (need more comprehensive data)
+        cazyme_terms = ['cazyme', 'carbohydrate', 'glycoside', 'hydrolase', 'transferase']
+        if any(cazyme_term in cypher_query.lower() for cazyme_term in cazyme_terms) or \
+           any(cazyme_term in question.lower() for cazyme_term in cazyme_terms):
+            logger.info("🧬 CAZyme query detected - using expanded target size")
+            return min(len(results), 300)  # Allow up to 300 CAZymes for full analysis
+        
+        # Check for comparative queries that need to show distributions
+        comp_terms = ['compare', 'distribution', 'across genomes', 'contrast', 'each genome']
+        if any(comp_term in cypher_query.lower() for comp_term in comp_terms) or \
+           any(comp_term in question.lower() for comp_term in comp_terms):
+            logger.info("📊 Comparative query detected - using expanded target size")
+            return min(len(results), 200)  # Allow up to 200 for comparison
+        
+        # Check for large result sets that might need more space
+        if len(results) > 100:
+            logger.info(f"📈 Large result set detected ({len(results)} results) - using expanded target size")
+            return min(len(results), 100)  # Allow up to 100 for large datasets
+        
+        # Default compression for smaller queries
+        return min(len(results), 50)
+    
     async def _retrieve_context_with_fallback(self, question: str, query_type: str, retrieval_plan, 
                                             scoped_query: str, original_query: str) -> GenomicContext:
         """
@@ -502,7 +641,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         # First try the scoped query
         logger.info("🎯 Trying scoped query first")
-        context = await self._retrieve_context(query_type, retrieval_plan)
+        context = await self._retrieve_context(query_type, retrieval_plan, question)
         
         # If we got results, return them
         if context.structured_data or context.semantic_data:
@@ -515,7 +654,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             # Restore original query and retry (also validate it)
             retrieval_plan.cypher_query = self._validate_comparative_query(question, original_query)
-            fallback_context = await self._retrieve_context(query_type, retrieval_plan)
+            fallback_context = await self._retrieve_context(query_type, retrieval_plan, question)
             
             if fallback_context.structured_data or fallback_context.semantic_data:
                 logger.info(f"✅ Fallback unscoped query successful: {len(fallback_context.structured_data)} results")
@@ -527,7 +666,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         logger.warning("❌ Both scoped and unscoped queries returned no results")
         return context
     
-    async def _retrieve_context(self, query_type: str, retrieval_plan) -> GenomicContext:
+    async def _retrieve_context(self, query_type: str, retrieval_plan, question: str = "") -> GenomicContext:
         """
         Retrieve context based on query type and plan.
         This is a simplified version - the full implementation is complex.
@@ -549,23 +688,50 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         repair_message = repair_result.user_message
                 
                 if result.results:
-                    # Apply context compression if needed
-                    compressed_context, compression_stats = self.context_compressor.compress_context(
-                        result.results, 
-                        target_size=50, 
-                        preserve_diversity=True
-                    )
+                    # Check if compression is needed based on context size
+                    formatted_context = self._format_context_for_token_check(result.results)
                     
-                    metadata = result.metadata.copy()
-                    metadata['compression_stats'] = compression_stats
-                    
-                    return GenomicContext(
-                        structured_data=result.results,
-                        semantic_data=[],
-                        metadata=metadata,
-                        query_time=time.time() - start_time,
-                        compressed_context=compressed_context
-                    )
+                    import tiktoken
+                    try:
+                        encoding = tiktoken.encoding_for_model('gpt-3.5-turbo')  # Default for token counting
+                        token_count = len(encoding.encode(formatted_context))
+                        
+                        if token_count > 30000:
+                            logger.info(f"🗜️ Context too large ({token_count} tokens), applying compression")
+                            # Apply context compression with smart target sizing
+                            target_size = self._get_compression_target_size(retrieval_plan, result.results, question)
+                            compressed_context, compression_stats = self.context_compressor.compress_context(
+                                result.results, 
+                                target_size=target_size, 
+                                preserve_diversity=True
+                            )
+                            
+                            metadata = result.metadata.copy()
+                            metadata['compression_stats'] = compression_stats
+                            
+                            return GenomicContext(
+                                structured_data=result.results,
+                                semantic_data=[],
+                                metadata=metadata,
+                                query_time=time.time() - start_time,
+                                compressed_context=compressed_context
+                            )
+                        else:
+                            logger.info(f"✅ Context size acceptable ({token_count} tokens), using full results")
+                            return GenomicContext(
+                                structured_data=result.results,
+                                semantic_data=[],
+                                metadata=result.metadata,
+                                query_time=time.time() - start_time
+                            )
+                    except Exception as e:
+                        logger.warning(f"Token counting failed: {e}, using full results")
+                        return GenomicContext(
+                            structured_data=result.results,
+                            semantic_data=[],
+                            metadata=result.metadata,
+                            query_time=time.time() - start_time
+                        )
                 elif repair_message:
                     return GenomicContext(
                         structured_data=[],

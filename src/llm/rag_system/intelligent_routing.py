@@ -137,6 +137,9 @@ class IntelligentRouter:
             reasoning=reasoning
         )
         
+        # Store original question for routing decisions
+        analysis._original_question = question
+        
         logger.info(f"📊 Query analysis: {complexity.value} complexity, {scope.value} scope")
         logger.info(f"💭 Reasoning: {reasoning}")
         
@@ -152,6 +155,35 @@ class IntelligentRouter:
         Returns:
             True if agentic mode should be used, False for traditional mode
         """
+        # SPECIAL CASE: Force CAZyme queries to use traditional mode
+        # The agentic mode has broken query generation for CAZyme-specific data
+        question_lower = getattr(analysis, '_original_question', '').lower()
+        cazyme_terms = ['cazyme', 'carbohydrate', 'glycoside', 'carbohydrate-active', 'dbcan']
+        if any(term in question_lower for term in cazyme_terms):
+            logger.info("🧬 CAZyme query detected - forcing traditional mode for proper query generation")
+            return False
+        
+        # SPECIAL CASE: Force BGC queries to use traditional mode
+        # The agentic mode loses context and generates unrelated KEGG queries
+        bgc_terms = ['bgc', 'biosynthetic', 'gene cluster', 'secondary metabolite', 'natural product', 'polyketide', 'nrps', 'terpene']
+        if any(term in question_lower for term in bgc_terms):
+            logger.info("🧬 BGC query detected - forcing traditional mode for proper query generation")
+            return False
+        
+        # SPECIAL CASE: Force transport system queries to use traditional mode
+        # The agentic mode generates overly complex task plans that timeout
+        transport_terms = ['transport', 'transporter', 'abc transport', 'metal transport', 'iron transport', 'permease', 'channel']
+        if any(term in question_lower for term in transport_terms):
+            logger.info("🚛 Transport system query detected - forcing traditional mode for efficiency")
+            return False
+        
+        # SPECIAL CASE: Force metabolic pathway queries to use traditional mode
+        # The agentic mode generates massive contexts (>1M tokens) for pathway reconstruction
+        pathway_terms = ['glycolysis', 'pathway', 'tca cycle', 'metabolism', 'metabolic', 'carbon fixation', 'biosynthesis', 'degradation']
+        if any(term in question_lower for term in pathway_terms):
+            logger.info("🧪 Metabolic pathway query detected - forcing traditional mode for efficiency")
+            return False
+        
         # Always use agentic mode for complex queries
         if analysis.complexity == QueryComplexity.COMPLEX:
             return True

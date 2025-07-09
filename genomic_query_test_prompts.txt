@@ -1,0 +1,97 @@
+# Genomic RAG System Test Prompts
+# Comprehensive test suite for validating all system components
+
+## Test Genomes Overview:
+# - Burkholderiales (1,050 CAZymes) - Soil bacterium, metabolic powerhouse
+# - PLM0_60_b1 (419 CAZymes) - MAG, moderate capabilities  
+# - Candidatus Muproteobacteria (264 CAZymes) - CPR bacterium, streamlined
+# - Candidatus Nomurabacteria (99 CAZymes) - CPR bacterium, minimal
+
+## 1. BGC & Secondary Metabolism Tests
+"Which genomes contain the most biosynthetic gene clusters and what products do they make?"
+"Show me all polyketide-producing BGCs in the dataset"
+"Compare BGC density across the four genomes"
+"Find BGCs with high confidence scores"
+"What types of secondary metabolites can each genome potentially produce?"
+
+## 2. Transport System Analysis
+"Find all metal transport systems and compare their distribution across genomes"
+"Which genome has the most diverse transport capabilities?"
+"Show me ABC transporters in the Burkholderiales genome"
+"Compare iron acquisition systems across all genomes"
+"Find sugar transport systems and their genomic context"
+
+## 3. Central Metabolism Queries
+"Which genomes can perform complete glycolysis?"
+"Compare carbon fixation pathways across all four genomes"
+"Find all enzymes involved in the TCA cycle"
+"Show me nitrogen metabolism capabilities in each genome"
+"Which genome has the most complete amino acid biosynthesis pathways?"
+
+## 4. CPR-Specific Biology
+"What metabolic capabilities do the Candidatus genomes retain compared to Burkholderiales?"
+"Show me essential genes missing in CPR bacteria"
+"Compare ribosomal protein content across genomes"
+"Find streamlined metabolic pathways in minimal genomes"
+"What functions are conserved across all four genomes?"
+
+## 5. Protein Similarity Edge Cases
+"Find proteins similar to DNA repair enzymes"
+"Show me uncharacterized proteins similar to known transporters"
+"Find divergent homologs of central metabolism enzymes"
+"Identify proteins unique to the Burkholderiales genome"
+"Show me proteins with no functional annotation but high similarity to characterized proteins"
+
+## 6. Complex Comparative Queries
+"Create a functional profile comparing all four genomes across major subsystems"
+"Which genome is most similar to Burkholderiales in terms of metabolic potential?"
+"Show me the top 10 most abundant protein families in each genome"
+"Compare stress response systems across all genomes"
+"Find functional categories that show the biggest differences between genomes"
+
+## 7. Genomic Context Queries
+"Find gene clusters involved in polysaccharide degradation"
+"Show me operons containing transport genes"
+"Which genes are located near BGCs in each genome?"
+"Find co-located CAZyme and transport genes"
+"Show me genomic neighborhoods of central metabolism genes"
+
+## 8. Integration Stress Tests
+"Find all proteins with both CAZyme and transport annotations"
+"Show me BGCs that contain CAZyme genes"
+"Which transport systems are co-located with carbohydrate metabolism genes?"
+"Find proteins annotated by multiple databases with conflicting functions"
+"Show me the overlap between KEGG and PFAM annotations"
+
+## 9. Performance & Edge Case Tests
+"Show me every protein in the Burkholderiales genome with complete annotations"
+"Find all proteins longer than 1000 amino acids"
+"Which genes have the highest GC content?"
+"Show me proteins with the most conserved domains"
+"Find all hypothetical proteins with similarity to characterized proteins"
+
+## 10. Breaking Point Queries (Expected to stress the system)
+"Give me a complete metabolic reconstruction of all four genomes with pathway completeness analysis"
+"Show me every protein in the dataset with its domains, functions, and genomic context"
+"Create a comprehensive comparison matrix of all functional categories across genomes"
+"Generate a detailed report on all secondary metabolite potential in the dataset"
+"Compare every functional annotation between all pairs of genomes"
+
+## Expected Issues by Category:
+# BGC Integration: GECCO data not properly linked, product prediction failures
+# Transport Annotation: Missing KEGG transport terms, conflicting classifications
+# Pathway Reconstruction: Incomplete pathway mapping, missing enzyme handling
+# CPR Genome Handling: System assumptions breaking on minimal genomes
+# Cross-Annotation Conflicts: Same protein with conflicting functional assignments
+# Large Result Management: Performance issues, memory problems, compression failures
+# Coordinate Systems: Gene location analysis, operon prediction problems
+# Schema Integration: Multi-database conflicts, relationship mapping issues
+
+## Success Criteria:
+# - All BGC queries return actual product types (not "Unknown")
+# - Transport queries use both KEGG and PFAM data appropriately
+# - Comparative queries show all genomes without inappropriate LIMIT clauses
+# - CPR genomes handled gracefully without system crashes
+# - Large datasets compressed intelligently without losing critical information
+# - Genomic coordinates and clustering work correctly
+# - Cross-database annotations integrated without conflicts
