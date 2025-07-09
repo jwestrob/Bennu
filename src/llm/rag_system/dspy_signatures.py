@@ -73,6 +73,18 @@ if DSPY_AVAILABLE:
         
         REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
         
+        CAZYME QUERY DETECTION - MANDATORY:
+        When user mentions CAZyme, carbohydrate, glycoside, carbohydrate-active, dbCAN:
+        - ALWAYS use Cazymeannotation and Cazymefamily nodes (NOT Domain/PFAM)
+        - Use Pattern 4 from schema: (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily)
+        - Include cf.familyId, cf.cazymeType, ca.substrateSpecificity for family details
+        - Connect to genome via: (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(genome:Genome)
+        
+        TRANSPORT QUERY DETECTION:
+        When user mentions transport, transporter, channel, permease:
+        - Use Pattern 1 from schema: KEGG-based transport search
+        - Filter by: WHERE toLower(ko.description) CONTAINS 'transport'
+        
         COMPARATIVE QUERY RULES - NEVER USE LIMIT FOR THESE PATTERNS:
         - "Which genomes" → Show ALL genomes for comparison
         - "Compare across genomes" → Show ALL genomes
