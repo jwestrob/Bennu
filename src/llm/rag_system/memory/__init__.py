@@ -12,7 +12,8 @@ from .note_schemas import (
     SynthesisNote,
     NotingDecisionResult,
     CrossTaskConnection,
-    SessionMetadata
+    SessionMetadata,
+    ConfidenceLevel
 )
 from .progressive_synthesizer import ProgressiveSynthesizer
 from .memory_utils import (
@@ -29,6 +30,7 @@ __all__ = [
     "NotingDecisionResult",
     "CrossTaskConnection",
     "SessionMetadata",
+    "ConfidenceLevel",
     "ProgressiveSynthesizer",
     "generate_session_id",
     "cleanup_old_sessions",
