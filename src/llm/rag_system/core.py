@@ -26,6 +26,7 @@ from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
 from .genome_scoping import QueryScopeEnforcer
 from .context_compression import ContextCompressor
+from .memory import NoteKeeper, ProgressiveSynthesizer
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -38,13 +39,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
     and intelligent code interpreter enhancement.
     """
     
-    def __init__(self, config: LLMConfig, chunk_context_size: int = 4096):
+    def __init__(self, config: LLMConfig, chunk_context_size: int = 4096, enable_memory: bool = True):
         """Initialize the genomic RAG system."""
         if DSPY_AVAILABLE:
             super().__init__()
         
         self.config = config
         self.chunk_context_size = chunk_context_size
+        self.enable_memory = enable_memory
         
         # Initialize processors
         self.neo4j_processor = Neo4jQueryProcessor(config)
@@ -56,6 +58,10 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         self.scope_enforcer = QueryScopeEnforcer()
         self.context_compressor = ContextCompressor()
         
+        # Initialize memory system
+        self.note_keeper = NoteKeeper() if enable_memory else None
+        self.progressive_synthesizer = None  # Will be initialized when needed
+        
         # Configure DSPy
         self._configure_dspy()
         
@@ -65,6 +71,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             self.classifier = dspy.Predict(QueryClassifier)
             self.retriever = dspy.Predict(ContextRetriever)
             self.answerer = dspy.Predict(GenomicAnswerer)
+            
+            # Initialize synthesizer for progressive synthesis
+            from .dspy_signatures import GenomicSummarizer
+            self.synthesizer = dspy.Predict(GenomicSummarizer)
+        
+        # Store DSPy availability for task executor
+        self.dspy_available = DSPY_AVAILABLE
         
         # Setup debug logging
         setup_debug_logging()
@@ -349,7 +362,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 graph.add_task(task)
             
             # Step 3: Execute TaskGraph with dependency resolution
-            executor = TaskExecutor(self)
+            executor = TaskExecutor(self, note_keeper=self.note_keeper)
             execution_results = await executor.execute_graph(graph)
             
             # Check execution success
@@ -372,7 +385,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
     
     async def _synthesize_agentic_results(self, question: str, execution_results: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Synthesize final answer from agentic task execution results with context compression.
+        Synthesize final answer from agentic task execution results using progressive synthesis.
         
         Args:
             question: Original user question
@@ -384,20 +397,58 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         logger.info("Synthesizing agentic results into final answer")
         
         try:
-            # Import context compression
-            from ..context_compression import ContextCompressor
+            # Set session context for note-taking
+            if self.note_keeper:
+                self.note_keeper.set_session_context(question, "agentic")
+            
+            # Check if we have notes to use for progressive synthesis
+            if self.note_keeper:
+                task_notes = self.note_keeper.get_all_task_notes()
+                
+                if task_notes:
+                    logger.info(f"🧠 Using progressive synthesis with {len(task_notes)} task notes")
+                    
+                    # Initialize progressive synthesizer
+                    if not self.progressive_synthesizer:
+                        self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
+                    
+                    # Use progressive synthesis
+                    answer = self.progressive_synthesizer.synthesize_progressive(
+                        task_notes=task_notes,
+                        dspy_synthesizer=self.synthesizer,
+                        question=question
+                    )
+                    
+                    # Get synthesis statistics
+                    synthesis_stats = self.progressive_synthesizer.get_synthesis_statistics()
+                    
+                    return {
+                        "question": question,
+                        "answer": answer,
+                        "confidence": "high",
+                        "citations": f"Progressive synthesis from {len(task_notes)} task notes",
+                        "query_metadata": {
+                            "execution_mode": "agentic_with_memory",
+                            "total_tasks": execution_results.get("execution_summary", {}).get("total", 0),
+                            "completed_tasks": execution_results.get("execution_summary", {}).get("completed", 0),
+                            "task_notes": len(task_notes),
+                            "synthesis_stats": synthesis_stats,
+                            "note_taking_enabled": True
+                        }
+                    }
+            
+            # Fallback to traditional synthesis if no notes available
+            logger.info("📝 No task notes available, using traditional synthesis")
             
             # Collect all completed task results
             completed_results = execution_results.get("completed_results", {})
             execution_summary = execution_results.get("execution_summary", {})
             
-            # Organize context data for compression
+            # Organize context data for traditional synthesis
             context_data = self._organize_results_for_compression(completed_results)
-            
-            # Organize context data for potential compression
             organized_context = self._organize_context_for_synthesis(context_data)
             
-            # Only compress if context is too large (>30k tokens)
+            # Apply compression if needed (same as before)
             import tiktoken
             compression_result = None
             try:
@@ -406,11 +457,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 
                 if token_count > 30000:
                     logger.info(f"🗜️ Context too large ({token_count} tokens), applying compression")
-                    # Initialize context compressor only when needed
-                    compressor = ContextCompressor(self.config.llm_model if hasattr(self.config, 'llm_model') else 'gpt-3.5-turbo')
-                    compression_result = await compressor.compress_context(context_data, target_tokens=25000)
-                    logger.info(f"Context compression: {compression_result.original_size} -> {compression_result.compressed_size} tokens (ratio: {compression_result.compression_ratio:.2f})")
-                    combined_context = compression_result.compressed_content
+                    # Use context compression as fallback
+                    compressor = ContextCompressor()
+                    combined_context, compression_stats = compressor.compress_context(
+                        [{"context": organized_context}], target_size=25
+                    )
+                    logger.info(f"Context compression: {compression_stats.original_count} -> {compression_stats.compressed_count} results")
                 else:
                     logger.info(f"✅ Context size acceptable ({token_count} tokens), using full context")
                     combined_context = organized_context
@@ -435,26 +487,17 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 confidence = "low"
                 citations = "Agentic workflow execution"
             
-            # Add execution metadata including compression stats
+            # Add execution metadata
             total_tasks = execution_summary.get("total", 0)
             completed_tasks = execution_summary.get("completed", 0)
             
             metadata = {
-                "execution_mode": "agentic",
+                "execution_mode": "agentic_traditional_synthesis",
                 "total_tasks": total_tasks,
                 "completed_tasks": completed_tasks,
-                "execution_summary": execution_summary
+                "execution_summary": execution_summary,
+                "note_taking_enabled": self.note_keeper is not None
             }
-            
-            # Only include compression stats if compression occurred
-            if compression_result is not None:
-                metadata["compression_stats"] = {
-                    "original_tokens": compression_result.original_size,
-                    "compressed_tokens": compression_result.compressed_size,
-                    "compression_ratio": compression_result.compression_ratio,
-                    "compression_level": compression_result.compression_level.value,
-                    "chunks_processed": compression_result.chunks_processed
-                }
             
             return {
                 "question": question,

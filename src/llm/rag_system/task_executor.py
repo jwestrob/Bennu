@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from .task_management import Task, TaskGraph, TaskStatus, TaskType
 from .external_tools import AVAILABLE_TOOLS
 from .utils import safe_log_data
+from .memory import NoteKeeper, NotingDecisionResult, CrossTaskConnection, ConfidenceLevel
+from .dspy_signatures import NotingDecision
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +40,28 @@ class TaskExecutor:
     - Task result aggregation for final analysis
     """
     
-    def __init__(self, rag_system):
+    def __init__(self, rag_system, note_keeper: Optional[NoteKeeper] = None):
         """
         Initialize executor with access to RAG system components.
         
         Args:
             rag_system: GenomicRAG instance for access to processors and DSPy modules
+            note_keeper: Optional NoteKeeper for persistent note-taking
         """
         self.rag_system = rag_system
         self.completed_results = {}  # Store results for inter-task dependencies
+        self.note_keeper = note_keeper
+        
+        # Initialize note-taking decision module if DSPy is available
+        if hasattr(self.rag_system, 'dspy_available') and self.rag_system.dspy_available:
+            try:
+                import dspy
+                self.noting_decision = dspy.Predict(NotingDecision)
+            except ImportError:
+                logger.warning("DSPy not available - note-taking disabled")
+                self.noting_decision = None
+        else:
+            self.noting_decision = None
         
     async def execute_task(self, task: Task) -> ExecutionResult:
         """
@@ -76,9 +91,8 @@ class TaskExecutor:
             # Store result for future tasks
             self.completed_results[task.task_id] = result
             
-            logger.info(f"Task {task.task_id} completed successfully in {execution_time:.2f}s")
-            
-            return ExecutionResult(
+            # Create execution result
+            execution_result = ExecutionResult(
                 task_id=task.task_id,
                 success=True,
                 result=result,
@@ -88,6 +102,14 @@ class TaskExecutor:
                     "description": task.description
                 }
             )
+            
+            # Consider note-taking after successful execution
+            if self.note_keeper and self.noting_decision:
+                await self._consider_note_taking(task, execution_result)
+            
+            logger.info(f"Task {task.task_id} completed successfully in {execution_time:.2f}s")
+            
+            return execution_result
             
         except Exception as e:
             execution_time = time.time() - start_time
@@ -354,6 +376,192 @@ print("Analysis completed")
 '''
         
         return code.strip()
+    
+    async def _consider_note_taking(self, task: Task, execution_result: ExecutionResult) -> None:
+        """
+        Consider whether to take notes for a completed task.
+        
+        Args:
+            task: Task that was executed
+            execution_result: Result of task execution
+        """
+        try:
+            # Get session summary for context
+            session_summary = self.note_keeper.get_session_summary()
+            
+            # Format execution result for decision
+            result_summary = self._format_result_for_decision(execution_result)
+            
+            # Use DSPy to decide whether to take notes
+            decision = self.noting_decision(
+                task_description=task.description,
+                execution_result=result_summary,
+                existing_notes=session_summary
+            )
+            
+            # Parse decision result
+            should_record = getattr(decision, 'should_record', False)
+            
+            if should_record:
+                logger.info(f"📝 Recording notes for task {task.task_id}: {decision.reasoning}")
+                
+                # Extract note content from decision
+                observations = self._parse_list_output(getattr(decision, 'observations', []))
+                key_findings = self._parse_list_output(getattr(decision, 'key_findings', []))
+                cross_connections = self._parse_cross_connections(getattr(decision, 'cross_connections', []))
+                quantitative_data = self._parse_quantitative_data(getattr(decision, 'quantitative_data', {}))
+                
+                # Create decision result
+                decision_result = NotingDecisionResult(
+                    should_record=should_record,
+                    reasoning=getattr(decision, 'reasoning', ''),
+                    importance_score=float(getattr(decision, 'importance_score', 5.0))
+                )
+                
+                # Record the notes
+                success = self.note_keeper.record_task_notes(
+                    task_id=task.task_id,
+                    task_type=task.task_type.value,
+                    description=task.description,
+                    decision_result=decision_result,
+                    observations=observations,
+                    key_findings=key_findings,
+                    quantitative_data=quantitative_data,
+                    cross_connections=cross_connections,
+                    confidence=ConfidenceLevel.MEDIUM,
+                    execution_time=execution_result.execution_time,
+                    tokens_used=self._estimate_tokens_used(execution_result)
+                )
+                
+                if success:
+                    logger.info(f"✅ Notes recorded for task {task.task_id}")
+                else:
+                    logger.warning(f"❌ Failed to record notes for task {task.task_id}")
+            else:
+                logger.debug(f"⏭️ Skipping notes for task {task.task_id}: {decision.reasoning}")
+                
+        except Exception as e:
+            logger.error(f"Error in note-taking consideration: {e}")
+    
+    def _format_result_for_decision(self, execution_result: ExecutionResult) -> str:
+        """Format execution result for note-taking decision."""
+        result_parts = []
+        
+        # Basic execution info
+        result_parts.append(f"Execution time: {execution_result.execution_time:.2f}s")
+        result_parts.append(f"Success: {execution_result.success}")
+        
+        # Format result content
+        if execution_result.result:
+            result_data = execution_result.result
+            
+            # Handle different result types
+            if isinstance(result_data, dict):
+                if 'context' in result_data:
+                    context = result_data['context']
+                    structured_count = len(context.structured_data) if hasattr(context, 'structured_data') else 0
+                    semantic_count = len(context.semantic_data) if hasattr(context, 'semantic_data') else 0
+                    result_parts.append(f"Retrieved {structured_count} structured + {semantic_count} semantic results")
+                    
+                    # Sample some results
+                    if structured_count > 0:
+                        sample_results = context.structured_data[:3]
+                        result_parts.append(f"Sample results: {str(sample_results)}")
+                
+                if 'tool_result' in result_data:
+                    result_parts.append(f"Tool result: {str(result_data['tool_result'])[:200]}...")
+            else:
+                result_parts.append(f"Result: {str(result_data)[:200]}...")
+        
+        return " | ".join(result_parts)
+    
+    def _parse_list_output(self, output: Any) -> List[str]:
+        """Parse list output from DSPy, handling various formats."""
+        if isinstance(output, list):
+            return [str(item) for item in output if item]
+        elif isinstance(output, str):
+            # Try to parse as list-like string
+            if output.startswith('[') and output.endswith(']'):
+                try:
+                    import ast
+                    parsed = ast.literal_eval(output)
+                    return [str(item) for item in parsed if item]
+                except:
+                    pass
+            # Split by common delimiters
+            items = output.split(';') if ';' in output else output.split(',')
+            return [item.strip() for item in items if item.strip()]
+        else:
+            return [str(output)] if output else []
+    
+    def _parse_cross_connections(self, connections: Any) -> List[CrossTaskConnection]:
+        """Parse cross-task connections from DSPy output."""
+        parsed_connections = []
+        
+        if isinstance(connections, list):
+            items = connections
+        elif isinstance(connections, str):
+            items = connections.split(';') if ';' in connections else [connections]
+        else:
+            return parsed_connections
+        
+        for item in items:
+            if not item or not str(item).strip():
+                continue
+                
+            try:
+                # Expected format: "task_id:connection_type:description"
+                parts = str(item).split(':')
+                if len(parts) >= 3:
+                    task_id = parts[0].strip()
+                    connection_type = parts[1].strip()
+                    description = ':'.join(parts[2:]).strip()
+                    
+                    # Map connection type to enum
+                    from .memory.note_schemas import ConnectionType
+                    connection_enum = ConnectionType.INFORMS  # Default
+                    
+                    for conn_type in ConnectionType:
+                        if connection_type.lower() == conn_type.value.lower():
+                            connection_enum = conn_type
+                            break
+                    
+                    parsed_connections.append(CrossTaskConnection(
+                        connected_task=task_id,
+                        connection_type=connection_enum,
+                        description=description
+                    ))
+                    
+            except Exception as e:
+                logger.warning(f"Failed to parse connection '{item}': {e}")
+        
+        return parsed_connections
+    
+    def _parse_quantitative_data(self, data: Any) -> Dict[str, Any]:
+        """Parse quantitative data from DSPy output."""
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, str) and data.strip():
+            try:
+                import json
+                return json.loads(data)
+            except:
+                # Simple key:value parsing
+                result = {}
+                pairs = data.split(',')
+                for pair in pairs:
+                    if ':' in pair:
+                        key, value = pair.split(':', 1)
+                        result[key.strip()] = value.strip()
+                return result
+        else:
+            return {}
+    
+    def _estimate_tokens_used(self, execution_result: ExecutionResult) -> int:
+        """Estimate tokens used for this task execution."""
+        # Simple estimation based on result size
+        result_str = str(execution_result.result)
+        return len(result_str) // 4  # Rough estimate: 4 chars per token
     
     async def execute_graph(self, graph: TaskGraph) -> Dict[str, Any]:
         """
