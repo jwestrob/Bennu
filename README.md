@@ -5,13 +5,14 @@
 [![Nextflow](https://img.shields.io/badge/Nextflow-23.0+-green.svg)](https://nextflow.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **🎉 A revolutionary agentic AI platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with sophisticated biological reasoning, code execution capabilities, and world-class genomic insights.**
+> **🎉 An agentic AI platform that transforms microbial genome assemblies into intelligent, queryable knowledge graphs with sophisticated biological reasoning, code execution capabilities, and genomic insights.**
+
 
 ## 🚀 Platform Overview
 
-This represents the first **true AI playground for genomic data interpretation** - a comprehensive system where AI agents can navigate, analyze, and make sense of complex biological annotations that are incredibly difficult for humans to interpret at scale. 
+This represents the first **true AI playground for genomic data interpretation** - a comprehensive system where AI agents can navigate, analyze, and make sense of complex biological annotations that are difficult for humans to interpret at scale. 
 
-Built on a foundation of 7-stage bioinformatics pipelines, the platform culminates in an **agentic RAG system** that seamlessly integrates:
+The platform culminates in an **agentic RAG system** that seamlessly integrates:
 - **🧠 Multi-step reasoning** with sophisticated task orchestration
 - **🔬 Rich biological context** including genomic neighborhoods and functional clustering  
 - **💻 Secure code execution** for data analysis and visualization
@@ -21,7 +22,7 @@ Built on a foundation of 7-stage bioinformatics pipelines, the platform culminat
 ## ✨ World-Class Capabilities
 
 ### 🧬 **Biological Intelligence**
-- **Sophisticated Sequence Analysis**: Signal peptide prediction, transmembrane analysis, conserved motif identification, hydrophobicity profiling
+- **Sequence Analysis**: Signal peptide prediction, transmembrane analysis, conserved motif identification, hydrophobicity profiling
 - **Genomic Context Integration**: Precise distance calculations (3bp downstream), strand relationships, metabolic clustering analysis
 - **Functional Annotation Curation**: Intelligent classification system that distinguishes true transporters from energy metabolism proteins (solving the "ATP synthase problem")
 - **Professional Biological Insights**: Publication-quality analysis with proper PFAM/KEGG citations and biological interpretation
@@ -38,24 +39,6 @@ Built on a foundation of 7-stage bioinformatics pipelines, the platform culminat
 - **Functional Enrichment**: 1,145 PFAM families + 813 KEGG orthologs with authoritative descriptions
 - **Sequence Database**: 10,102+ proteins with 320-dimensional ESM2 semantic embeddings
 
-## 🎯 Revolutionary Use Cases
-
-### **Before vs After Enhancement**
-
-**Traditional Bioinformatics Output**:
-```
-"No neighbouring-gene list was included, so only intra-gene metrics can be analysed."
-```
-
-**Our Platform's Output**:
-```
-"A succinyl-CoA synthetase α-subunit gene begins 3 bp downstream (central TCA enzyme), 
-placing the transporter in a cluster of nutrient-uptake genes. Signal peptide prediction 
-shows typical Sec signal peptide with cleavage between ALA↓WGA (24/25). Hydropathy 
-analysis reveals 4-5 transmembrane helices with conserved 'GGVGPN' motif typical of 
-TctB family transporters."
-```
-
 ### **Sample AI Agent Queries**
 
 ```bash
@@ -65,9 +48,6 @@ python -m src.cli ask "Find 3 proteins involved in central metabolism and show m
 # Multi-stage similarity searches  
 python -m src.cli ask "Find proteins similar to heme transporters"
 # → Intelligent curation avoids ATP synthase, finds real substrate transporters
-
-# Code-powered analysis
-python -m src.cli ask "Analyze amino acid composition of transport proteins vs enzymes and create visualizations"
 
 # Genomic context analysis
 python -m src.cli ask "What metabolic pathways are clustered in the genomic neighborhood of scaffold_21_154?"
@@ -343,7 +323,7 @@ Confidence: high
 Sources: Results 1-7, 8-13, 14-18, 19-24
 ```
 
-- Prompt: (genome-kg) jacob@Mac ~/Documents/Sandbox/microbial_claude_matter main $ python3 -m src.cli ask "Tell me everything you can reasonably conclude about the metabolism and lifestyle of Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220.contigs (genome id)"
+- Prompt: python3 -m src.cli ask "Tell me everything you can reasonably conclude about the metabolism and lifestyle of Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220.contigs (genome id)"
 - Output:
 ```
 🤖 Answer:
