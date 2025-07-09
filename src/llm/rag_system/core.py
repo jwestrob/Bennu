@@ -228,16 +228,22 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         )
         console.print(f"🔍 Search strategy: {retrieval_plan.search_strategy}")
         
-        # Step 3: Enforce genome scoping in generated query
+        # Step 2.5: Validate query for comparative questions
         cypher_query = retrieval_plan.cypher_query
-        scoped_query, scope_metadata = self.scope_enforcer.enforce_genome_scope(question, cypher_query)
+        validated_query = self._validate_comparative_query(question, cypher_query)
+        if validated_query != cypher_query:
+            logger.info("Fixed comparative query - removed inappropriate LIMIT")
+            retrieval_plan.cypher_query = validated_query
+        
+        # Step 3: Enforce genome scoping in generated query
+        scoped_query, scope_metadata = self.scope_enforcer.enforce_genome_scope(question, validated_query)
         
         if scope_metadata['scope_applied']:
             console.print(f"🎯 Applied genome scoping: {scope_metadata['scope_reasoning']}")
             retrieval_plan.cypher_query = scoped_query
         
         # Step 4: Execute database queries with fallback logic
-        context = await self._retrieve_context_with_fallback(classification.query_type, retrieval_plan, scoped_query, cypher_query)
+        context = await self._retrieve_context_with_fallback(question, classification.query_type, retrieval_plan, scoped_query, cypher_query)
         
         # Check for TaskRepairAgent messages first
         if 'repair_message' in context.metadata:
@@ -486,11 +492,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         return organized_data
     
-    async def _retrieve_context_with_fallback(self, query_type: str, retrieval_plan, 
+    async def _retrieve_context_with_fallback(self, question: str, query_type: str, retrieval_plan, 
                                             scoped_query: str, original_query: str) -> GenomicContext:
         """
         Retrieve context with fallback logic - try scoped query first, fallback to original if no results.
         """
+        # CRITICAL: Validate comparative queries BEFORE execution
+        retrieval_plan.cypher_query = self._validate_comparative_query(question, retrieval_plan.cypher_query)
+        
         # First try the scoped query
         logger.info("🎯 Trying scoped query first")
         context = await self._retrieve_context(query_type, retrieval_plan)
@@ -504,8 +513,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         if scoped_query != original_query:
             logger.info("⚠️ Scoped query returned no results, trying original unscoped query")
             
-            # Restore original query and retry
-            retrieval_plan.cypher_query = original_query
+            # Restore original query and retry (also validate it)
+            retrieval_plan.cypher_query = self._validate_comparative_query(question, original_query)
             fallback_context = await self._retrieve_context(query_type, retrieval_plan)
             
             if fallback_context.structured_data or fallback_context.semantic_data:
@@ -601,6 +610,55 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 query_time=time.time() - start_time
             )
     
+    def _validate_comparative_query(self, question: str, cypher_query: str) -> str:
+        """
+        Validate and fix comparative queries that incorrectly use LIMIT 1.
+        
+        Args:
+            question: Original user question
+            cypher_query: Generated Cypher query to validate
+            
+        Returns:
+            Validated (and potentially fixed) Cypher query
+        """
+        import re
+        
+        # Define patterns that indicate comparative questions requiring ALL results
+        comparative_patterns = [
+            r"which\s+(?:of\s+the\s+)?genomes?\s+(?:have|has|contain)",  # "which (of the) genomes have"
+            r"for\s+each\s+genome",  # "for each genome"
+            r"compare\s+.*?\s+(?:across\s+)?(?:all\s+)?genomes?",  # "compare X across genomes"
+            r"(?:most|least|highest|lowest|best|worst)\s+(?:among|across|between)\s+genomes?",  # "most among genomes"
+            r"which\s+.*?genomes?\s+.*?(?:has|have)\s+.*?(?:most|least|highest|lowest)",  # "which ... genomes ... has ... most"
+            r"how\s+(?:many|much).+(?:across|between|among)\s+genomes?",  # "how many across genomes"
+            r"distribution\s+(?:across|among|between)\s+genomes?",  # "distribution across genomes"
+            r"all\s+genomes?.+(?:count|number|amount)",  # "all genomes count"
+            r"rank\s+genomes?\s+by",  # "rank genomes by"
+            r"(?:count|number|total).+per\s+genome"  # "count per genome"
+        ]
+        
+        # Check if question contains comparative patterns
+        question_lower = question.lower()
+        is_comparative = any(re.search(pattern, question_lower) for pattern in comparative_patterns)
+        
+        if not is_comparative:
+            return cypher_query
+        
+        # Check if query has LIMIT 1 (problematic for comparative queries)
+        if re.search(r'\bLIMIT\s+1\b', cypher_query, re.IGNORECASE):
+            logger.warning(f"Detected LIMIT 1 in comparative query: {question}")
+            
+            # Remove LIMIT 1 but keep other LIMIT values
+            fixed_query = re.sub(r'\bLIMIT\s+1\b', '', cypher_query, flags=re.IGNORECASE)
+            
+            # Clean up any trailing whitespace or newlines
+            fixed_query = fixed_query.strip()
+            
+            logger.info(f"Fixed comparative query by removing LIMIT 1")
+            return fixed_query
+        
+        return cypher_query
+
     def _format_context(self, context: GenomicContext) -> str:
         """Format genomic context for LLM processing."""
         formatted_parts = []

@@ -15,34 +15,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-
-if DSPY_AVAILABLE:
-    
-    class GenomicQuery(dspy.Signature):
-        """You must generate exactly one Cypher query. DO NOT generate multiple queries.
-
-CRITICAL: If user asks for comprehensive analysis of metabolism and lifestyle, focus on the MOST IMPORTANT aspect only (like KEGG functions) in a single query.
-
-FORBIDDEN:
-- Multiple MATCH statements in sequence
-- Comments like /* comment */
-- Semicolons separating queries
-- Section headers or numbers
-
-REQUIRED FORMAT:
-MATCH (genome:Genome {genomeId: "GENOME_ID"})<-[:BELONGSTOGENOME]-(g:Gene)<-[:ENCODEDBY]-(p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN ko.id, ko.description, count(p) ORDER BY count(p) DESC
-
-For comprehensive questions, choose ONE of:
-1. KEGG functions (most important for metabolism)
-2. CAZyme families (for carbohydrate metabolism)  
-3. BGC clusters (for secondary metabolism)
-
-Never combine multiple approaches in one response."""
-        question = dspy.InputField(desc="Question about genomic data")
-        context = dspy.InputField(desc="Relevant genomic context and schema information")
-        query = dspy.OutputField(desc="ONE Cypher query only. No comments. No multiple queries.")
-
-    NEO4J_SCHEMA = """
+# Move NEO4J_SCHEMA outside the conditional so it can be imported even without DSPy
+NEO4J_SCHEMA = """
 CRITICAL RELATIONSHIP DIRECTION RULES:
 
 MANDATORY: START WITH (p:Protein) - NEVER BACKWARDS!
@@ -241,6 +215,32 @@ ORDER BY protein_count DESC, family_type, family_id
 MATCH (ca:Cazymeannotation) RETURN count(ca) AS total_cazymes
 ```
 """
+
+if DSPY_AVAILABLE:
+    
+    class GenomicQuery(dspy.Signature):
+        """You must generate exactly one Cypher query. DO NOT generate multiple queries.
+
+CRITICAL: If user asks for comprehensive analysis of metabolism and lifestyle, focus on the MOST IMPORTANT aspect only (like KEGG functions) in a single query.
+
+FORBIDDEN:
+- Multiple MATCH statements in sequence
+- Comments like /* comment */
+- Semicolons separating queries
+- Section headers or numbers
+
+REQUIRED FORMAT:
+MATCH (genome:Genome {genomeId: "GENOME_ID"})<-[:BELONGSTOGENOME]-(g:Gene)<-[:ENCODEDBY]-(p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog) RETURN ko.id, ko.description, count(p) ORDER BY count(p) DESC
+
+For comprehensive questions, choose ONE of:
+1. KEGG functions (most important for metabolism)
+2. CAZyme families (for carbohydrate metabolism)  
+3. BGC clusters (for secondary metabolism)
+
+Never combine multiple approaches in one response."""
+        question = dspy.InputField(desc="Question about genomic data")
+        context = dspy.InputField(desc="Relevant genomic context and schema information")
+        query = dspy.OutputField(desc="ONE Cypher query only. No comments. No multiple queries.")
     
     
     class TaxonomicClassification(dspy.Signature):
