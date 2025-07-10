@@ -188,6 +188,82 @@ if DSPY_AVAILABLE:
         key_findings = dspy.OutputField(desc="If recording: important biological findings or patterns")
         cross_connections = dspy.OutputField(desc="If recording: connections to other tasks (task_id:connection_type:description format)")
         quantitative_data = dspy.OutputField(desc="If recording: important numerical data or metrics")
+    
+    class ReportPartGenerator(dspy.Signature):
+        """
+        Generate a specific part of a multi-part genomic report.
+        
+        This signature handles individual sections of large reports that have been
+        chunked to manage token limits while maintaining scientific rigor and
+        comprehensive analysis.
+        
+        Each part should:
+        - Be self-contained but reference overall context
+        - Maintain consistent terminology and formatting
+        - Include quantitative analysis and biological insights
+        - Connect to broader themes when relevant
+        """
+        
+        question = dspy.InputField(desc="Original user question for context")
+        data_chunk = dspy.InputField(desc="Data subset for this specific report part")
+        part_context = dspy.InputField(desc="Context about this part's role in the overall report")
+        previous_parts_summary = dspy.InputField(desc="Summary of previous parts to maintain consistency")
+        report_type = dspy.InputField(desc="Type of report (e.g., 'crispr_systems', 'functional_comparison')")
+        
+        part_content = dspy.OutputField(desc="Detailed scientific content for this report part")
+        key_findings = dspy.OutputField(desc="Key biological findings from this part")
+        quantitative_summary = dspy.OutputField(desc="Quantitative metrics and statistics")
+        connections_to_whole = dspy.OutputField(desc="How this part connects to overall analysis")
+    
+    class ExecutiveSummaryGenerator(dspy.Signature):
+        """
+        Generate executive summary for multi-part genomic reports.
+        
+        Creates a concise overview that captures the essence of large-scale
+        genomic analyses while highlighting key findings and providing roadmap
+        for detailed sections.
+        
+        Should include:
+        - Overall scope and methodology
+        - Key quantitative findings
+        - Major biological insights
+        - Navigation guide for detailed sections
+        """
+        
+        question = dspy.InputField(desc="Original user question")
+        data_overview = dspy.InputField(desc="Statistical overview of the complete dataset")
+        key_patterns = dspy.InputField(desc="Major patterns identified across all data")
+        report_structure = dspy.InputField(desc="Structure of the multi-part report")
+        
+        executive_summary = dspy.OutputField(desc="Concise executive summary of findings")
+        scope_and_methodology = dspy.OutputField(desc="Overview of analysis scope and approach")
+        key_statistics = dspy.OutputField(desc="Essential quantitative findings")
+        navigation_guide = dspy.OutputField(desc="Guide to navigating the detailed report parts")
+    
+    class ReportSynthesisGenerator(dspy.Signature):
+        """
+        Generate final synthesis section for multi-part reports.
+        
+        Integrates findings from all report parts into coherent conclusions,
+        identifies cross-cutting themes, and provides biological interpretation
+        and recommendations for future work.
+        
+        Should provide:
+        - Integration of all parts
+        - Cross-cutting biological insights
+        - Evolutionary and ecological implications
+        - Recommendations for follow-up studies
+        """
+        
+        question = dspy.InputField(desc="Original user question")
+        all_parts_summary = dspy.InputField(desc="Summary of findings from all report parts")
+        cross_cutting_themes = dspy.InputField(desc="Themes that emerge across multiple parts")
+        quantitative_integration = dspy.InputField(desc="Integrated quantitative analysis")
+        
+        synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings")
+        biological_implications = dspy.OutputField(desc="Broader biological and evolutionary implications")
+        recommendations = dspy.OutputField(desc="Recommendations for future research or applications")
+        confidence_assessment = dspy.OutputField(desc="Assessment of confidence in conclusions")
         
 else:
     # Fallback classes when DSPy is not available
@@ -249,4 +325,37 @@ else:
                 'key_findings': [],
                 'cross_connections': [],
                 'quantitative_data': {}
+            })()
+    
+    class ReportPartGenerator(BaseMockSignature):
+        """Mock report part generator signature."""
+        
+        def __call__(self, **kwargs):
+            return type('MockResult', (), {
+                'part_content': "DSPy not available - multi-part reports disabled",
+                'key_findings': [],
+                'quantitative_summary': "No statistics available",
+                'connections_to_whole': "Mock report part"
+            })()
+    
+    class ExecutiveSummaryGenerator(BaseMockSignature):
+        """Mock executive summary generator signature."""
+        
+        def __call__(self, **kwargs):
+            return type('MockResult', (), {
+                'executive_summary': "DSPy not available - summary generation disabled",
+                'scope_and_methodology': "Mock analysis scope",
+                'key_statistics': "No statistics available",
+                'navigation_guide': "Mock navigation guide"
+            })()
+    
+    class ReportSynthesisGenerator(BaseMockSignature):
+        """Mock report synthesis generator signature."""
+        
+        def __call__(self, **kwargs):
+            return type('MockResult', (), {
+                'synthesis_content': "DSPy not available - synthesis disabled",
+                'biological_implications': "Mock implications",
+                'recommendations': "Mock recommendations",
+                'confidence_assessment': "low"
             })()

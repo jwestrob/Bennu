@@ -13,6 +13,7 @@ import tiktoken
 from .note_keeper import NoteKeeper
 from .note_schemas import TaskNote, SynthesisNote, ConfidenceLevel
 from .memory_utils import generate_session_id
+from .model_allocation import get_model_allocator
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,16 @@ class ProgressiveSynthesizer:
         except Exception as e:
             logger.warning(f"Failed to initialize tokenizer: {e}")
             self.tokenizer = None
+        
+        # Initialize model allocator for intelligent model selection
+        self.model_allocator = get_model_allocator()
     
     def synthesize_progressive(self, 
                              task_notes: List[TaskNote],
                              dspy_synthesizer,
-                             question: str) -> str:
+                             question: str,
+                             raw_data: List[Dict[str, Any]] = None,
+                             rag_system = None) -> str:
         """
         Perform progressive synthesis of task notes.
         
@@ -57,6 +63,8 @@ class ProgressiveSynthesizer:
             task_notes: List of TaskNote objects to synthesize
             dspy_synthesizer: DSPy synthesizer module
             question: Original user question
+            raw_data: Optional raw data for analysis
+            rag_system: Optional RAG system for task-based processing
             
         Returns:
             Final comprehensive synthesis
@@ -66,6 +74,95 @@ class ProgressiveSynthesizer:
         if not task_notes:
             return "No task notes available for synthesis."
         
+        # Use standard progressive synthesis - intelligent task splitting happens automatically in TaskExecutor
+        # Large datasets are now handled by IntelligentTaskSplitter at the task level
+        return self._synthesize_standard(task_notes, dspy_synthesizer, question)
+    
+    def _should_use_multipart_report(self, raw_data: List[Dict[str, Any]], question: str) -> bool:
+        """
+        Determine if multi-part report synthesis should be used.
+        
+        Args:
+            raw_data: Raw data for analysis
+            question: User question
+            
+        Returns:
+            True if multi-part report should be used
+        """
+        # Use multi-part for medium datasets (but task-based for very large)
+        if 50 < len(raw_data) <= 1000:
+            return True
+        
+        # Use multi-part for specific report types
+        multipart_keywords = [
+            'crispr', 'comprehensive', 'all genomes', 'complete analysis',
+            'detailed report', 'full analysis', 'compare across genomes'
+        ]
+        
+        question_lower = question.lower()
+        if any(keyword in question_lower for keyword in multipart_keywords) and len(raw_data) <= 1000:
+            return True
+        
+        return False
+    
+    def _synthesize_multipart_report(self, 
+                                   task_notes: List[TaskNote],
+                                   dspy_synthesizer,
+                                   question: str,
+                                   raw_data: List[Dict[str, Any]]) -> str:
+        """
+        Synthesize using multi-part report generation.
+        
+        Args:
+            task_notes: List of TaskNote objects
+            dspy_synthesizer: DSPy synthesizer module
+            question: Original user question
+            raw_data: Raw data for multi-part report
+            
+        Returns:
+            Multi-part report synthesis
+        """
+        try:
+            # Import here to avoid circular imports
+            from .multipart_synthesizer import MultiPartReportSynthesizer
+            
+            # Initialize multi-part synthesizer
+            multipart_synthesizer = MultiPartReportSynthesizer(
+                note_keeper=self.note_keeper,
+                chunk_size=self.chunk_size,
+                max_part_tokens=18000
+            )
+            
+            # Initialize DSPy modules (now uses global config)
+            multipart_synthesizer.initialize_dspy_modules(None)  # Pass None to avoid serialization issues
+            
+            # Generate multi-part report
+            return multipart_synthesizer.synthesize_multipart_report(
+                task_notes=task_notes,
+                question=question,
+                data=raw_data
+            )
+            
+        except Exception as e:
+            logger.error(f"Multi-part report synthesis failed: {e}")
+            logger.info("Falling back to standard progressive synthesis")
+            return self._synthesize_standard(task_notes, dspy_synthesizer, question)
+    
+    def _synthesize_standard(self, 
+                           task_notes: List[TaskNote],
+                           dspy_synthesizer,
+                           question: str) -> str:
+        """
+        Perform standard progressive synthesis.
+        
+        Args:
+            task_notes: List of TaskNote objects to synthesize
+            dspy_synthesizer: DSPy synthesizer module
+            question: Original user question
+            
+        Returns:
+            Final comprehensive synthesis
+        """
         # Process notes in chunks
         chunks = self._create_note_chunks(task_notes)
         
@@ -96,6 +193,49 @@ class ProgressiveSynthesizer:
         
         logger.info(f"Completed progressive synthesis with {len(self.synthesis_chunks)} chunks")
         return final_synthesis
+    
+    def _synthesize_with_task_system(self, 
+                                   task_notes: List[TaskNote],
+                                   dspy_synthesizer,
+                                   question: str,
+                                   raw_data: List[Dict[str, Any]],
+                                   rag_system) -> str:
+        """
+        Use task-based synthesis for very large datasets.
+        
+        Args:
+            task_notes: List of TaskNote objects
+            dspy_synthesizer: DSPy synthesizer module
+            question: Original user question
+            raw_data: Complete raw data (no size limits)
+            rag_system: RAG system for task execution
+            
+        Returns:
+            Comprehensive synthesis using task management
+        """
+        try:
+            from .task_based_synthesizer import TaskBasedSynthesizer
+            
+            # Initialize task-based synthesizer with large but manageable chunks
+            task_synthesizer = TaskBasedSynthesizer(
+                note_keeper=self.note_keeper,
+                chunk_size=self.chunk_size,
+                max_items_per_task=2000  # Large chunks for detailed analysis without bypassing multi-part structure
+            )
+            
+            # Use task-based synthesis for unlimited dataset processing
+            return task_synthesizer.synthesize_unlimited_dataset(
+                task_notes=task_notes,
+                dspy_synthesizer=dspy_synthesizer,
+                question=question,
+                raw_data=raw_data,
+                rag_system=rag_system
+            )
+            
+        except Exception as e:
+            logger.error(f"Task-based synthesis failed: {e}")
+            logger.info("Falling back to multi-part report synthesis")
+            return self._synthesize_multipart_report(task_notes, dspy_synthesizer, question, raw_data)
     
     def _create_note_chunks(self, task_notes: List[TaskNote]) -> List[List[TaskNote]]:
         """
@@ -198,7 +338,9 @@ class ProgressiveSynthesizer:
             # Generate synthesis theme
             theme = self._generate_chunk_theme(chunk)
             
-            # Use DSPy to synthesize insights
+            # Use provided dspy_synthesizer to avoid model switching issues
+            logger.info(f"🔥 Using default synthesizer for chunk synthesis: {chunk_id}")
+            
             synthesis_result = dspy_synthesizer(
                 genomic_data=chunk_context,
                 target_length="medium",
@@ -219,7 +361,7 @@ class ProgressiveSynthesizer:
                 "integrated_findings": integrated_findings,
                 "cross_task_synthesis": cross_task_synthesis,
                 "emergent_insights": emergent_insights,
-                "confidence": "medium",
+                "confidence": getattr(synthesis_result, 'confidence', 'medium'),
                 "tokens_used": tokens_used,
                 "raw_synthesis": synthesis_result.summary
             }
@@ -367,13 +509,14 @@ class ProgressiveSynthesizer:
         formatted_context = self._format_final_context(final_context)
         
         try:
-            # Generate final synthesis
+            # Use provided dspy_synthesizer to avoid model switching issues
+            logger.info("🔥 Using default synthesizer for final synthesis")
+            
             final_result = dspy_synthesizer(
                 genomic_data=formatted_context,
                 target_length="detailed",
                 focus_areas="comprehensive biological insights, cross-task integration, quantitative analysis"
             )
-            
             return final_result.summary
             
         except Exception as e:

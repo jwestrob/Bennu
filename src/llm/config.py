@@ -32,6 +32,11 @@ class LLMConfig(BaseModel):
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
     
+    # Model selection configuration
+    cost_effective_model: str = Field(default="gpt-4.1-mini", description="Cost-effective model for development and testing")
+    premium_model: str = Field(default="o3", description="Premium model for production and final synthesis")
+    model_mode: str = Field(default="cost_effective", description="Current model mode: 'cost_effective' or 'premium'")
+    
     # Embedding settings
     embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model for queries")
     embedding_dim: int = Field(default=320, description="ESM2 embedding dimension")
@@ -103,6 +108,33 @@ class LLMConfig(BaseModel):
         elif self.llm_provider == "anthropic":
             return self.anthropic_api_key or os.getenv('ANTHROPIC_API_KEY')
         return None
+    
+    def get_current_model(self) -> str:
+        """Get the current model based on the selected mode."""
+        if self.model_mode == "cost_effective":
+            return self.cost_effective_model
+        elif self.model_mode == "premium":
+            return self.premium_model
+        else:
+            # Fallback to llm_model if mode is invalid
+            return self.llm_model
+    
+    def set_cost_effective_mode(self) -> None:
+        """Switch to cost-effective model mode."""
+        self.model_mode = "cost_effective"
+    
+    def set_premium_mode(self) -> None:
+        """Switch to premium model mode."""
+        self.model_mode = "premium"
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about current model configuration."""
+        return {
+            "current_model": self.get_current_model(),
+            "mode": self.model_mode,
+            "cost_effective_model": self.cost_effective_model,
+            "premium_model": self.premium_model
+        }
     
     def validate_configuration(self) -> Dict[str, bool]:
         """Validate configuration and return status of components."""
