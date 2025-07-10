@@ -338,14 +338,32 @@ class ProgressiveSynthesizer:
             # Generate synthesis theme
             theme = self._generate_chunk_theme(chunk)
             
-            # Use provided dspy_synthesizer to avoid model switching issues
-            logger.info(f"🔥 Using default synthesizer for chunk synthesis: {chunk_id}")
+            # Use model allocation system with context manager approach
+            logger.info(f"🔥 Using model allocation for chunk synthesis: {chunk_id}")
             
-            synthesis_result = dspy_synthesizer(
-                genomic_data=chunk_context,
-                target_length="medium",
-                focus_areas="cross-task connections, biological patterns, quantitative insights"
+            from ..dspy_signatures import GenomicSummarizer
+            
+            def synthesize_call(module):
+                return module(
+                    genomic_data=chunk_context,
+                    target_length="medium",
+                    focus_areas="cross-task connections, biological patterns, quantitative insights"
+                )
+            
+            synthesis_result = self.model_allocator.create_context_managed_call(
+                task_name="biological_interpretation",
+                signature_class=GenomicSummarizer,
+                module_call_func=synthesize_call
             )
+            
+            if synthesis_result is None:
+                # Fallback to provided dspy_synthesizer if allocation fails
+                logger.warning("Model allocation failed, falling back to default synthesizer")
+                synthesis_result = dspy_synthesizer(
+                    genomic_data=chunk_context,
+                    target_length="medium",
+                    focus_areas="cross-task connections, biological patterns, quantitative insights"
+                )
             
             # Extract and structure results
             integrated_findings = self._extract_findings(synthesis_result.summary)
@@ -509,15 +527,35 @@ class ProgressiveSynthesizer:
         formatted_context = self._format_final_context(final_context)
         
         try:
-            # Use provided dspy_synthesizer to avoid model switching issues
-            logger.info("🔥 Using default synthesizer for final synthesis")
+            # Use model allocation system with context manager for final synthesis
+            logger.info("🔥 Using model allocation for final synthesis (o3 for complex task)")
             
-            final_result = dspy_synthesizer(
-                genomic_data=formatted_context,
-                target_length="detailed",
-                focus_areas="comprehensive biological insights, cross-task integration, quantitative analysis"
+            from ..dspy_signatures import GenomicSummarizer
+            
+            def final_synthesize_call(module):
+                return module(
+                    genomic_data=formatted_context,
+                    target_length="detailed",
+                    focus_areas="comprehensive biological insights, cross-task integration, quantitative analysis"
+                )
+            
+            final_result = self.model_allocator.create_context_managed_call(
+                task_name="final_synthesis",  # Maps to COMPLEX = o3
+                signature_class=GenomicSummarizer,
+                module_call_func=final_synthesize_call
             )
-            return final_result.summary
+            
+            if final_result is not None:
+                return final_result.summary
+            else:
+                # Fallback to provided dspy_synthesizer if allocation fails
+                logger.warning("Model allocation failed for final synthesis, falling back to default")
+                final_result = dspy_synthesizer(
+                    genomic_data=formatted_context,
+                    target_length="detailed",
+                    focus_areas="comprehensive biological insights, cross-task integration, quantitative analysis"
+                )
+                return final_result.summary
             
         except Exception as e:
             logger.error(f"Failed to generate final synthesis: {e}")

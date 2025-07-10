@@ -227,17 +227,17 @@ class ModelAllocation:
             "cost_savings_vs_premium": f"{(1 - (total_cost_weight / task_count) / 15.0) * 100:.1f}%"
         }
     
-    def create_dspy_module(self, task_name: str, signature_class, fallback_signature_class=None):
+    def create_context_managed_call(self, task_name: str, signature_class, module_call_func):
         """
-        Create a DSPy module with appropriate model selection.
+        Execute a DSPy module call with appropriate model context.
         
         Args:
             task_name: Name of the task
             signature_class: DSPy signature class
-            fallback_signature_class: Optional fallback signature for simpler models
+            module_call_func: Function that takes a module and returns result
             
         Returns:
-            Configured DSPy module
+            Result from module call with appropriate model
         """
         try:
             import dspy
@@ -264,39 +264,29 @@ class ModelAllocation:
                 model_string = f"openai/{model_name}"
                 lm = dspy.LM(model=model_string, max_tokens=8000)
             
-            # Use fallback signature for simpler models if available
-            if (model_config.cost_per_million < 1.0 and 
-                fallback_signature_class and 
-                not self.use_premium_everywhere):
-                signature = fallback_signature_class
-                logger.debug(f"Using simplified signature for {task_name}")
-            else:
-                signature = signature_class
+            # Create module and execute with context manager
+            module = dspy.Predict(signature_class)
             
-            # Create the module with the configured LM
-            # Set the LM globally to avoid serialization issues
-            dspy.settings.configure(lm=lm)
-            module = dspy.Predict(signature)
-            logger.debug(f"Created DSPy module for {task_name} with {model_name}")
-            return module
+            logger.debug(f"🔥 Using {model_name} for {task_name} via context manager")
+            with dspy.context(lm=lm):
+                result = module_call_func(module)
+            
+            logger.debug(f"Successfully executed {task_name} with {model_name}")
+            return result
             
         except Exception as e:
-            logger.error(f"Failed to create DSPy module for {task_name}: {e}")
+            logger.error(f"Failed to execute {task_name} with model allocation: {e}")
             if self.fallback_enabled:
-                # Try fallback model
-                fallback_model, fallback_config = self.get_fallback_model(task_name)
+                # Try fallback with default module
                 try:
-                    fallback_string = f"openai/{fallback_model}"
-                    fallback_lm = dspy.LM(model=fallback_string, max_tokens=8000)
-                    dspy.settings.configure(lm=fallback_lm)
+                    logger.warning(f"Falling back to default model for {task_name}")
                     fallback_module = dspy.Predict(signature_class)
-                    logger.info(f"Created fallback DSPy module for {task_name} with {fallback_model}")
-                    return fallback_module
+                    result = module_call_func(fallback_module)
+                    logger.info(f"Successfully executed {task_name} with fallback")
+                    return result
                 except Exception as fallback_error:
                     logger.error(f"Fallback also failed for {task_name}: {fallback_error}")
             
-            # Ultimate fallback - return None (will be handled by caller)
-            logger.error(f"All DSPy module creation attempts failed for {task_name}")
             return None
 
 
