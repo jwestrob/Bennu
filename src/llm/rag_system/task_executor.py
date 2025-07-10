@@ -73,6 +73,11 @@ class TaskExecutor:
         Returns:
             ExecutionResult with success status and result data
         """
+        # Add enhanced logging to track task naming issues
+        if len(task.task_id) > 100:
+            logger.warning(f"⚠️ LONG TASK ID DETECTED: {task.task_id[:100]}...")
+            logger.warning("📋 This indicates old recursive splitting system may still be active")
+        
         logger.info(f"Executing task {task.task_id}: {task.task_type.value}")
         
         import time
@@ -170,7 +175,65 @@ class TaskExecutor:
             task.description
         )
         
-        # Format results for consumption by downstream tasks
+        # Check if result is too large and needs intelligent chunking
+        # BUT only if this task hasn't already been chunked (prevent recursive chunking)
+        if (context and hasattr(context, 'structured_data') and 
+            not getattr(task, '_already_chunked', False) and
+            not getattr(task, '_intelligent_chunked', False)):  # Extra protection
+            raw_data = context.structured_data
+            
+            # Use intelligent upfront chunking for large datasets
+            if len(raw_data) > 1000:  # Threshold for intelligent chunking
+                logger.info(f"🧠 Large dataset detected ({len(raw_data)} items), using intelligent upfront chunking")
+                logger.info(f"✅ Using NEW IntelligentChunkingManager (not old recursive splitter)")
+                
+                try:
+                    from .intelligent_chunking_manager import IntelligentChunkingManager
+                    chunking_manager = IntelligentChunkingManager(max_chunks=4, min_chunk_size=100)
+                    
+                    # Create chunks upfront based on biological meaning
+                    chunks = await chunking_manager.analyze_and_chunk_dataset(task, raw_data, task.description)
+                    
+                    if len(chunks) > 1:
+                        logger.info(f"🔀 Created {len(chunks)} intelligent chunks, executing in parallel")
+                        
+                        # Execute chunked analysis
+                        chunk_results = await chunking_manager.execute_chunked_analysis(chunks, self, task)
+                        
+                        # Synthesize results
+                        synthesis = chunking_manager.synthesize_chunk_results(
+                            chunk_results, task.description, chunks
+                        )
+                        
+                        # Return the chunked analysis result
+                        return {
+                            "context": context,
+                            "query_type": classification.query_type,
+                            "search_strategy": "intelligent_chunking",
+                            "description": task.description,
+                            "structured_data": [{"summary": synthesis, "chunked_execution": True}],
+                            "semantic_data": [],
+                            "metadata": {
+                                "chunks_created": len(chunks),
+                                "chunks_completed": len(chunk_results),
+                                "chunking_strategy": "intelligent_upfront",
+                                "total_items_processed": len(raw_data)
+                            },
+                            "chunked_execution_result": {
+                                "summary": synthesis,
+                                "chunk_count": len(chunks),
+                                "successful_chunks": len(chunk_results),
+                                "total_items": len(raw_data)
+                            }
+                        }
+                        
+                except ImportError as e:
+                    logger.warning(f"Intelligent chunking manager not available: {e}")
+                except Exception as e:
+                    logger.error(f"Intelligent chunking failed: {e}")
+                    # Fall through to normal execution
+        
+        # Format results for consumption by downstream tasks (normal execution)
         return {
             "context": context,
             "query_type": classification.query_type,

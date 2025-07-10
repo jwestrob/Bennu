@@ -12,8 +12,10 @@ try:
     import dspy
     from rich.console import Console
     DSPY_AVAILABLE = True
+    console = Console()
 except ImportError:
     DSPY_AVAILABLE = False
+    console = None
     logging.warning("DSPy not available - install dsp-ml package")
 
 from ..config import LLMConfig
@@ -26,10 +28,9 @@ from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
 from .genome_scoping import QueryScopeEnforcer
 from .context_compression import ContextCompressor
-from .memory import NoteKeeper, ProgressiveSynthesizer
+from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
     """
@@ -62,10 +63,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         self.note_keeper = NoteKeeper() if enable_memory else None
         self.progressive_synthesizer = None  # Will be initialized when needed
         
-        # Configure DSPy
+        # Initialize model allocation system
+        self.model_allocator = get_model_allocator()
+        
+        # Configure DSPy with model allocation
         self._configure_dspy()
         
-        # Initialize DSPy components
+        # Initialize DSPy components (using global DSPy configuration)
         if DSPY_AVAILABLE:
             self.planner = dspy.Predict(PlannerAgent)
             self.classifier = dspy.Predict(QueryClassifier)
@@ -83,9 +87,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         setup_debug_logging()
         
         logger.info("🧬 GenomicRAG initialized with working implementation")
+        
+        # Log current model configuration
+        model_info = self.config.get_model_info()
+        logger.info(f"💰 Model mode: {model_info['mode']}")
+        logger.info(f"🎯 Current model: {model_info['current_model']}")
+        if model_info['mode'] == 'cost_effective':
+            logger.info(f"💡 Using cost-effective model for all tasks")
+        else:
+            logger.info(f"🔥 Using premium model for all tasks")
     
     def _configure_dspy(self):
-        """Configure DSPy with LLM backend."""
+        """Configure DSPy with config-based model selection."""
         if not DSPY_AVAILABLE:
             return
             
@@ -97,37 +110,66 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 import os
                 os.environ['OPENAI_API_KEY'] = api_key
                 
-                # Use the model from config, fallback to gpt-3.5-turbo
-                model_name = getattr(self.config, 'llm_model', 'gpt-3.5-turbo')
+                # Use config-based model selection
+                current_model = self.config.get_current_model()
+                model_info = self.config.get_model_info()
                 
                 # DSPy 2.6+ uses LM with provider/model format
-                model_string = f"openai/{model_name}"
+                model_string = f"openai/{current_model}"
                 
                 # Special handling for OpenAI reasoning models (o1, o3)
-                if model_name.startswith(('o1', 'o3')):
+                if current_model.startswith(('o1', 'o3')):
                     lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
-                    logger.info(f"DSPy configured with OpenAI reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
+                    logger.info(f"🎯 DSPy configured with reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
                 else:
                     lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
-                    logger.info(f"DSPy configured with OpenAI model: {model_string}")
+                    logger.info(f"🎯 DSPy configured with standard model: {model_string}")
                 
                 dspy.settings.configure(lm=lm)
+                
+                # Log current model configuration
+                logger.info(f"💰 Model mode: {model_info['mode']}")
+                logger.info(f"🎯 Current model: {model_info['current_model']}")
+                logger.info(f"💡 Cost-effective option: {model_info['cost_effective_model']}")
+                logger.info(f"🔥 Premium option: {model_info['premium_model']}")
                 
             elif self.config.llm_provider == "anthropic" and api_key:
-                # Anthropic configuration would go here
+                # Anthropic configuration
                 import os
                 os.environ['ANTHROPIC_API_KEY'] = api_key
-                model_name = getattr(self.config, 'llm_model', 'claude-3-haiku-20240307')
-                model_string = f"anthropic/{model_name}"
+                
+                current_model = self.config.get_current_model()
+                # Map to Anthropic models if needed
+                if current_model.startswith(('gpt', 'o1', 'o3')):
+                    # Use Anthropic equivalent
+                    anthropic_model = "claude-3-haiku-20240307" if self.config.model_mode == "cost_effective" else "claude-3-opus-20240229"
+                else:
+                    anthropic_model = current_model
+                
+                model_string = f"anthropic/{anthropic_model}"
                 lm = dspy.LM(model=model_string, max_tokens=1000)
                 dspy.settings.configure(lm=lm)
-                logger.info(f"DSPy configured with Anthropic model: {model_string}")
+                logger.info(f"🎯 DSPy configured with Anthropic model: {model_string}")
                 
             else:
                 logger.warning("No LLM API key configured for DSPy")
                 
         except Exception as e:
             logger.error(f"Failed to configure DSPy: {e}")
+            
+            # Fallback to original configuration
+            try:
+                api_key = self.config.get_api_key()
+                if self.config.llm_provider == "openai" and api_key:
+                    import os
+                    os.environ['OPENAI_API_KEY'] = api_key
+                    model_name = getattr(self.config, 'llm_model', 'gpt-4o-mini')
+                    model_string = f"openai/{model_name}"
+                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
+                    dspy.settings.configure(lm=lm)
+                    logger.info(f"🔄 DSPy configured with fallback model: {model_string}")
+            except Exception as fallback_error:
+                logger.error(f"Fallback DSPy configuration also failed: {fallback_error}")
     
     def health_check(self) -> Dict[str, bool]:
         """Check health of all system components."""
@@ -412,11 +454,17 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     if not self.progressive_synthesizer:
                         self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
                     
-                    # Use progressive synthesis
+                    # Organize raw data for multi-part reports
+                    completed_results = execution_results.get("completed_results", {})
+                    raw_data = self._extract_raw_data_for_multipart(completed_results)
+                    
+                    # Use progressive synthesis (now with task-based capability for large datasets)
                     answer = self.progressive_synthesizer.synthesize_progressive(
                         task_notes=task_notes,
                         dspy_synthesizer=self.synthesizer,
-                        question=question
+                        question=question,
+                        raw_data=raw_data,
+                        rag_system=self  # Pass self for task-based processing
                     )
                     
                     # Get synthesis statistics
@@ -516,6 +564,58 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 "citations": "Agentic workflow with synthesis error",
                 "error": str(e)
             }
+    
+    def _extract_raw_data_for_multipart(self, completed_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract raw data from completed task results for multi-part report generation.
+        
+        Args:
+            completed_results: Dictionary of task results from execution
+            
+        Returns:
+            List of raw data items for multi-part report synthesis
+        """
+        raw_data = []
+        
+        for task_id, result in completed_results.items():
+            if isinstance(result, dict):
+                # Extract structured data from database queries
+                if "structured_data" in result and result["structured_data"]:
+                    if isinstance(result["structured_data"], list):
+                        raw_data.extend(result["structured_data"])
+                    else:
+                        raw_data.append(result["structured_data"])
+                
+                # Extract semantic similarity data
+                if "semantic_data" in result and result["semantic_data"]:
+                    if isinstance(result["semantic_data"], list):
+                        raw_data.extend(result["semantic_data"])
+                    else:
+                        raw_data.append(result["semantic_data"])
+                
+                # Extract any other data structures
+                if "results" in result and result["results"]:
+                    if isinstance(result["results"], list):
+                        raw_data.extend(result["results"])
+                    else:
+                        raw_data.append(result["results"])
+                
+                # Extract context data
+                if "context" in result and result["context"]:
+                    # Try to parse context as structured data
+                    try:
+                        import json
+                        context_data = json.loads(result["context"])
+                        if isinstance(context_data, list):
+                            raw_data.extend(context_data)
+                        else:
+                            raw_data.append(context_data)
+                    except:
+                        # If not JSON, add as text data
+                        raw_data.append({"text_content": result["context"]})
+        
+        logger.info(f"📄 Extracted {len(raw_data)} raw data items for multi-part report synthesis")
+        return raw_data
     
     def _organize_results_for_compression(self, completed_results: Dict[str, Any]) -> Dict[str, Any]:
         """

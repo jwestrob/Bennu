@@ -80,6 +80,19 @@ class TaskGraph:
         
         return ready_tasks
     
+    def get_executable_tasks(self) -> List[str]:
+        """Get list of task IDs that are ready to execute."""
+        ready_tasks = self.get_ready_tasks()
+        return [task.task_id for task in ready_tasks]
+    
+    def mark_task_completed(self, task_id: str, result: Optional[Any] = None):
+        """Mark a task as completed with optional result."""
+        self.mark_task_status(task_id, TaskStatus.COMPLETED, result=result)
+    
+    def mark_task_failed(self, task_id: str, error: str):
+        """Mark a task as failed with error message."""
+        self.mark_task_status(task_id, TaskStatus.FAILED, error=error)
+    
     def mark_task_status(self, task_id: str, status: TaskStatus, result: Optional[Any] = None, error: Optional[str] = None):
         """Mark a task with new status and optional result/error."""
         if task_id in self.tasks:
