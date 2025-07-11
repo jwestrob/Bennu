@@ -45,7 +45,7 @@ class ModelAllocation:
     Provides easy switching between cost-optimized and premium configurations.
     """
     
-    def __init__(self, use_premium_everywhere: bool = False):
+    def __init__(self, use_premium_everywhere: bool = True):
         """
         Initialize model allocation system.
         
@@ -98,18 +98,19 @@ class ModelAllocation:
             # Medium tasks - structured analysis and summarization
             "executive_summary": TaskComplexity.MEDIUM,
             "report_part_generation": TaskComplexity.MEDIUM,
-            "query_classification": TaskComplexity.MEDIUM,
-            "context_preparation": TaskComplexity.MEDIUM,
             "data_overview": TaskComplexity.MEDIUM,
             "pattern_identification": TaskComplexity.MEDIUM,
             
-            # Complex tasks - deep reasoning and synthesis
+            # Complex tasks - deep reasoning and synthesis  
+            "query_classification": TaskComplexity.COMPLEX,    # Biological reasoning needed
+            "context_preparation": TaskComplexity.COMPLEX,     # Query generation needs domain knowledge
             "final_synthesis": TaskComplexity.COMPLEX,
             "biological_interpretation": TaskComplexity.COMPLEX,
             "cross_task_integration": TaskComplexity.COMPLEX,
             "confidence_assessment": TaskComplexity.COMPLEX,
             "scientific_validation": TaskComplexity.COMPLEX,
-            "emergent_insights": TaskComplexity.COMPLEX
+            "emergent_insights": TaskComplexity.COMPLEX,
+            "agentic_planning": TaskComplexity.COMPLEX
         }
         
         # Define model allocation based on complexity
@@ -290,8 +291,8 @@ class ModelAllocation:
             return None
 
 
-# Global model allocation instance
-model_allocator = ModelAllocation(use_premium_everywhere=False)
+# Global model allocation instance  
+model_allocator = ModelAllocation(use_premium_everywhere=True)
 
 
 def get_model_allocator() -> ModelAllocation:

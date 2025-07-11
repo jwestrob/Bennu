@@ -93,12 +93,7 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         
         try:
             if query_type == "cypher":
-                # Check if this is a domain query that needs count enhancement
-                if "GGDEF" in query or "TPR" in query or "/domain/" in query:
-                    results = await self._execute_domain_query_with_count(query)
-                else:
-                    # Direct Cypher query
-                    results = await self._execute_cypher(query)
+                results = await self._execute_cypher(query)
             elif query_type == "genome_overview":
                 results = await self._get_genome_overview(query)
             elif query_type == "protein_info":

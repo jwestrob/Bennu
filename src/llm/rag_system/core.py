@@ -87,18 +87,9 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         setup_debug_logging()
         
         logger.info("🧬 GenomicRAG initialized with working implementation")
-        
-        # Log current model configuration
-        model_info = self.config.get_model_info()
-        logger.info(f"💰 Model mode: {model_info['mode']}")
-        logger.info(f"🎯 Current model: {model_info['current_model']}")
-        if model_info['mode'] == 'cost_effective':
-            logger.info(f"💡 Using cost-effective model for all tasks")
-        else:
-            logger.info(f"🔥 Using premium model for all tasks")
     
     def _configure_dspy(self):
-        """Configure DSPy with config-based model selection."""
+        """Configure DSPy with model allocation system."""
         if not DSPY_AVAILABLE:
             return
             
@@ -110,28 +101,38 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 import os
                 os.environ['OPENAI_API_KEY'] = api_key
                 
-                # Use config-based model selection
-                current_model = self.config.get_current_model()
-                model_info = self.config.get_model_info()
-                
-                # DSPy 2.6+ uses LM with provider/model format
-                model_string = f"openai/{current_model}"
-                
-                # Special handling for OpenAI reasoning models (o1, o3)
-                if current_model.startswith(('o1', 'o3')):
-                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
-                    logger.info(f"🎯 DSPy configured with reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
+                # Use model allocation system for intelligent model selection
+                if self.model_allocator.use_premium_everywhere:
+                    # Premium mode: use o3 for all tasks
+                    model_name, model_config = self.model_allocator.get_model_for_task("final_synthesis")  # Gets o3
+                    model_string = f"openai/{model_name}"
+                    
+                    if model_name.startswith(('o1', 'o3')):
+                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
+                        logger.info(f"🎯 DSPy configured with premium reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
+                    else:
+                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                        logger.info(f"🎯 DSPy configured with premium model: {model_string}")
                 else:
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
-                    logger.info(f"🎯 DSPy configured with standard model: {model_string}")
+                    # Cost-effective mode: use mini for default, but allow allocation for complex tasks
+                    model_name, model_config = self.model_allocator.get_model_for_task("query_classification")  # Gets mini
+                    model_string = f"openai/{model_name}"
+                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                    logger.info(f"🎯 DSPy configured with cost-effective model: {model_string}")
                 
                 dspy.settings.configure(lm=lm)
                 
-                # Log current model configuration
-                logger.info(f"💰 Model mode: {model_info['mode']}")
-                logger.info(f"🎯 Current model: {model_info['current_model']}")
-                logger.info(f"💡 Cost-effective option: {model_info['cost_effective_model']}")
-                logger.info(f"🔥 Premium option: {model_info['premium_model']}")
+                # Log model allocation configuration
+                allocation_summary = self.model_allocator.get_allocation_summary()
+                logger.info(f"💰 Model allocation mode: {allocation_summary['mode']}")
+                if allocation_summary['mode'] == 'premium_everywhere':
+                    logger.info(f"🔥 Using {allocation_summary['primary_model']} for all tasks")
+                else:
+                    logger.info(f"💡 Using task-specific model allocation for cost optimization")
+                
+                # Log available models
+                logger.info(f"💡 Cost-effective option: gpt-4.1-mini")
+                logger.info(f"🔥 Premium option: o3")
                 
             elif self.config.llm_provider == "anthropic" and api_key:
                 # Anthropic configuration
@@ -225,8 +226,21 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             if routing_recommendation['use_agentic_mode']:
                 # AGENTIC PATH: Multi-step task execution
-                # Still use DSPy planner for detailed task planning
-                planning_result = self.planner(user_query=question)
+                # Use model allocation for planning (should use o3 for complex planning tasks)
+                logger.info("🧠 Using model allocation for agentic planning")
+                
+                def planning_call(module):
+                    return module(user_query=question)
+                
+                planning_result = self.model_allocator.create_context_managed_call(
+                    task_name="agentic_planning",  # Maps to COMPLEX = o3 if premium mode
+                    signature_class=PlannerAgent,
+                    module_call_func=planning_call
+                )
+                
+                if planning_result is None:
+                    logger.warning("Model allocation failed for planning, falling back to default")
+                    planning_result = self.planner(user_query=question)
                 
                 # Check if we actually have a valid task plan
                 task_plan = planning_result.task_plan
@@ -270,17 +284,57 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         """Execute traditional single-step query with enhanced genome scoping and compression."""
         console.print("📋 [dim]Using traditional query path[/dim]")
         
-        # Step 1: Classify the query type
-        classification = self.classifier(question=question)
+        # Step 1: Classify the query type using model allocation (o3 for biological reasoning)
+        def classification_call(module):
+            return module(question=question)
+        
+        from .dspy_signatures import QueryClassifier
+        classification = self.model_allocator.create_context_managed_call(
+            task_name="query_classification",  # Now maps to COMPLEX = o3
+            signature_class=QueryClassifier,
+            module_call_func=classification_call
+        )
+        
+        if classification is None:
+            logger.warning("Model allocation failed for classification, falling back to default")
+            # Ensure there's a default LM configured for fallback
+            if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
+                logger.warning("No default LM configured, setting up fallback")
+                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                dspy.settings.configure(lm=fallback_lm)
+            classification = self.classifier(question=question)
+        
         console.print(f"📊 Query type: {classification.query_type}")
         console.print(f"💭 Reasoning: {classification.reasoning}")
         
-        # Step 2: Generate retrieval strategy
-        retrieval_plan = self.retriever(
-            db_schema=NEO4J_SCHEMA,
-            question=question,
-            query_type=classification.query_type
+        # Step 2: Generate retrieval strategy using model allocation (o3 for query generation)
+        def retrieval_call(module):
+            return module(
+                db_schema=NEO4J_SCHEMA,
+                question=question,
+                query_type=classification.query_type
+            )
+        
+        from .dspy_signatures import ContextRetriever
+        retrieval_plan = self.model_allocator.create_context_managed_call(
+            task_name="context_preparation",  # Now maps to COMPLEX = o3
+            signature_class=ContextRetriever,
+            module_call_func=retrieval_call
         )
+        
+        if retrieval_plan is None:
+            logger.warning("Model allocation failed for retrieval, falling back to default")
+            # Ensure there's a default LM configured for fallback
+            if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
+                logger.warning("No default LM configured, setting up fallback")
+                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                dspy.settings.configure(lm=fallback_lm)
+            retrieval_plan = self.retriever(
+                db_schema=NEO4J_SCHEMA,
+                question=question,
+                query_type=classification.query_type
+            )
+        
         console.print(f"🔍 Search strategy: {retrieval_plan.search_strategy}")
         
         # Step 2.5: Validate query for comparative questions
@@ -351,11 +405,32 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         except Exception as e:
             logger.warning(f"Token counting failed: {e}, using full context")
         
-        # Step 5: Generate answer
-        answer_result = self.answerer(
-            question=question,
-            context=formatted_context
+        # Step 5: Generate answer using model allocation
+        def answer_call(module):
+            return module(
+                question=question,
+                context=formatted_context
+            )
+        
+        from .dspy_signatures import GenomicAnswerer
+        answer_result = self.model_allocator.create_context_managed_call(
+            task_name="biological_interpretation",  # Maps to COMPLEX = o3
+            signature_class=GenomicAnswerer,
+            module_call_func=answer_call
         )
+        
+        if answer_result is None:
+            logger.warning("Model allocation failed for answer generation, falling back to default")
+            # Ensure there's a default LM configured for fallback
+            if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
+                logger.warning("No default LM configured, setting up fallback")
+                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                dspy.settings.configure(lm=fallback_lm)
+            
+            answer_result = self.answerer(
+                question=question,
+                context=formatted_context
+            )
         
         # Return structured response
         metadata = {
