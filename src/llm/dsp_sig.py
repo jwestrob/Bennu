@@ -33,7 +33,7 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 *   **`Genome`** - ONLY 2 properties available:
     *   `id`: (String) Unique identifier (e.g., `PLM0_60_b1_sep16_Maxbin2_047_curated.contigs`)
     *   `genomeId`: (String) Internal genome identifier
-    *   FORBIDDEN: taxon, total_length, n50, num_contigs, completeness, contamination (DO NOT USE - THESE DO NOT EXIST)
+    *   **QUALITY METRICS**: Available via QualityMetrics node through HASQUALITYMETRICS relationship
 
 *   **`Protein`**
     *   Represents a protein sequence translated from a gene.
@@ -74,7 +74,8 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
         *   `description`: (String) A description of the KO group.
 
 *   **`Bgc`**
-    *   Represents a biosynthetic gene cluster predicted by GECCO.
+    *   Represents a biosynthetic gene cluster predicted by GECCO (Gene Cluster Prediction with Conditional Random Fields).
+    *   **IMPORTANT**: BGC data comes from GECCO analysis, NOT AntiSMASH.
     *   **Properties:**
         *   `id`: (String) Unique identifier (e.g., `cluster_1`, `cluster_2`).
         *   `bgcId`: (String) BGC identifier.
@@ -115,6 +116,25 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
         *   `cazymeType`: (String) Family type (e.g., `GH`, `GT`, `PL`, `CE`, `AA`, `CBM`).
         *   `substrateSpecificity`: (String) Known substrates for this family.
 
+*   **`QualityMetrics`**
+    *   Represents genome quality metrics from QUAST analysis.
+    *   **Properties:**
+        *   `quast_totalLength`: (Integer) Total assembly length in base pairs.
+        *   `quast_n50`: (Integer) N50 contig length in base pairs.
+        *   `quast_numContigs`: (Integer) Number of contigs in the assembly.
+        *   `quast_gcContent`: (Float) GC content percentage (0-100).
+        *   `quast_largestContig`: (Integer) Size of the largest contig.
+        *   `quast_n90`: (Integer) N90 contig length in base pairs.
+        *   `quast_l50`: (Integer) L50 metric (number of contigs >= N50).
+        *   `quast_l90`: (Integer) L90 metric (number of contigs >= N90).
+        *   `quast_auN`: (Float) Area under the Nx curve.
+        *   `quast_nsPer100kb`: (Float) N's per 100 kilobases.
+        *   `quast_contigs1kbPlus`: (Integer) Number of contigs >= 1 kb.
+        *   `quast_contigs5kbPlus`: (Integer) Number of contigs >= 5 kb.
+        *   `quast_contigs10kbPlus`: (Integer) Number of contigs >= 10 kb.
+        *   `quast_contigs25kbPlus`: (Integer) Number of contigs >= 25 kb.
+        *   `quast_contigs50kbPlus`: (Integer) Number of contigs >= 50 kb.
+
 **Relationships (ALL UPPERCASE):**
 
 *   `(:Protein)-[:ENCODEDBY]->(:Gene)`: Connects a protein to the gene that encodes it.
@@ -125,6 +145,7 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 *   `(:Gene)-[:PARTOFBGC]->(:Bgc)`: Connects genes that are part of a BGC.
 *   `(:Protein)-[:HASCAZYME]->(:Cazymeannotation)`: Connects proteins to their CAZyme annotations.
 *   `(:Cazymeannotation)-[:CAZYMEFAMILY]->(:Cazymefamily)`: Links CAZyme annotations to family information.
+*   `(:Genome)-[:HASQUALITYMETRICS]->(:QualityMetrics)`: Connects genomes to their QUAST quality metrics.
 
 **CRITICAL QUERY PATTERNS FOR TRANSPORT PROTEINS:**
 
@@ -152,7 +173,7 @@ RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
        collect(DISTINCT dom.id) AS pfam_accessions
 ```
 
-**Pattern 3 - BGC Search:**
+**Pattern 3 - BGC Search (GECCO-detected clusters):**
 ```cypher
 MATCH (genome:Genome)-[:HASBGC]->(bgc:Bgc)
 OPTIONAL MATCH (bgc)<-[:PARTOFBGC]-(gene:Gene)<-[:ENCODEDBY]-(protein:Protein)
@@ -214,6 +235,52 @@ ORDER BY protein_count DESC, family_type, family_id
 ```cypher
 MATCH (ca:Cazymeannotation) RETURN count(ca) AS total_cazymes
 ```
+
+**CRITICAL QUERY PATTERNS FOR GENOME QUALITY METRICS:**
+
+**Pattern 8 - Genome Quality Metrics (RECOMMENDED for assembly quality questions):**
+```cypher
+MATCH (genome:Genome)-[:HASQUALITYMETRICS]->(qm:QualityMetrics)
+RETURN genome.genomeId AS genome_id,
+       qm.quast_totalLength AS total_length,
+       qm.quast_n50 AS n50,
+       qm.quast_numContigs AS num_contigs,
+       qm.quast_gcContent AS gc_content,
+       qm.quast_largestContig AS largest_contig,
+       qm.quast_n90 AS n90,
+       qm.quast_l50 AS l50,
+       qm.quast_l90 AS l90,
+       qm.quast_auN AS auN,
+       qm.quast_nsPer100kb AS ns_per_100kb,
+       qm.quast_contigs1kbPlus AS contigs_1kb_plus,
+       qm.quast_contigs5kbPlus AS contigs_5kb_plus,
+       qm.quast_contigs10kbPlus AS contigs_10kb_plus,
+       qm.quast_contigs25kbPlus AS contigs_25kb_plus,
+       qm.quast_contigs50kbPlus AS contigs_50kb_plus
+ORDER BY qm.quast_n50 DESC
+```
+
+**Pattern 9 - Compare Genome Quality Metrics:**
+```cypher
+MATCH (genome:Genome)-[:HASQUALITYMETRICS]->(qm:QualityMetrics)
+RETURN genome.genomeId AS genome_id,
+       qm.quast_totalLength AS total_length,
+       qm.quast_n50 AS n50,
+       qm.quast_numContigs AS num_contigs,
+       qm.quast_gcContent AS gc_content
+ORDER BY qm.quast_totalLength DESC
+```
+
+**Pattern 10 - Specific Genome Quality Metrics:**
+```cypher
+MATCH (genome:Genome {genomeId: "SPECIFIC_GENOME_ID"})-[:HASQUALITYMETRICS]->(qm:QualityMetrics)
+RETURN genome.genomeId AS genome_id,
+       qm.quast_totalLength AS total_length,
+       qm.quast_n50 AS n50,
+       qm.quast_numContigs AS num_contigs,
+       qm.quast_gcContent AS gc_content,
+       qm.quast_largestContig AS largest_contig
+```
 """
 
 if DSPY_AVAILABLE:
@@ -235,7 +302,7 @@ MATCH (genome:Genome {genomeId: "GENOME_ID"})<-[:BELONGSTOGENOME]-(g:Gene)<-[:EN
 For comprehensive questions, choose ONE of:
 1. KEGG functions (most important for metabolism)
 2. CAZyme families (for carbohydrate metabolism)  
-3. BGC clusters (for secondary metabolism)
+3. GECCO BGC clusters (for secondary metabolism)
 
 Never combine multiple approaches in one response."""
         question = dspy.InputField(desc="Question about genomic data")

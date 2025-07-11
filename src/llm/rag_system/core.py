@@ -115,10 +115,16 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         logger.info(f"🎯 DSPy configured with premium model: {model_string}")
                 else:
                     # Cost-effective mode: use mini for default, but allow allocation for complex tasks
-                    model_name, model_config = self.model_allocator.get_model_for_task("query_classification")  # Gets mini
+                    model_name, model_config = self.model_allocator.get_model_for_task("query_classification")  # Gets o3 for complex tasks
                     model_string = f"openai/{model_name}"
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
-                    logger.info(f"🎯 DSPy configured with cost-effective model: {model_string}")
+                    
+                    # Handle reasoning models (o3) properly even in cost-effective mode
+                    if model_name.startswith(('o1', 'o3')):
+                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
+                        logger.info(f"🎯 DSPy configured with reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
+                    else:
+                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                        logger.info(f"🎯 DSPy configured with cost-effective model: {model_string}")
                 
                 dspy.settings.configure(lm=lm)
                 

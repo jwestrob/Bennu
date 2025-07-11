@@ -104,7 +104,7 @@ def build(
     2. Taxonomic classification with DFAST_QC (ANI+CheckM)  
     3. Gene prediction with Prodigal
     4. Functional annotation with Astra/PyHMMer
-    5. AntiSMASH biosynthetic gene cluster detection
+    5. GECCO biosynthetic gene cluster detection
     6. dbCAN carbohydrate-active enzyme annotation
     7. Knowledge graph construction with RDF triples (includes BGC and CAZyme if available)
     8. ESM2 protein embeddings for semantic search
@@ -197,7 +197,8 @@ def build(
                 stage04_dir=output_dir / "stage04_astra",
                 stage05a_dir=output_dir / "stage05_gecco",
                 stage05b_dir=output_dir / "stage06_dbcan",
-                output_dir=output_dir / "stage07_kg"
+                output_dir=output_dir / "stage07_kg",
+                stage01_dir=output_dir / "stage01_quast"
             )
         },
         8: {

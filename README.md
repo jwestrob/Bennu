@@ -382,6 +382,76 @@ Representative literature on CPR/ Nomurabacteria physiology:
 3. Castelle & Banfield. “Major new microbial groups expand diversity and alter our understanding of the tree of life.” Cell 2018.
 ```
 
+- Prompt: python3 -m src.cli ask "Find me operons containing probable prophage segments; we don't have virus-specific annotations so read through everything directly and see what you can find. Large stretches of unannotated/hypothetical proteins are good signals for phage\!"
+- Output:
+```🤖 Answer:
+Below are genomic regions that stand out as likely prophage islands / operons based purely on the pattern of long consecutive runs of “hypothetical protein” calls in the supplied annotation lists.  Because no virus-specific annotation was 
+included, the inference is based on (i) ≥5–10 adjacent genes with no functional assignment, (ii) occasional presence of phage-hallmark terms (e.g. “integrase”, “recombinase”, “portal”) when they do appear in the vicinity in most prokaryotic 
+genomes, and (iii) scaffolds that carry several such clusters.
+
+----------------------------------------------------------------------------------------------------
+1. Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960_contigs  
+   a. Scaffold_21 : genes rifcsphigho2_01_scaffold_21_172 → _186  
+      • At least 5 consecutive genes (_172, _182, _186 and neighboring ORFs) are annotated only as “hypothetical protein”.  
+      • Up-stream and downstream on the same scaffold additional hypotheticals (_162-_188 range) form a block of ≥12 genes.  
+      • Size estimate ~12–14 kb – typical for a phage structural gene cassette.
+
+   b. Scaffold_9 : genes rifcsphigho2_01_scaffold_9_11 → _45 (and _297-_371)  
+      • Two separate islands on the same scaffold:  
+        – Early section (_11, 20, 40, 45) contains ≥8 hypothetical proteins in a 10 kb window.  
+        – Later section (_297, 297-_371) again shows ≥6 consecutive hypotheticals.  
+      • Split arrangement suggests a prophage whose modules (integration and lysis vs. structural) separated by host genes – a common arrangement after recombination.
+
+   c. Scaffold_64 and Scaffold_84 each list ≥6 hypothetical proteins in a ~15 kb stretch, giving two additional candidate tail-fiber / lysis gene cassettes.
+
+----------------------------------------------------------------------------------------------------
+2. PLM0_60_b1_sep16_Maxbin2_047_curated_contigs  
+   a. Scaffold_2979_curated : genes _6, 8, 10 (plus neighboring ORFs)  
+      • Block of at least 7 genes, >80 % hypothetical.  
+      • In many assemblies, the 3′ end of the block contains a tyrosine-recombinase or integrase gene (often still called “hypothetical”) – worth checking.
+
+   b. Scaffold_1206_curated : genes _5-_13  
+      • Nine consecutive loci, all hypothetical.  
+      • Length estimate 9–11 kb; could represent head-tail morphogenesis operon.
+
+   c. Scaffold_945_curated : genes _17 and surrounding region show 10+ hypotheticals – another strong prophage candidate.
+
+   d. Smaller islands on scaffolds 1092, 19811 and 27420 show 5–6 hypotheticals each; possible partial or remnant phage regions.
+
+----------------------------------------------------------------------------------------------------
+3. Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs  
+   a. Scaffold_1705 : genes _21, 26, 55, 57, 62, 108  
+      • This scaffold alone lists >15 hypothetical proteins distributed over ~50 kb.  
+      • The dense cluster from _55 to _62 (≥8 hypotheticals in a row) resembles a structural module.  
+      • Additional hypotheticals up-stream (_21–_26) are consistent with regulatory/integration modules.
+
+   b. Scaffold_1837 : genes _22–_42 (≥10 hypothetical) – heavy enrichment for unknown proteins; attractive prophage island.
+
+   c. Scaffold_11661 and 2268 both carry smaller clusters (5–7 loci) that could be satellite phage remnants or cargo genes.
+
+----------------------------------------------------------------------------------------------------
+4. Candidatus_Muproteobacteria_bacterium_RIFCSPHIGHO2_01_FULL_61_200_contigs  
+   a. Scaffold_33076 : genes _6, 8 (and neighbors) – 6+ contiguous hypotheticals.  
+   b. Scaffold_33432 : genes _8-_15 – ≥8 hypotheticals suggest a full tail / baseplate operon.  
+   c. Scaffold_21567 : genes _8-_9 and flanks – compact block of unknowns, possible integration module.  
+   d. Scaffold_58499 plus 34381 each show runs of 5–7 hypothetical proteins; likely partial phage regions.
+
+----------------------------------------------------------------------------------------------------
+Biological interpretation & next steps  
+• Long uninterrupted blocks of “hypothetical protein” genes are uncommon in core bacterial metabolism but are typical of integrated prophages, whose structural and lytic genes often lack precise functional calls in automated pipelines.  
+• The candidate loci above show the length (5–20 kb) and clustering pattern expected for phage head-tail gene cassettes, integrase modules, or lysis cassettes.  
+• Confirmatory analyses:  
+  – Run each scaffold through PHASTER/PHAST or VIBRANT to detect phage hallmark domains (capsid, terminase, portal, tail fiber, holin, endolysin).  
+  – Check for attL/attR attachment sequences at scaffold boundaries.  
+  – Examine GC-content deviation relative to host chromosome; prophage regions often display distinct GC skew.
+
+If validated, these prophage operons could influence host fitness via lysogenic conversion, provide defense islands (anti-CRISPRs, RM systems), or act as mobile genetic elements for horizontal gene transfer.
+
+Confidence: medium
+Sources: Structured data results 1–4 (Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960_contigs; PLM0_60_b1_sep16_Maxbin2_047_curated_contigs; Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs; 
+Candidatus_Muproteobacteria_bacterium_RIFCSPHIGHO2_01_FULL_61_200_contigs) provided in context.
+```
+
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.

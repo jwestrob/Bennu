@@ -292,7 +292,7 @@ class ModelAllocation:
 
 
 # Global model allocation instance  
-model_allocator = ModelAllocation(use_premium_everywhere=True)
+model_allocator = ModelAllocation(use_premium_everywhere=False)
 
 
 def get_model_allocator() -> ModelAllocation:
