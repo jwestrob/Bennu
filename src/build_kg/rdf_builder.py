@@ -16,6 +16,7 @@ from rdflib.namespace import RDF, RDFS, XSD
 from src.build_kg.annotation_processors import process_astra_results
 from src.build_kg.functional_enrichment import add_functional_enrichment_to_pipeline
 from src.build_kg.pathway_integration import integrate_pathways
+from src.build_kg.quast_parser import collect_all_quast_metrics, format_quality_metrics_for_rdf
 
 logger = logging.getLogger(__name__)
 
@@ -458,7 +459,7 @@ class GenomeKGBuilder:
     
     def add_bgc_annotations(self, bgc_data: Dict[str, Any], 
                            genome_uri: URIRef, protein_uris: Dict[str, URIRef]):
-        """Add biosynthetic gene cluster annotations from AntiSMASH."""
+        """Add biosynthetic gene cluster annotations from GECCO."""
         bgc_count = 0
         gene_count = 0
         
@@ -991,16 +992,18 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
 def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_dir: Path, 
                                                    stage05a_dir: Optional[Path], 
                                                    stage05b_dir: Optional[Path],
-                                                   output_dir: Path) -> Dict[str, Any]:
+                                                   output_dir: Path,
+                                                   stage01_dir: Optional[Path] = None) -> Dict[str, Any]:
     """
     Build complete knowledge graph from pipeline results including BGC and CAZyme annotations.
     
     Args:
         stage03_dir: Prodigal output directory
         stage04_dir: Astra annotation output directory
-        stage05a_dir: AntiSMASH BGC output directory (optional)
+        stage05a_dir: GECCO BGC output directory (optional)
         stage05b_dir: dbCAN CAZyme output directory (optional)
         output_dir: Output directory for knowledge graph
+        stage01_dir: QUAST output directory (optional)
         
     Returns:
         Dict containing build statistics and output files
@@ -1017,6 +1020,14 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     
     # Load astra results
     annotation_results = process_astra_results(stage04_dir)
+    
+    # Load QUAST quality metrics if available
+    quast_metrics = {}
+    if stage01_dir and stage01_dir.exists():
+        quast_metrics = collect_all_quast_metrics(stage01_dir)
+        logger.info(f"Loaded QUAST metrics for {len(quast_metrics)} genomes")
+    else:
+        logger.info("No QUAST directory provided, skipping quality metrics")
     
     # Load BGC results if available
     bgc_results = {}
@@ -1082,10 +1093,15 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
             
         genome_id = genome_result['genome_id']
         
-        # Add genome entity
+        # Add genome entity with QUAST quality metrics
+        quality_metrics = {}
+        if genome_id in quast_metrics:
+            quality_metrics = format_quality_metrics_for_rdf(quast_metrics[genome_id])
+            logger.info(f"Added {len(quality_metrics)} quality metrics for {genome_id}")
+        
         genome_data = {
             'genome_id': genome_id,
-            'quality_metrics': {}  # TODO: Load from QUAST results
+            'quality_metrics': quality_metrics
         }
         genome_uri = builder.add_genome_entity(genome_data)
         genome_uris[genome_id] = genome_uri
@@ -1150,7 +1166,7 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     # Add provenance
     databases_used = ['PFAM', 'KOFAM']
     if bgc_results:
-        databases_used.append('AntiSMASH')
+        databases_used.append('GECCO')
     if cazyme_results:
         databases_used.append('dbCAN')
     
