@@ -61,13 +61,23 @@ class IntelligentRouter:
         
         self.complex_patterns = [
             r"compare\s+\w+\s+between",
-            r"analyze\s+the\s+distribution",
+            r"analyze\s+the\s+distribution", 
             r"generate\s+a\s+report",
+            r"provide\s+a\s+full\s+report",
+            r"comprehensive\s+report",
+            r"detailed\s+report",
             r"create\s+a\s+visualization",
             r"find\s+similar\s+proteins\s+and",
             r"what\s+are\s+the\s+differences",
-            r"statistical\s+analysis",
-            r"clustering\s+analysis"
+            r"statistical\s+analysis", 
+            r"clustering\s+analysis",
+            r"look\s+through\s+all\s+available\s+data",
+            r"all\s+available\s+data",
+            r"comprehensive\s+analysis",
+            r"full\s+analysis",
+            r"generate.*comprehensive",
+            r"conflicting\s+functions.*report",
+            r"multiple\s+databases.*report"
         ]
         
         self.computation_indicators = [

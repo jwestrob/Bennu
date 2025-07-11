@@ -380,9 +380,17 @@ class QueryScopeEnforcer:
     
     def _apply_default_scope(self, cypher_query: str) -> str:
         """Apply default scoping to prevent overly broad queries."""
-        # Add a reasonable LIMIT if not present
+        # Check if this is a comprehensive analysis request
+        comprehensive_indicators = [
+            "all available data", "comprehensive", "full report", 
+            "detailed report", "complete analysis", "entire dataset"
+        ]
+        
+        # If comprehensive analysis is requested, don't limit
+        # (This will be passed through the query context)
+        # For now, just add a higher limit for safety
         if "LIMIT" not in cypher_query.upper():
-            modified_query = cypher_query + " LIMIT 100"
+            modified_query = cypher_query + " LIMIT 10000"  # Much higher limit for comprehensive analysis
             return modified_query
         
         return cypher_query
