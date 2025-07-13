@@ -130,6 +130,27 @@ data/
 
 ## Development Guidelines
 
+### **CRITICAL: DSPy Signature Development Guidelines**
+**NEVER hardcode behavior for particular query types or use dummy data directly within DSPy signatures.**
+
+#### Prohibited Practices:
+- **Hardcoded genome names**: Never use specific genome IDs like "Candidatus_Nomurabacteria_bacterium_RIFCSPHIGHO2_02_FULL_58_190_contigs" in signature examples
+- **Hardcoded query patterns**: Never embed specific WHERE clauses with actual dataset values
+- **Hardcoded biological IDs**: Never use specific KEGG IDs (K03406), PFAM IDs (PF00005), or other database-specific identifiers in examples
+- **Dataset-specific behavior**: Never create logic that only works with the current dummy dataset
+
+#### Required Approach:
+- **Generic placeholders**: Use "[SPECIFIC_GENOME_ID_PROVIDED_BY_SYSTEM]", "[EXACT_TARGET_GENOME_VALUE]", "[KEGG_ID]", "[PFAM_ID]"
+- **Pattern-based examples**: Show query patterns that work with any data, not specific to current test dataset
+- **Flexible logic**: Create signatures that work with any genomic dataset, not just the current one
+- **Runtime determination**: Let the system determine actual values during execution, not at signature design time
+
+#### Rationale:
+- **Maintainability**: Code breaks when datasets change
+- **Reusability**: Signatures must work with different genomic datasets
+- **Production readiness**: Real deployments use different data than development dummy datasets
+- **Debugging clarity**: Hardcoded values mask actual system behavior and make debugging harder
+
 ### File Organization Rules
 **IMPORTANT: No helper scripts in root directory**
 - Use `python -m src.module` for all pipeline operations

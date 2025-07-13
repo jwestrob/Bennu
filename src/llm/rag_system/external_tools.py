@@ -11,6 +11,34 @@ import json
 
 logger = logging.getLogger(__name__)
 
+async def genome_selector_tool(query: str, rag_system, **kwargs) -> str:
+    """
+    Agent tool for intelligent genome selection when needed.
+    
+    Args:
+        query: The biological query that may require specific genome targeting
+        rag_system: RAG system instance with genome selector
+        **kwargs: Additional parameters
+        
+    Returns:
+        Genome selection result or error message
+    """
+    try:
+        logger.info(f"🧬 Agent requesting genome selection for: {query}")
+        
+        # Let the agent decide when to use this tool
+        selection_result = await rag_system.genome_selector.select_genome(query)
+        
+        if selection_result.success:
+            return f"Selected genome: {selection_result.selected_genome} (confidence: {selection_result.match_score:.2f}, reason: {selection_result.match_reason})"
+        else:
+            available_info = f" Available genomes: {', '.join(selection_result.available_genomes[:5])}..." if selection_result.available_genomes else ""
+            return f"Genome selection failed: {selection_result.error_message}.{available_info}"
+            
+    except Exception as e:
+        logger.error(f"Genome selector tool failed: {e}")
+        return f"Genome selection tool error: {str(e)}"
+
 def literature_search(query: str, email: str, **kwargs) -> str:
     """
     Search PubMed for relevant literature using Biopython.
@@ -224,6 +252,7 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
 AVAILABLE_TOOLS = {
     "literature_search": literature_search,
     "code_interpreter": code_interpreter_tool,
+    "genome_selector": genome_selector_tool,
 }
 
 def register_tool(name: str, function):

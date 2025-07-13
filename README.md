@@ -465,9 +465,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **Neo4j**: Graph database technology
 - **LanceDB**: Vector similarity search
 
----
-
-<p align="center">
-  <strong>🧬 The Future of Genomic AI is Here 🤖</strong><br>
-  <em>Where Biology Meets Intelligence</em>
-</p>

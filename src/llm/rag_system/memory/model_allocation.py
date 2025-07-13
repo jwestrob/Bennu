@@ -94,15 +94,20 @@ class ModelAllocation:
             "chunking_strategy_selection": TaskComplexity.SIMPLE,
             "data_formatting": TaskComplexity.SIMPLE,
             "progress_tracking": TaskComplexity.SIMPLE,
+            "task_coordination": TaskComplexity.SIMPLE,
+            "status_reporting": TaskComplexity.SIMPLE,
             
             # Medium tasks - structured analysis and summarization
             "executive_summary": TaskComplexity.MEDIUM,
             "report_part_generation": TaskComplexity.MEDIUM,
             "data_overview": TaskComplexity.MEDIUM,
             "pattern_identification": TaskComplexity.MEDIUM,
+            "query_classification": TaskComplexity.MEDIUM,    # Can use gpt-4.1-mini for basic classification
+            "literature_search": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for search queries
+            "data_aggregation": TaskComplexity.MEDIUM,       # Can use gpt-4.1-mini for combining data
+            "statistical_analysis": TaskComplexity.MEDIUM,   # Can use gpt-4.1-mini for basic stats
             
             # Complex tasks - deep reasoning and synthesis  
-            "query_classification": TaskComplexity.COMPLEX,    # Biological reasoning needed
             "context_preparation": TaskComplexity.COMPLEX,     # Query generation needs domain knowledge
             "final_synthesis": TaskComplexity.COMPLEX,
             "biological_interpretation": TaskComplexity.COMPLEX,
@@ -110,7 +115,9 @@ class ModelAllocation:
             "confidence_assessment": TaskComplexity.COMPLEX,
             "scientific_validation": TaskComplexity.COMPLEX,
             "emergent_insights": TaskComplexity.COMPLEX,
-            "agentic_planning": TaskComplexity.COMPLEX
+            "agentic_planning": TaskComplexity.COMPLEX,
+            "comprehensive_analysis": TaskComplexity.COMPLEX,
+            "cross_database_integration": TaskComplexity.COMPLEX
         }
         
         # Define model allocation based on complexity
@@ -122,24 +129,111 @@ class ModelAllocation:
         
         logger.info(f"🎯 Model allocation initialized (premium_everywhere={use_premium_everywhere})")
     
-    def get_model_for_task(self, task_name: str) -> Tuple[str, ModelConfig]:
+    def should_use_premium_for_genome_analysis(self, query: str, task_context: str = "") -> bool:
+        """
+        Determine if query requires premium model for detailed genome analysis.
+        
+        Args:
+            query: The query or task description
+            task_context: Additional context about the task
+            
+        Returns:
+            True if premium model should be used regardless of normal allocation
+        """
+        combined_text = f"{query} {task_context}".lower()
+        
+        # Patterns indicating detailed analysis requests
+        analysis_patterns = [
+            "novelty", "unusual", "stands out", "thoroughly", "loci", 
+            "detailed analysis", "comprehensive", "in-depth", "deep dive",
+            "unique", "distinctive", "remarkable", "interesting"
+        ]
+        
+        # Patterns indicating specific genome targeting
+        genome_patterns = [
+            "nomurabacteria", "for genome", "in the", "for the", 
+            "within the", "specific genome", "target genome"
+        ]
+        
+        has_analysis_request = any(pattern in combined_text for pattern in analysis_patterns)
+        has_genome_targeting = any(pattern in combined_text for pattern in genome_patterns)
+        
+        if has_analysis_request and has_genome_targeting:
+            logger.info(f"🔥 FORCING PREMIUM MODEL: Detected detailed genome analysis request")
+            return True
+            
+        return False
+    
+    def get_task_complexity(self, task_name: str, query: str = "", task_context: str = "") -> TaskComplexity:
+        """
+        Get task complexity with context awareness for better model allocation.
+        
+        Args:
+            task_name: Name of the task
+            query: Query or task description for context
+            task_context: Additional context about the task
+            
+        Returns:
+            TaskComplexity level adjusted for context
+        """
+        # Get base complexity from mapping
+        base_complexity = self.task_complexity.get(task_name, TaskComplexity.MEDIUM)
+        
+        # Context-aware adjustments for context_preparation task
+        if task_name == "context_preparation":
+            combined_text = f"{query} {task_context}".lower()
+            
+            # Simple discovery queries can use cheaper models
+            discovery_patterns = [
+                "find", "discover", "look through", "see what", "what's in", 
+                "across all", "global", "everything", "all genomes"
+            ]
+            
+            # Complex biological reasoning patterns need premium models
+            complex_patterns = [
+                "synthesize", "integrate", "compare across", "detailed analysis",
+                "biological significance", "evolutionary", "mechanistic"
+            ]
+            
+            if any(pattern in combined_text for pattern in discovery_patterns):
+                logger.info(f"🎯 CONTEXT OVERRIDE: Discovery query detected, using MEDIUM complexity for {task_name}")
+                return TaskComplexity.MEDIUM
+            elif any(pattern in combined_text for pattern in complex_patterns):
+                logger.info(f"🧠 CONTEXT OVERRIDE: Complex reasoning detected, keeping COMPLEX for {task_name}")
+                return TaskComplexity.COMPLEX
+            else:
+                # Default for context_preparation: use medium unless specific patterns detected
+                logger.info(f"💡 CONTEXT OVERRIDE: Standard query, using MEDIUM complexity for {task_name}")
+                return TaskComplexity.MEDIUM
+        
+        return base_complexity
+
+    def get_model_for_task(self, task_name: str, query: str = "", task_context: str = "") -> Tuple[str, ModelConfig]:
         """
         Get the appropriate model for a given task.
         
         Args:
             task_name: Name of the task
+            query: Query or task description for context
+            task_context: Additional context about the task
             
         Returns:
             Tuple of (model_name, model_config)
         """
+        # Check if this is a detailed genome analysis that should force premium model
+        if self.should_use_premium_for_genome_analysis(query, task_context):
+            model_config = self.models[ModelTier.PREMIUM]
+            logger.info(f"🔥 FORCED PREMIUM: Using {model_config.model_name} for detailed genome analysis")
+            return model_config.model_name, model_config
+        
         if self.use_premium_everywhere:
             # Override: use premium model for everything
             model_config = self.models[ModelTier.PREMIUM]
             logger.info(f"🔥 PREMIUM MODE: Using {model_config.model_name} for {task_name}")
             return model_config.model_name, model_config
         
-        # Get task complexity
-        complexity = self.task_complexity.get(task_name, TaskComplexity.MEDIUM)
+        # Get context-aware task complexity
+        complexity = self.get_task_complexity(task_name, query, task_context)
         
         # Get appropriate model tier
         tier = self.complexity_to_tier[complexity]
@@ -228,7 +322,7 @@ class ModelAllocation:
             "cost_savings_vs_premium": f"{(1 - (total_cost_weight / task_count) / 15.0) * 100:.1f}%"
         }
     
-    def create_context_managed_call(self, task_name: str, signature_class, module_call_func):
+    def create_context_managed_call(self, task_name: str, signature_class, module_call_func, query: str = "", task_context: str = ""):
         """
         Execute a DSPy module call with appropriate model context.
         
@@ -236,6 +330,8 @@ class ModelAllocation:
             task_name: Name of the task
             signature_class: DSPy signature class
             module_call_func: Function that takes a module and returns result
+            query: Query or task description for context
+            task_context: Additional context about the task
             
         Returns:
             Result from module call with appropriate model
@@ -246,7 +342,7 @@ class ModelAllocation:
             logger.error("DSPy not available for model allocation")
             return None
         
-        model_name, model_config = self.get_model_for_task(task_name)
+        model_name, model_config = self.get_model_for_task(task_name, query, task_context)
         
         try:
             # Use DSPy 2.6+ LM format with provider/model
@@ -277,7 +373,23 @@ class ModelAllocation:
             
         except Exception as e:
             logger.error(f"Failed to execute {task_name} with model allocation: {e}")
-            if self.fallback_enabled:
+            
+            # Special handling for token limit errors
+            if "RateLimitError" in str(e) or "Request too large" in str(e) or "tokens per min" in str(e):
+                logger.warning(f"🚫 Token limit exceeded for {task_name}, forcing fallback to smaller model")
+                try:
+                    # Force fallback to mini model for token limit issues
+                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                    fallback_module = dspy.Predict(signature_class)
+                    with dspy.context(lm=fallback_lm):
+                        result = module_call_func(fallback_module)
+                    logger.info(f"✅ Successfully executed {task_name} with token-limit fallback to gpt-4.1-mini")
+                    return result
+                except Exception as token_fallback_error:
+                    logger.error(f"Token-limit fallback also failed for {task_name}: {token_fallback_error}")
+            
+            # General fallback for other errors
+            elif self.fallback_enabled:
                 # Try fallback with default module
                 try:
                     logger.warning(f"Falling back to default model for {task_name}")

@@ -227,17 +227,27 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         # Multiple MATCH statements without semicolons are valid in Cypher
         return_statements = cypher.upper().count('RETURN ')
         
+        # Check if this is a valid UNION query (single query with multiple parts)
+        is_union_query = 'UNION' in cypher.upper()
+        
         # True multi-query indicators:
-        # 1. Multiple RETURN statements (multiple complete queries)
-        # 2. Semicolons separating queries
+        # 1. Multiple RETURN statements WITHOUT UNION (multiple complete queries)
+        # 2. Semicolons separating queries  
         # 3. Comments with numbered sections (like "1)", "2)")
         numbered_sections = len([line for line in lines if re.match(r'^\s*\d+\)', line.strip())])
         
-        if return_statements > 1 or semicolon_count > 1 or numbered_sections > 0:
-            logger.error(f"❌ MULTI-QUERY DETECTED: {return_statements} RETURN statements, {semicolon_count} semicolons, {numbered_sections} numbered sections, comments: {has_comments}")
+        # Allow UNION queries (single query with multiple RETURN statements)
+        invalid_multi_query = (return_statements > 1 and not is_union_query) or semicolon_count > 1 or numbered_sections > 0
+        
+        if invalid_multi_query:
+            logger.error(f"❌ MULTI-QUERY DETECTED: {return_statements} RETURN statements, {semicolon_count} semicolons, {numbered_sections} numbered sections, comments: {has_comments}, union: {is_union_query}")
             logger.error(f"📝 Raw input: {repr(cypher)}")
             # CRITICAL: Raise exception instead of returning ERROR string that could be executed
             raise ValueError("Multiple queries detected. Use only one complete query with one RETURN statement.")
+        
+        # Log UNION query acceptance
+        if is_union_query:
+            logger.info(f"✅ UNION QUERY ACCEPTED: {return_statements} RETURN statements unified with UNION")
         
         # Reject CALL statements completely
         if 'CALL' in cypher.upper():
@@ -285,9 +295,15 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             raise ValueError("Query must include RETURN statement.")
         
         # Check for multiple complete queries (not just multiple MATCH statements)
+        # BUT allow UNION queries which legitimately have multiple RETURN statements
         if result.upper().count('RETURN ') > 1:
-            logger.error(f"❌ Multiple complete queries after cleaning: {result[:100]}...")
-            raise ValueError("Multiple complete queries with RETURN statements detected.")
+            # Check if this is a valid UNION query
+            is_union_query = 'UNION' in result.upper()
+            if not is_union_query:
+                logger.error(f"❌ Multiple complete queries after cleaning: {result[:100]}...")
+                raise ValueError("Multiple complete queries with RETURN statements detected.")
+            else:
+                logger.info(f"✅ UNION query with {result.upper().count('RETURN ')} RETURN statements accepted")
         
         if result != cypher.strip():
             logger.info(f"🔧 Cleaned multi-part input to single query")
