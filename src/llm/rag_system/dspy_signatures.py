@@ -26,21 +26,59 @@ if DSPY_AVAILABLE:
         1. Simple database lookup (traditional mode)
         2. Multi-step analysis with tools (agentic mode)
         
+        **STRONGLY PREFER AGENTIC MODE** for queries that would benefit from:
+        - Cross-database integration (KEGG + PFAM + CAZyme + BGC data)
+        - Statistical analysis or visualization
+        - Comprehensive reports combining multiple data sources
+        - Comparative analysis across genomes
+        - Literature integration for functional annotation
+        - Large dataset analysis requiring chunking and synthesis
+        - Dataset exploration and discovery ("look through", "find interesting", "what stands out")
+        - Multi-step reasoning with justification ("present with justifications", "explain why")
+        - Novelty detection and pattern recognition
+        
         Examples requiring agentic mode:
         - "Find proteins similar to X and analyze their functions" (similarity search + analysis)
         - "Compare metabolic capabilities between genomes" (multiple queries + comparison)
         - "Generate a report on CAZyme distribution" (query + code analysis + visualization)
+        - "What are the transport proteins across all genomes?" (query + analysis + literature)
+        - "Analyze functional distribution in genome X" (query + statistical analysis + visualization)
+        - "Find all BGCs and their associated pathways" (BGC query + pathway analysis + literature)
+        - "Create a comprehensive functional profile" (multi-database query + analysis + synthesis)
+        - "Show me the most novel loci" (multiple novelty detection queries + characterization + ranking)
+        - "Find interesting genomic features" (comprehensive novelty search + detailed analysis)
+        - "What stands out in this genome" (multi-type novelty detection + comparative analysis)
         
         Examples for traditional mode:
         - "How many proteins are there?" (simple count)
         - "What is the function of protein X?" (direct lookup)
-        - "Show me transport proteins" (single query)
+        - "Show me the sequence of gene Y" (single lookup)
+        
+        **TASK PLANNING GUIDELINES**:
+        - Create 3-5 meaningful tasks that build upon each other
+        - Include data retrieval, analysis, and synthesis steps
+        - Consider literature search for functional questions
+        - Include code analysis for large datasets or distributions
+        - Plan for cross-database integration when relevant
+        
+        **AGENTIC BIOLOGICAL PLANNING**:
+        
+        Use your biological expertise to break down complex biological questions into logical steps.
+        Consider what data, tools, and analyses would be needed to thoroughly answer the user's question.
+        
+        Available tools for the agent:
+        - Database queries (Neo4j for structured data, LanceDB for similarity search)
+        - Literature search (PubMed integration)
+        - Code interpreter (statistical analysis, visualization)
+        - Genome selector (when specific organism targeting is needed)
+        
+        Plan 3-5 meaningful steps that build upon each other to comprehensively address the biological question.
         """
         
         user_query = dspy.InputField(desc="User's natural language question")
         requires_planning = dspy.OutputField(desc="Boolean: Does this query require multi-step agentic execution?")
         reasoning = dspy.OutputField(desc="Explanation of why agentic planning is or isn't needed")
-        task_plan = dspy.OutputField(desc="If agentic: high-level task breakdown. If traditional: 'N/A'")
+        task_plan = dspy.OutputField(desc="If agentic: detailed 3-5 step task breakdown with specific actions. If traditional: 'N/A'")
     
     class QueryClassifier(dspy.Signature):
         """
@@ -61,15 +99,47 @@ if DSPY_AVAILABLE:
     
     class ContextRetriever(dspy.Signature):
         """
-        Generate retrieval strategy for genomic queries based on classification and schema.
+        🧬 🧬 🧬 EXPLICIT GENOME SELECTION SYSTEM 🧬 🧬 🧬
+        
+        The system now uses EXPLICIT GENOME SELECTION that queries the database for available genomes
+        and automatically selects the correct match. When target_genome is provided, it has already
+        been validated against the database and MUST be used exactly as specified.
+        
+        🚨 MANDATORY GENOME FILTERING WHEN target_genome IS PROVIDED:
+        If target_genome input is not empty, queries MUST include exact genome filtering:
+        WHERE genome.genomeId = 'EXACT_TARGET_GENOME_ID'
+        
+        ✅ CORRECT EXAMPLES:
+        target_genome: "[SPECIFIC_GENOME_ID_PROVIDED_BY_SYSTEM]"
+        Query: MATCH (p:Protein)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(genome:Genome) WHERE genome.genomeId = '[EXACT_TARGET_GENOME_VALUE]' RETURN p
+        
+        ❌ FORBIDDEN PATTERNS:
+        - WHERE toLower(genome.genomeId) CONTAINS 'nomurabacteria'  [Old pattern - no longer used]
+        - MATCH (p:Protein) RETURN p  [Missing genome filter entirely]
+        - WHERE genome.genomeId CONTAINS 'partial_name'  [Partial matching not allowed]
+        
+        🔴 VALIDATION CHECKLIST:
+        1. Is target_genome input provided and not empty? → MUST use exact match: WHERE genome.genomeId = 'target_genome'
+        2. Is genome_filter_required = "True"? → MUST include genome filtering node and WHERE clause
+        3. Does query connect to genome via proper relationship path? → Required for filtering
+        4. Are you using the EXACT target_genome value without modification? → Critical for accurate results
+        
+        ══════════════════════════════════════════════════════════════════
+        
+        TECHNICAL REQUIREMENTS:
         
         CRITICAL: Generate ONLY executable Cypher queries with NO COMMENTS.
         
         FORBIDDEN:
         - Comments like /* comment */ or // comment
-        - Multiple MATCH statements
         - Section headers or explanatory text
         - Semicolons separating queries
+        - Multiple independent queries (use UNION instead)
+        
+        ALLOWED FOR COMPREHENSIVE QUERIES:
+        - UNION queries that combine multiple novelty detection approaches in one query
+        - Multiple MATCH statements within single query
+        - OPTIONAL MATCH for additional data
         
         REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
         
@@ -80,10 +150,49 @@ if DSPY_AVAILABLE:
         - Include cf.familyId, cf.cazymeType, ca.substrateSpecificity for family details
         - Connect to genome via: (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(genome:Genome)
         
-        TRANSPORT QUERY DETECTION:
-        When user mentions transport, transporter, channel, permease:
-        - Use Pattern 1 from schema: KEGG-based transport search
-        - Filter by: WHERE toLower(ko.description) CONTAINS 'transport'
+        🧬 BIOLOGICAL QUERY STRATEGY EXAMPLES:
+        
+        **For Spatial/Genomic Organization Questions** (operons, phage, gene clusters, prophage segments):
+        ANALYSIS TYPE: spatial_genomic
+        Priority: Genomic coordinates, gene neighborhoods, spatial relationships
+        Query Strategy for PHAGE/PROPHAGE detection:
+        - ALWAYS include startCoordinate, endCoordinate, strand in SELECT
+        - ORDER BY startCoordinate, endCoordinate for spatial analysis
+        - Focus on consecutive genes without functional annotations (hypothetical proteins)
+        - Look for stretches of 4+ consecutive genes with missing/poor annotations
+        - Search for unannotated regions between 5-50kb (typical prophage size)
+        - AVOID BGC, transport, or metabolic gene analysis - these are NOT phage indicators
+        - Look for genes lacking KEGG annotations (ko.id IS NULL)
+        - Consider genes with generic descriptions like "hypothetical protein"
+        - NO LIMIT clauses - need to see full genomic context
+        
+        **For Functional Annotation Questions** (protein families, domains, pathways, metabolic activities):
+        ANALYSIS TYPE: functional_annotation
+        Priority: PFAM domains, KEGG orthologs, functional classifications
+        Query Strategy:
+        - Use Domain, KEGGOrtholog nodes for functional searches
+        - GROUP BY functional categories for systematic analysis
+        - Include annotation confidence scores (evalue, coverage)
+        - Focus on biochemical pathways and enzyme classifications
+        - Can use chunking for large functional datasets
+        
+        **For Discovery/Exploratory Questions** (novel loci, unusual features, "what's interesting"):
+        ANALYSIS TYPE: comprehensive_discovery  
+        Priority: Systematic exploration without preconceptions
+        Query Strategy:
+        - Broad queries that capture diverse biological features
+        - Include both annotated and poorly-annotated regions
+        - Combine spatial + functional information for context
+        - Avoid LIMIT restrictions that might miss interesting patterns
+        - Look for unusual gene arrangements or novel combinations
+        
+        **CONTEXT-AWARE QUERY GENERATION**:
+        - Spatial queries need ORDER BY genomic coordinates for meaningful analysis
+        - Functional queries can use GROUP BY categories for systematic coverage  
+        - Discovery queries should be comprehensive, avoiding arbitrary limits
+        - Always consider whether the user wants spatial organization vs functional classification
+        
+        Generate queries that match the biological analysis type and provide appropriate data organization.
         
         COMPARATIVE QUERY RULES - NEVER USE LIMIT FOR THESE PATTERNS:
         - "Which genomes" → Show ALL genomes for comparison
@@ -112,12 +221,39 @@ if DSPY_AVAILABLE:
         db_schema = dspy.InputField(desc="Neo4j database schema with node types, relationships, and query patterns")
         question = dspy.InputField(desc="User's question")
         query_type = dspy.InputField(desc="Classified query type from QueryClassifier")
+        task_context = dspy.InputField(desc="Task context including any mentioned genome/organism names")
+        genome_filter_required = dspy.InputField(desc="Whether genome filtering is required for this query (True/False)")
+        target_genome = dspy.InputField(desc="Specific genome name to filter by (if genome_filter_required=True)")
+        analysis_type = dspy.InputField(desc="Analysis type: spatial_genomic (operons, phage, clusters), functional_annotation (proteins, domains), or comprehensive_discovery")
         
         search_strategy = dspy.OutputField(desc="Retrieval approach: direct_query, similarity_search, or hybrid_search")
-        cypher_query = dspy.OutputField(desc="EXECUTABLE Cypher query with NO COMMENTS - must start with MATCH/WITH/OPTIONAL")
-        reasoning = dspy.OutputField(desc="Explanation of retrieval strategy choice")
+        cypher_query = dspy.OutputField(desc="🚨 EXECUTABLE Cypher query with NO COMMENTS - must start with MATCH/WITH/OPTIONAL. 🚨 MANDATORY: If task mentions specific genome/organism, MUST include: WHERE toLower(genome.genomeId) CONTAINS 'organism_name' 🚨")
+        reasoning = dspy.OutputField(desc="Explanation of retrieval strategy choice including genome filtering rationale and biological focus")
         expected_result_size = dspy.OutputField(desc="Estimated result size: small, medium, or large")
+        biological_focus = dspy.OutputField(desc="Primary biological focus: spatial_organization, functional_classification, or discovery_exploration")
     
+    class RelevanceValidator(dspy.Signature):
+        """
+        Validate that retrieved genomic data is actually relevant to the user's original question.
+        
+        This prevents the system from analyzing irrelevant data (e.g., BGCs when user asks about phage).
+        
+        CRITICAL: Only validate as relevant if the data directly addresses the user's question.
+        For phage/prophage queries, data about transporters, BGCs, or general metabolism is NOT relevant.
+        For functional annotation queries, spatial/genomic organization data may not be relevant.
+        
+        Be strict - it's better to reject irrelevant data than to provide wrong analysis.
+        """
+        
+        original_question = dspy.InputField(desc="User's original question")
+        retrieved_data_summary = dspy.InputField(desc="Summary of what data was retrieved from the database")
+        analysis_type = dspy.InputField(desc="Expected analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery")
+        
+        is_relevant = dspy.OutputField(desc="Boolean: Is the retrieved data relevant to answering the original question?")
+        relevance_score = dspy.OutputField(desc="Relevance score 0.0-1.0")
+        reasoning = dspy.OutputField(desc="Explanation of why the data is or isn't relevant")
+        missing_data_types = dspy.OutputField(desc="What types of data would be more relevant to the question?")
+
     class GenomicAnswerer(dspy.Signature):
         """
         Generate comprehensive answers to genomic questions using retrieved context.
@@ -127,11 +263,16 @@ if DSPY_AVAILABLE:
         - Confidence assessment based on data quality
         - Relevant citations and data sources
         - Clear explanations for non-experts when appropriate
+        
+        CRITICAL: Only analyze data that is relevant to the original question.
+        If the context doesn't contain relevant data, state this clearly rather than 
+        providing analysis of unrelated genomic features.
         """
         
         question = dspy.InputField(desc="Original user question")
         context = dspy.InputField(desc="Retrieved genomic data and annotations")
-        answer = dspy.OutputField(desc="Comprehensive answer with biological insights")
+        analysis_type = dspy.InputField(desc="Analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery")
+        answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found")
         confidence = dspy.OutputField(desc="Confidence level: high, medium, or low")
         citations = dspy.OutputField(desc="Data sources and references used")
     

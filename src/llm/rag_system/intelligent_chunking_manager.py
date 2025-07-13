@@ -38,17 +38,18 @@ class ChunkingStrategy:
 
 class IntelligentChunkingManager:
     """
-    Manages intelligent upfront chunking of large datasets into meaningful biological groups.
+    Manages intelligent upfront chunking of large datasets with recursive subdivision fallback.
     
     Features:
     - Upfront analysis to determine optimal chunking strategy
-    - 3-5 logical chunks maximum to avoid complexity explosion
+    - 3-5 logical chunks initially to preserve biological meaning
+    - Token-aware chunk sizing with automatic subdivision
+    - Recursive subdivision for oversized chunks (with depth limits)
     - Clear, focused task descriptions
     - Biological meaning preservation
-    - No recursive splitting
     """
     
-    def __init__(self, max_chunks: int = 5, min_chunk_size: int = 100, use_premium_models: bool = True):
+    def __init__(self, max_chunks: int = 8, min_chunk_size: int = 50, use_premium_models: bool = True, max_tokens_per_chunk: int = 4000):
         """
         Initialize chunking manager.
         
@@ -56,10 +57,12 @@ class IntelligentChunkingManager:
             max_chunks: Maximum number of chunks to create (3-5 recommended)
             min_chunk_size: Minimum items per chunk to avoid micro-chunks
             use_premium_models: Whether to use premium models (GPT-4/o3) for complex analysis
+            max_tokens_per_chunk: Maximum tokens per chunk before recursive subdivision
         """
         self.max_chunks = max_chunks
         self.min_chunk_size = min_chunk_size
         self.use_premium_models = use_premium_models
+        self.max_tokens_per_chunk = max_tokens_per_chunk
         
         # Initialize tokenizer for analysis
         try:
@@ -104,11 +107,14 @@ class IntelligentChunkingManager:
         # Validate and optimize chunks
         optimized_chunks = self._optimize_chunk_sizes(chunks)
         
-        logger.info(f"✅ Created {len(optimized_chunks)} intelligent chunks:")
-        for i, chunk in enumerate(optimized_chunks, 1):
+        # Check for oversized chunks and recursively subdivide if needed
+        final_chunks = await self._check_and_subdivide_oversized_chunks(optimized_chunks)
+        
+        logger.info(f"✅ Created {len(final_chunks)} intelligent chunks:")
+        for i, chunk in enumerate(final_chunks, 1):
             logger.info(f"   Chunk {i}: {chunk.title} ({len(chunk.data_subset)} items)")
         
-        return optimized_chunks
+        return final_chunks
     
     def _determine_chunking_strategy(self, data: List[Dict[str, Any]], question: str) -> ChunkingStrategy:
         """
@@ -448,10 +454,104 @@ class IntelligentChunkingManager:
         
         return optimized
     
+    def _estimate_chunk_tokens(self, chunk: AnalysisChunk) -> int:
+        """Estimate token count for a chunk - MUCH more conservative estimation."""
+        # BRUTAL but safe: assume each item is ~50 tokens average
+        # This prevents the 280k+ token chunks that were killing the API
+        estimated_tokens = len(chunk.data_subset) * 50
+        
+        # Cap at reasonable maximum to prevent API overload  
+        max_safe_tokens = 15000
+        if estimated_tokens > max_safe_tokens:
+            logger.warning(f"Estimated {estimated_tokens} tokens for {len(chunk.data_subset)} items - capping at {max_safe_tokens}")
+            estimated_tokens = max_safe_tokens
+            
+        logger.debug(f"Conservative token estimation: {len(chunk.data_subset)} items → {estimated_tokens} tokens")
+        return estimated_tokens
+    
+    async def _check_and_subdivide_oversized_chunks(self, chunks: List[AnalysisChunk]) -> List[AnalysisChunk]:
+        """Check chunks for token limits with conservative subdivision."""
+        final_chunks = []
+        
+        for chunk in chunks:
+            estimated_tokens = self._estimate_chunk_tokens(chunk)
+            
+            # With conservative estimation, only subdivide if really needed
+            if estimated_tokens > self.max_tokens_per_chunk and len(chunk.data_subset) > 200:
+                logger.warning(f"🔄 Chunk '{chunk.title}' estimated at {estimated_tokens} tokens, subdividing...")
+                # Simple subdivision - just split in half, no recursion
+                mid = len(chunk.data_subset) // 2
+                
+                sub1 = AnalysisChunk(
+                    chunk_id=f"{chunk.chunk_id}_part1",
+                    title=f"{chunk.title} (Part 1)",
+                    description=f"{chunk.description} - first half",
+                    data_subset=chunk.data_subset[:mid],
+                    biological_focus=chunk.biological_focus,
+                    expected_insights=chunk.expected_insights
+                )
+                
+                sub2 = AnalysisChunk(
+                    chunk_id=f"{chunk.chunk_id}_part2", 
+                    title=f"{chunk.title} (Part 2)",
+                    description=f"{chunk.description} - second half",
+                    data_subset=chunk.data_subset[mid:],
+                    biological_focus=chunk.biological_focus,
+                    expected_insights=chunk.expected_insights
+                )
+                
+                final_chunks.extend([sub1, sub2])
+            else:
+                logger.info(f"✅ Chunk '{chunk.title}' within token limit ({estimated_tokens} tokens)")
+                final_chunks.append(chunk)
+        
+        return final_chunks
+    
+    async def _recursively_subdivide_chunk(self, oversized_chunk: AnalysisChunk, depth: int = 0) -> List[AnalysisChunk]:
+        """Recursively subdivide an oversized chunk."""
+        if depth > 3:  # Prevent infinite recursion
+            logger.warning(f"⚠️ Maximum subdivision depth reached for chunk '{oversized_chunk.title}'")
+            return [oversized_chunk]
+        
+        # Split data in half
+        data = oversized_chunk.data_subset
+        mid_point = len(data) // 2
+        
+        if mid_point < self.min_chunk_size:
+            logger.warning(f"⚠️ Cannot subdivide chunk '{oversized_chunk.title}' further (too small)")
+            return [oversized_chunk]
+        
+        # Create two sub-chunks
+        sub_chunks = []
+        for i, (start_idx, end_idx) in enumerate([(0, mid_point), (mid_point, len(data))]):
+            sub_data = data[start_idx:end_idx]
+            
+            sub_chunk = AnalysisChunk(
+                chunk_id=f"{oversized_chunk.chunk_id}_sub{i+1}",
+                title=f"{oversized_chunk.title} (Part {i+1})",
+                description=f"{oversized_chunk.description} - subdivision {i+1} of 2",
+                data_subset=sub_data,
+                biological_focus=oversized_chunk.biological_focus,
+                expected_insights=oversized_chunk.expected_insights
+            )
+            
+            # Check if sub-chunk still needs subdivision
+            estimated_tokens = self._estimate_chunk_tokens(sub_chunk)
+            if estimated_tokens > self.max_tokens_per_chunk:
+                logger.info(f"🔄 Sub-chunk still oversized ({estimated_tokens} tokens), recursing...")
+                further_subdivided = await self._recursively_subdivide_chunk(sub_chunk, depth + 1)
+                sub_chunks.extend(further_subdivided)
+            else:
+                logger.info(f"✅ Sub-chunk within limit ({estimated_tokens} tokens)")
+                sub_chunks.append(sub_chunk)
+        
+        return sub_chunks
+    
     async def execute_chunked_analysis(self, 
                                      chunks: List[AnalysisChunk], 
                                      task_executor, 
-                                     original_task: Task) -> List[Dict[str, Any]]:
+                                     original_task: Task,
+                                     original_question: str = None) -> List[Dict[str, Any]]:
         """
         Execute analysis on all chunks in parallel.
         
@@ -459,6 +559,7 @@ class IntelligentChunkingManager:
             chunks: List of analysis chunks to process
             task_executor: TaskExecutor instance
             original_task: Original task for context
+            original_question: Original user question to preserve biological discovery context
             
         Returns:
             List of analysis results from all chunks
@@ -474,7 +575,7 @@ class IntelligentChunkingManager:
         chunk_tasks = []
         for i, chunk in enumerate(chunks, 1):
             # Use the clean chunk_id directly - no need to modify further
-            clean_task_id = chunk.chunk_id  # e.g., "func_oxidation_reduction", "genome_burkholderiales"
+            clean_task_id = chunk.chunk_id  # e.g., "func_oxidation_reduction", "genome_group1"
             
             # Ensure clean task IDs - prevent any possibility of recursive naming
             if len(clean_task_id) > 50:
@@ -483,15 +584,26 @@ class IntelligentChunkingManager:
             
             logger.info(f"📋 Creating clean chunk task: {clean_task_id}")
             
+            # CRITICAL FIX: Inject original biological discovery context into chunk descriptions
+            # This ensures sub-agents (gpt-4.1-mini) understand they're doing phage discovery, not generic analysis
+            # Use format that avoids triggering old genome selection keywords
+            if original_question:
+                enhanced_description = f"Biological discovery task: '{original_question}' | Analyzing: {chunk.description}"
+                logger.info(f"🧬 Enhanced chunk description with biological context: {enhanced_description[:100]}...")
+            else:
+                enhanced_description = chunk.description
+                logger.warning("⚠️ No original question provided - chunk may lose biological context")
+            
             task = Task(
                 task_id=clean_task_id,
                 task_type=original_task.task_type,
-                description=chunk.description,
+                description=enhanced_description,  # Now includes root biological discovery context
                 query=getattr(original_task, 'query', None)
             )
             # Attach chunk data and mark as already chunked to prevent recursion
             task.chunk_data = chunk.data_subset
             task.biological_focus = chunk.biological_focus
+            task.root_biological_context = original_question  # Store for note-taking context
             task._already_chunked = True  # Prevent recursive chunking
             task._intelligent_chunked = True  # Mark as using new intelligent system
             chunk_tasks.append(task)

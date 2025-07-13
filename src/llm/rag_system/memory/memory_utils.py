@@ -34,6 +34,21 @@ def ensure_session_directory(session_path: Path) -> None:
     session_path.mkdir(parents=True, exist_ok=True)
     (session_path / "task_notes").mkdir(exist_ok=True)
     (session_path / "synthesis_notes").mkdir(exist_ok=True)
+    
+    # Log session ID prominently for debugging
+    session_id = session_path.name
+    logger.info(f"📝 Session notes folder created: {session_path}")
+    
+    # Also print to console for immediate visibility  
+    try:
+        from rich.console import Console
+        console = Console()
+        console.print(f"[bold cyan]📝 Session ID:[/bold cyan] {session_id}")
+        console.print(f"[dim]Notes folder: {session_path}[/dim]")
+    except ImportError:
+        # Fallback if rich not available
+        print(f"📝 Session ID: {session_id}")
+        print(f"Notes folder: {session_path}")
 
 
 def validate_note_structure(note_data: Dict[str, Any], note_type: str) -> bool:

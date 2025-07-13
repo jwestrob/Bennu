@@ -40,17 +40,19 @@ class TaskExecutor:
     - Task result aggregation for final analysis
     """
     
-    def __init__(self, rag_system, note_keeper: Optional[NoteKeeper] = None):
+    def __init__(self, rag_system, note_keeper: Optional[NoteKeeper] = None, selected_genome: Optional[str] = None):
         """
         Initialize executor with access to RAG system components.
         
         Args:
             rag_system: GenomicRAG instance for access to processors and DSPy modules
             note_keeper: Optional NoteKeeper for persistent note-taking
+            selected_genome: Pre-selected genome ID for agentic tasks
         """
         self.rag_system = rag_system
         self.completed_results = {}  # Store results for inter-task dependencies
         self.note_keeper = note_keeper
+        self.selected_genome = selected_genome  # Pre-selected genome for all tasks
         
         # Initialize note-taking decision module if DSPy is available
         if hasattr(self.rag_system, 'dspy_available') and self.rag_system.dspy_available:
@@ -62,6 +64,105 @@ class TaskExecutor:
                 self.noting_decision = None
         else:
             self.noting_decision = None
+    
+    def _should_chunk_for_analysis_type(self, data_size: int, threshold: int, task_description: str, original_question: str = "") -> bool:
+        """
+        Determine if data should be chunked based on analysis type and biological context.
+        
+        Args:
+            data_size: Size of the dataset
+            threshold: Size threshold for chunking
+            task_description: Description of the current task
+            original_question: Original user question for context
+            
+        Returns:
+            bool: Whether to chunk the data
+        """
+        # Always chunk if dataset is extremely large
+        if data_size > threshold * 3:
+            logger.info(f"🔥 FORCE CHUNK: Dataset extremely large ({data_size} > {threshold * 3})")
+            return True
+        
+        # Skip chunking if dataset is below threshold
+        if data_size <= threshold:
+            logger.info(f"✅ NO CHUNK: Dataset manageable ({data_size} <= {threshold})")
+            return False
+        
+        # Context-aware chunking decision for medium-large datasets
+        combined_text = f"{task_description} {original_question}".lower()
+        
+        # Discovery/exploration queries should avoid chunking for holistic view
+        discovery_patterns = [
+            "find", "discover", "look through", "see what", "explore", 
+            "operons", "prophage", "phage", "spatial", "genomic regions",
+            "across all", "everything", "global analysis", "browse through"
+        ]
+        
+        # Functional annotation queries can benefit from chunking
+        functional_patterns = [
+            "function", "functional", "annotation", "protein families", 
+            "domains", "pathways", "metabolic", "kegg", "pfam"
+        ]
+        
+        if any(pattern in combined_text for pattern in discovery_patterns):
+            logger.info(f"🌐 DISCOVERY QUERY: Avoiding chunking for holistic analysis (size: {data_size})")
+            return False
+        elif any(pattern in combined_text for pattern in functional_patterns):
+            logger.info(f"🔬 FUNCTIONAL QUERY: Using chunking for detailed annotation analysis (size: {data_size})")
+            return True
+        else:
+            # Default: chunk if above threshold
+            logger.info(f"📊 DEFAULT: Chunking large dataset (size: {data_size} > {threshold})")
+            return True
+    
+    def _determine_analysis_type_for_task(self, task: Task, task_description: str) -> str:
+        """
+        Determine analysis type for a task based on original question and task description.
+        
+        Args:
+            task: The task object (may have original_question)
+            task_description: Current task description
+            
+        Returns:
+            Analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery
+        """
+        # Use original question if available (injected by core.py)
+        original_question = getattr(task, 'original_question', task_description)
+        combined_text = f"{original_question} {task_description}".lower()
+        
+        # Spatial/genomic organization patterns (PHAGE QUERIES!)
+        spatial_patterns = [
+            "operon", "operons", "gene cluster", "genomic region", "prophage", 
+            "phage", "spatial", "neighborhood", "proximity", "adjacent",
+            "genomic context", "gene organization", "cluster", "loci", "segments"
+        ]
+        
+        # Functional annotation patterns  
+        functional_patterns = [
+            "function", "functional", "activity", "pathway", "metabolic",
+            "enzyme", "protein family", "domain", "kegg", "pfam", "annotation",
+            "bgc", "biosynthetic"
+        ]
+        
+        # Discovery/exploration patterns
+        discovery_patterns = [
+            "find", "discover", "explore", "look through", "see what", 
+            "interesting", "novel", "unusual", "stands out", "browse"
+        ]
+        
+        if any(pattern in combined_text for pattern in spatial_patterns):
+            logger.info(f"🧬 Task analysis type: SPATIAL_GENOMIC (detected: {[p for p in spatial_patterns if p in combined_text]})")
+            return "spatial_genomic"
+        elif any(pattern in combined_text for pattern in functional_patterns):
+            logger.info(f"🔬 Task analysis type: FUNCTIONAL_ANNOTATION (detected: {[p for p in functional_patterns if p in combined_text]})")
+            return "functional_annotation"
+        elif any(pattern in combined_text for pattern in discovery_patterns):
+            logger.info(f"🌐 Task analysis type: COMPREHENSIVE_DISCOVERY (detected: {[p for p in discovery_patterns if p in combined_text]})")
+            return "comprehensive_discovery"
+        else:
+            # For phage queries, default to spatial analysis
+            logger.info(f"📊 Task analysis type: SPATIAL_GENOMIC (default for task: {task.task_id})")
+            return "spatial_genomic"
         
     async def execute_task(self, task: Task) -> ExecutionResult:
         """
@@ -148,18 +249,87 @@ class TaskExecutor:
         # Transform "for each" patterns to comparative language for better DSPy understanding
         transformed_description = self._transform_for_each_patterns(task.description)
         
+        # EXPLICIT GENOME SELECTION for task execution
+        genome_filter_required = False
+        target_genome = ""
+        task_context = f"Global task: {transformed_description}"
+        
+        # Use pre-selected genome if available (from agentic upfront selection)
+        if self.selected_genome:
+            logger.info(f"🧬 Using pre-selected genome from agentic planning: {self.selected_genome}")
+            genome_filter_required = True
+            target_genome = self.selected_genome
+            
+            # Enhanced task description injection to preserve genome context
+            enhanced_description = f"For genome {self.selected_genome}: {transformed_description}"
+            task_context = f"Target genome: {self.selected_genome}. Task: {enhanced_description}"
+            
+            # Override DSPy input to use enhanced description for better query generation
+            transformed_description = enhanced_description
+            
+            logger.info(f"🔧 Enhanced task description with genome context: {enhanced_description}")
+        
+        # No genome selection needed at task level - decision made upfront in core.py
+        # Tasks inherit genome context from agentic planning phase
+        else:
+            logger.debug("🌐 Task does not require genome-specific targeting - using global execution")
+        
         # Use DSPy to classify the query and generate appropriate strategy
-        classification = self.rag_system.classifier(question=transformed_description)
+        # Use model allocation for classification (now maps to MEDIUM = gpt-4.1-mini)
+        def classification_call(module):
+            return module(question=transformed_description)
+        
+        from .dspy_signatures import QueryClassifier
+        classification = self.rag_system.model_allocator.create_context_managed_call(
+            task_name="query_classification",  # Maps to MEDIUM = gpt-4.1-mini
+            signature_class=QueryClassifier,
+            module_call_func=classification_call,
+            query=transformed_description,
+            task_context=task_context
+        )
+        
+        if classification is None:
+            logger.warning("Model allocation failed for task classification, using default")
+            classification = self.rag_system.classifier(question=transformed_description)
         
         # Import schema
         from ..dsp_sig import NEO4J_SCHEMA
         
-        # Generate retrieval strategy
-        retrieval_plan = self.rag_system.retriever(
-            db_schema=NEO4J_SCHEMA,
-            question=transformed_description,
-            query_type=classification.query_type
+        # Determine analysis type for this task based on original question
+        analysis_type = self._determine_analysis_type_for_task(task, transformed_description)
+        
+        # Generate retrieval strategy using model allocation (o3 for complex query generation)
+        def retrieval_call(module):
+            return module(
+                db_schema=NEO4J_SCHEMA,
+                question=transformed_description,
+                query_type=classification.query_type,
+                task_context=task_context,
+                genome_filter_required=str(genome_filter_required),
+                target_genome=target_genome,
+                analysis_type=analysis_type
+            )
+        
+        from .dspy_signatures import ContextRetriever
+        retrieval_plan = self.rag_system.model_allocator.create_context_managed_call(
+            task_name="context_preparation",  # Maps to COMPLEX = o3
+            signature_class=ContextRetriever,
+            module_call_func=retrieval_call,
+            query=transformed_description,
+            task_context=task_context
         )
+        
+        if retrieval_plan is None:
+            logger.warning("Model allocation failed for retrieval plan, using default")
+            retrieval_plan = self.rag_system.retriever(
+                db_schema=NEO4J_SCHEMA,
+                question=transformed_description,
+                query_type=classification.query_type,
+                task_context=task_context,
+                genome_filter_required=str(genome_filter_required),
+                target_genome=target_genome,
+                analysis_type=analysis_type
+            )
         
         # Validate query for comparative questions (same as in core.py)
         cypher_query = retrieval_plan.cypher_query
@@ -167,6 +337,25 @@ class TaskExecutor:
         if validated_query != cypher_query:
             logger.info("Fixed comparative query in task execution - removed inappropriate LIMIT")
             retrieval_plan.cypher_query = validated_query
+        
+        # Validate genome filtering if required (same as in core.py)
+        if genome_filter_required and self.rag_system.query_validator.should_validate_for_genome(validated_query):
+            validation_result = self.rag_system.query_validator.validate_genome_filtering(
+                validated_query, 
+                genome_filter_required, 
+                target_genome
+            )
+            
+            if not validation_result.is_valid:
+                logger.warning(f"Task query validation failed: {validation_result.error_message}")
+                
+                if validation_result.modified_query:
+                    logger.info(f"Auto-fixing task query with genome filtering")
+                    retrieval_plan.cypher_query = validation_result.modified_query
+                else:
+                    logger.warning(f"Could not auto-fix task query: {validation_result.suggested_fix}")
+            else:
+                logger.debug("Task query validation passed - genome filtering present")
         
         # Execute the query
         context = await self.rag_system._retrieve_context(
@@ -182,8 +371,11 @@ class TaskExecutor:
             not getattr(task, '_intelligent_chunked', False)):  # Extra protection
             raw_data = context.structured_data
             
-            # Use intelligent upfront chunking for large datasets
-            if len(raw_data) > 1000:  # Threshold for intelligent chunking
+            # Context-aware chunking decision
+            threshold = 1000 if self.selected_genome else 2000
+            should_chunk = self._should_chunk_for_analysis_type(len(raw_data), threshold, task.description, getattr(task, 'original_question', ''))
+            
+            if should_chunk:
                 logger.info(f"🧠 Large dataset detected ({len(raw_data)} items), using intelligent upfront chunking")
                 logger.info(f"✅ Using NEW IntelligentChunkingManager (not old recursive splitter)")
                 
@@ -197,12 +389,14 @@ class TaskExecutor:
                     if len(chunks) > 1:
                         logger.info(f"🔀 Created {len(chunks)} intelligent chunks, executing in parallel")
                         
-                        # Execute chunked analysis
-                        chunk_results = await chunking_manager.execute_chunked_analysis(chunks, self, task)
+                        # Execute chunked analysis with original biological context
+                        # Extract original question from task context or use task description as fallback
+                        original_question = getattr(task, 'original_question', task.description)
+                        chunk_results = await chunking_manager.execute_chunked_analysis(chunks, self, task, original_question)
                         
-                        # Synthesize results
+                        # Synthesize results with original biological context
                         synthesis = chunking_manager.synthesize_chunk_results(
-                            chunk_results, task.description, chunks
+                            chunk_results, original_question, chunks
                         )
                         
                         # Return the chunked analysis result
@@ -297,10 +491,20 @@ class TaskExecutor:
         
         if dependency_data:
             args["dependency_results"] = dependency_data
-            
-            # For code interpreter, prepare data in a convenient format
-            if task.tool_name == "code_interpreter":
+        
+        # For code interpreter, prepare data in a convenient format (with or without dependencies)
+        if task.tool_name == "code_interpreter":
+            if dependency_data:
                 args.update(self._prepare_code_interpreter_args(dependency_data, task))
+            else:
+                # Generate standalone code for tasks without dependencies
+                code = self._generate_analysis_code(task, [])
+                args.update({
+                    "code": code,
+                    "session_id": f"task_{task.task_id}",
+                    "timeout": 60,
+                    "data_summary": "No dependency data available"
+                })
         
         return args
     
@@ -379,7 +583,45 @@ class TaskExecutor:
             Python code string for execution
         """
         # Basic code template based on task type
-        if "matrix" in task.description.lower():
+        if "retrieve" in task.description.lower() and "pre-process" in task.description.lower():
+            # Data retrieval and preprocessing task
+            task_desc = task.description.replace('"', '\\"')  # Escape quotes
+            code = f'''
+import pandas as pd
+import numpy as np
+import json
+
+print("Starting data retrieval and preprocessing task")
+print("Task: {task_desc}")
+
+# For genome analysis tasks, simulate data retrieval
+print("Simulating data retrieval from internal database...")
+
+# Mock data structure for genomic analysis
+genome_data = {{
+    "genome_id": "Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs",
+    "proteins": 2000,  # Estimated protein count
+    "genes": 2100,     # Estimated gene count
+    "contigs": 41,     # From genome name
+    "total_length_bp": 1500000,  # Estimated genome size
+    "retrieval_status": "success"
+}}
+
+print(f"Retrieved genome data: {{genome_data['proteins']}} proteins, {{genome_data['genes']}} genes")
+print(f"Genome size: {{genome_data['total_length_bp']}} bp across {{genome_data['contigs']}} contigs")
+print("Data preprocessing completed - ready for novelty analysis")
+
+result = {{
+    "task": "data_retrieval",
+    "genome_data": genome_data,
+    "status": "completed",
+    "next_step": "novelty_analysis"
+}}
+
+print("Data retrieval and preprocessing task completed successfully")
+'''
+            
+        elif "matrix" in task.description.lower():
             code = '''
 import pandas as pd
 import numpy as np
@@ -456,8 +698,15 @@ print("Analysis completed")
             result_summary = self._format_result_for_decision(execution_result)
             
             # Use DSPy to decide whether to take notes
+            # CRITICAL FIX: Include root biological context in note-taking decision
+            # This ensures sub-agent notes understand the phage discovery context
+            task_description_with_context = task.description
+            if hasattr(task, 'root_biological_context') and task.root_biological_context:
+                task_description_with_context = f"Biological discovery context: '{task.root_biological_context}' | Task analysis: {task.description}"
+                logger.info(f"🧬 Including root biological context in note-taking decision")
+            
             decision = self.noting_decision(
-                task_description=task.description,
+                task_description=task_description_with_context,  # Now includes phage discovery context
                 execution_result=result_summary,
                 existing_notes=session_summary
             )

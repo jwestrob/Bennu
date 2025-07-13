@@ -170,8 +170,12 @@ class TaskPlanParser:
         Returns:
             Task object with appropriate type and parameters
         """
-        # Generate unique task ID
-        task_id = f"step_{step_num}_{description[:20].replace(' ', '_').lower()}"
+        # Generate unique task ID (fix truncation issue)
+        # Clean description for ID while preserving meaning
+        clean_desc = description.replace(' ', '_').replace('"', '').replace("'", "").lower()
+        # Take more meaningful portion and limit to filesystem-safe length
+        meaningful_part = clean_desc[:40] if len(clean_desc) > 40 else clean_desc
+        task_id = f"step_{step_num}_{meaningful_part}"
         
         # Determine task type
         task_type, tool_name = self._classify_task_type(description)
