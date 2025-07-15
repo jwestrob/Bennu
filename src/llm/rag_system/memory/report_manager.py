@@ -68,7 +68,7 @@ class ReportPlanner:
     while maintaining scientific coherence and user accessibility.
     """
     
-    def __init__(self, max_tokens_per_part: int = 18000):
+    def __init__(self, max_tokens_per_part: int = 100000):
         """
         Initialize report planner.
         

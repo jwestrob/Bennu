@@ -95,7 +95,7 @@ class TaskBasedSynthesizer(ProgressiveSynthesizer):
         task_graph = self._create_analysis_task_graph(analysis_chunks, question)
         
         # Execute analysis tasks - with fallback to sequential if parallel fails
-        task_executor = TaskExecutor(rag_system, self.note_keeper)
+        task_executor = TaskExecutor(rag_system, self.note_keeper, original_user_question=question)
         
         # Async compatibility is now fixed, enable parallel execution for speed
         use_parallel = True  # Parallel execution now works with proper async handling

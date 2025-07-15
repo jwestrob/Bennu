@@ -117,7 +117,8 @@ class ModelAllocation:
             "emergent_insights": TaskComplexity.COMPLEX,
             "agentic_planning": TaskComplexity.COMPLEX,
             "comprehensive_analysis": TaskComplexity.COMPLEX,
-            "cross_database_integration": TaskComplexity.COMPLEX
+            "cross_database_integration": TaskComplexity.COMPLEX,
+            "tool_selection": TaskComplexity.COMPLEX,           # Agent-based tool selection needs biological reasoning
         }
         
         # Define model allocation based on complexity

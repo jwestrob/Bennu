@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
     import dspy
-    from src.llm.dsp_sig import GenomicQuery, NEO4J_SCHEMA
+    from src.llm.rag_system.dspy_signatures import GenomicQuery, NEO4J_SCHEMA
     from src.llm.rag_system import ContextRetrieverV2
     
     print("✅ Successfully imported DSPy and updated signatures")

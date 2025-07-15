@@ -24,7 +24,7 @@ except ImportError:
 
 from ..config import LLMConfig
 from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
-from ..dsp_sig import NEO4J_SCHEMA
+from .dspy_signatures import NEO4J_SCHEMA
 from .utils import setup_debug_logging, GenomicContext
 from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
 from .task_management import TaskGraph, Task, TaskType, TaskStatus
@@ -793,7 +793,7 @@ print("Data available: {data_summary}")
                 graph.add_task(task)
             
             # Step 3: Execute TaskGraph with dependency resolution and pre-selected genome
-            executor = TaskExecutor(self, note_keeper=self.note_keeper, selected_genome=selected_genome)
+            executor = TaskExecutor(self, note_keeper=self.note_keeper, selected_genome=selected_genome, original_user_question=question)
             if selected_genome:
                 console.print(f"🧬 [cyan]All tasks will target genome:[/cyan] {selected_genome}")
             execution_results = await executor.execute_graph(graph)
@@ -1023,7 +1023,7 @@ print("Data available: {data_summary}")
                             "_data_type": "code_interpreter_analysis", 
                             "tool_name": result["tool_name"],
                             "analysis_content": tool_content,
-                            "summary": tool_content[:500] + "..." if len(tool_content) > 500 else tool_content
+                            "summary": tool_content  # Include full analysis - no truncation
                         })
                     else:
                         # Other tool results
