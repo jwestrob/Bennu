@@ -13,7 +13,7 @@ try:
 except ImportError:
     DSPY_AVAILABLE = False
 
-from .dsp_sig import GenomicQuery, TaxonomicClassification, FunctionalAnnotation
+from .rag_system.dspy_signatures import GenomicQuery, TaxonomicClassification, FunctionalAnnotation
 from .retrieval import HybridRetriever
 
 logger = logging.getLogger(__name__)

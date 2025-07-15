@@ -102,10 +102,13 @@ class ProgressiveSynthesizer:
         # Use multi-part for specific report types
         multipart_keywords = [
             'crispr', 'comprehensive', 'all genomes', 'complete analysis',
-            'detailed report', 'full analysis', 'compare across genomes'
+            'detailed report', 'full analysis', 'compare across genomes',
+            # Add prophage discovery terms:
+            'prophage', 'phage', 'viral', 'operon', 'operons', 'spatial',
+            'genomic regions', 'discovery', 'find', 'explore', 'report'
         ]
         
-        question_lower = question.lower()
+        question_lower = question.lower() if question else ""
         if any(keyword in question_lower for keyword in multipart_keywords) and len(raw_data) <= 1000:
             return True
         
@@ -136,7 +139,7 @@ class ProgressiveSynthesizer:
             multipart_synthesizer = MultiPartReportSynthesizer(
                 note_keeper=self.note_keeper,
                 chunk_size=self.chunk_size,
-                max_part_tokens=18000
+                max_part_tokens=100000
             )
             
             # Initialize DSPy modules (now uses global config)
@@ -514,11 +517,56 @@ class ProgressiveSynthesizer:
         """
         logger.info(f"🎯 SYNTHESIZING FROM RAW DATA: {len(raw_data)} items")
         
+        # Check for report files first - if we find one, return it directly to avoid compression
+        for item in raw_data:
+            if (isinstance(item, dict) and 
+                'tool_result' in item and 
+                isinstance(item['tool_result'], dict) and 
+                'report_file_path' in item['tool_result']):
+                
+                report_path = item['tool_result']['report_file_path']
+                logger.info(f"📄 Found detailed report file: {report_path}")
+                
+                try:
+                    # Read the full report from file
+                    with open(report_path, 'r', encoding='utf-8') as f:
+                        full_report = f.read()
+                    
+                    logger.info(f"📄 Successfully read detailed report ({len(full_report)} chars)")
+                    
+                    # Return the full report directly to avoid compression
+                    return f"""
+**📄 DETAILED REPORT GENERATED**
+
+The complete detailed analysis has been saved to: `{report_path}`
+
+{full_report}
+
+---
+*Note: This detailed report was preserved from compression to maintain all analytical details.*
+"""
+                    
+                except Exception as e:
+                    logger.error(f"Failed to read report file {report_path}: {e}")
+                    # Continue with normal synthesis if file reading fails
+        
         # Organize raw data by type and significance
         organized_data = self._organize_raw_data_by_significance(raw_data)
         
         # Extract high-level insights from task notes for context
         cross_task_context = self._extract_cross_task_context(task_notes)
+        
+        # CHECK FOR DETAILED REPORT REQUEST FIRST (before any size-based routing)
+        is_detailed_report = self._is_detailed_report_request(question)
+        
+        if is_detailed_report:
+            logger.info("🎯 DETAILED REPORT DETECTED - bypassing compression and using multipart synthesis")
+            return self._synthesize_multipart_report(task_notes, dspy_synthesizer, question, raw_data)
+        
+        # CHECK FOR MULTIPART REPORT REQUEST SECOND (prophage/spatial keywords)
+        if self._should_use_multipart_report(raw_data, question):
+            logger.info("🎯 Multipart report requested - using multipart synthesis")
+            return self._synthesize_multipart_report(task_notes, dspy_synthesizer, question, raw_data)
         
         # Determine synthesis strategy based on data size and complexity
         if len(raw_data) > 1000:
@@ -754,6 +802,16 @@ class ProgressiveSynthesizer:
         """
         if len(data_chunk) <= max_items:
             return data_chunk
+        
+        # Task-specific relevance scoring
+        scored_items = []
+        question_lower = question.lower() if question else ""
+        
+        # Determine query focus
+        is_phage_query = any(term in question_lower for term in ['phage', 'prophage', 'virus', 'viral', 'operons'])
+        is_transport_query = any(term in question_lower for term in ['transport', 'transporter', 'permease'])
+        is_crispr_query = any(term in question_lower for term in ['crispr', 'cas'])
+        is_metabolic_query = any(term in question_lower for term in ['metabolic', 'pathway', 'enzyme'])
             
         # Determine and log filtering strategy
         filter_type = "generic novelty"
@@ -767,16 +825,6 @@ class ProgressiveSynthesizer:
             filter_type = "metabolic relevance"
             
         logger.info(f"🎯 Intelligent filtering ({filter_type}): {len(data_chunk)} items → {max_items} items")
-        
-        # Task-specific relevance scoring
-        scored_items = []
-        question_lower = question.lower() if question else ""
-        
-        # Determine query focus
-        is_phage_query = any(term in question_lower for term in ['phage', 'prophage', 'virus', 'viral', 'operons'])
-        is_transport_query = any(term in question_lower for term in ['transport', 'transporter', 'permease'])
-        is_crispr_query = any(term in question_lower for term in ['crispr', 'cas'])
-        is_metabolic_query = any(term in question_lower for term in ['metabolic', 'pathway', 'enzyme'])
         
         for item in data_chunk:
             score = 0
@@ -844,17 +892,18 @@ class ProgressiveSynthesizer:
         
         return filtered_items
     
-    def _compress_context_for_synthesis(self, context: str, max_tokens: int = 18000) -> str:
+    def _compress_context_for_synthesis(self, context: str, max_tokens: int = 25000, 
+                                       is_detailed_report: bool = False) -> str:
         """
-        Intelligently compress context for synthesis while preserving biological insights.
-        Uses AGGRESSIVE token-aware compression to stay well under o3 limits.
+        Progressively compress context using intelligent chunking and priority-based compression.
         
         Args:
             context: Original context string
-            max_tokens: Maximum tokens allowed (conservative limit for o3)
+            max_tokens: Maximum tokens allowed
+            is_detailed_report: If True, use minimal compression and larger chunks
             
         Returns:
-            Compressed context focusing on novel findings
+            Optimally compressed context preserving maximum detail within token limits
         """
         # Use actual tokenizer for accurate token counting
         def count_tokens(text: str) -> int:
@@ -866,87 +915,156 @@ class ProgressiveSynthesizer:
             # Fallback: more accurate estimate (3.5 chars per token for English)
             return int(len(text) / 3.5)
         
-        logger.info(f"🗜️ AGGRESSIVE COMPRESSION: {count_tokens(context)} → target {max_tokens} tokens")
+        original_tokens = count_tokens(context)
         
-        # Step 1: Parse structured data for intelligent filtering
+        # If we're already under the limit, no compression needed
+        if original_tokens <= max_tokens:
+            logger.info(f"✅ NO COMPRESSION NEEDED: {original_tokens} tokens (under {max_tokens} limit)")
+            return context
+        
+        # For detailed reports, use larger token budget and minimal compression
+        if is_detailed_report:
+            max_tokens = min(max_tokens * 1.2, 28000)  # Slightly expand for detailed reports but stay within o3 limits
+            logger.info(f"📋 DETAILED REPORT MODE: Expanded token budget to {max_tokens}")
+        
+        logger.info(f"🗜️ PROGRESSIVE COMPRESSION: {original_tokens} → target {max_tokens} tokens")
+        
+        # Calculate compression ratio needed
+        compression_ratio = max_tokens / original_tokens
+        
+        # Step 1: Parse and organize content
         lines = context.split('\n')
         
-        # Priority categories for biological analysis (ENHANCED FOR COMPREHENSIVE NOVELTY)
+        # Enhanced priority categories for biological analysis
         ultra_high_priority = [
             'unknown', 'hypothetical', 'uncharacterized', 'novel', 'duf', 'unusual',
             'bgc', 'cluster', 'biosynthetic', 'unique', 'rare', 'cryptic',
             'novelty', 'stands out', 'interesting', 'unusual', 'orphan',
             'domain of unknown function', 'no functional annotation', 'no annotation',
-            'putative', 'predicted protein', 'hypothetical protein'
+            'putative', 'predicted protein', 'hypothetical protein',
+            # Add prophage/spatial keywords
+            'prophage', 'phage', 'viral', 'operon', 'spatial', 'coordinates'
         ]
         
         high_priority_keywords = [
             'transport', 'regulator', 'sensor', 'kinase', 'dehydrogenase',
             'oxidase', 'reductase', 'synthase', 'transferase', 'recombinase',
-            'toxin', 'antitoxin', 'resistance', 'virulence'
+            'toxin', 'antitoxin', 'resistance', 'virulence', 'integrase'
         ]
         
-        # Step 2: AGGRESSIVE filtering - only keep highest priority data
+        # Step 2: Score and prioritize content
         scored_lines = []
         for line in lines:
-            if not line.strip() or len(line) < 10:  # Skip short/empty lines
+            if not line.strip() or len(line) < 10:
                 continue
                 
             score = 0
             line_lower = line.lower()
             
-            # ULTRA HIGH priority for novel/unknown functions
+            # ULTRA HIGH priority for novel/unknown functions and spatial data
             if any(keyword in line_lower for keyword in ultra_high_priority):
-                score += 50  # Much higher weighting
+                score += 100
                 
-            # High priority for interesting functions
+            # High priority for functional annotations
             elif any(keyword in line_lower for keyword in high_priority_keywords):
-                score += 20
+                score += 50
                 
-            # Medium priority for genomic loci with coordinates
-            elif any(keyword in line_lower for keyword in ['coordinate', 'scaffold', 'contig']):
-                score += 10
+            # Medium priority for genomic context
+            elif any(keyword in line_lower for keyword in ['coordinate', 'scaffold', 'contig', 'gene']):
+                score += 25
                 
-            # Low priority for basic metadata
+            # Basic priority for metadata
             elif any(keyword in line_lower for keyword in ['genome_id', 'protein_id']):
-                score += 1
+                score += 5
             
-            # Skip very low priority lines entirely
-            if score >= 5:  # Only keep moderately interesting or better
+            # Only keep lines with some biological relevance
+            if score >= 5:
                 scored_lines.append((score, line))
         
-        # Step 3: Sort by priority and apply AGGRESSIVE token budgeting
-        scored_lines.sort(key=lambda x: x[0], reverse=True)
+        # Step 3: Progressive chunking strategy
+        # Calculate how many chunks we need based on compression ratio
+        if compression_ratio > 0.8:
+            # Light compression - use 2-3 large chunks
+            num_chunks = min(3, max(2, len(scored_lines) // 500))
+        elif compression_ratio > 0.5:
+            # Medium compression - use 3-5 chunks  
+            num_chunks = min(5, max(3, len(scored_lines) // 300))
+        else:
+            # Heavy compression - use 5-8 chunks
+            num_chunks = min(8, max(5, len(scored_lines) // 200))
         
-        compressed_lines = []
-        current_tokens = 0
+        # Step 4: Distribute content across chunks with smart allocation
+        sorted_lines = sorted(scored_lines, key=lambda x: x[0], reverse=True)
+        tokens_per_chunk = (max_tokens - 1000) // num_chunks  # Reserve 1000 tokens for headers/structure
         
-        # Reserve tokens for essential context
-        header_tokens = count_tokens("Genomic analysis data summary:\n")
-        footer_tokens = count_tokens("\n\nAnalysis complete.")
-        available_tokens = max_tokens - header_tokens - footer_tokens - 500  # Safety buffer
+        chunks = []
+        current_chunk = []
+        current_chunk_tokens = 0
         
-        for score, line in scored_lines:
+        for score, line in sorted_lines:
             line_tokens = count_tokens(line + '\n')
             
-            if current_tokens + line_tokens <= available_tokens:
-                compressed_lines.append(line)
-                current_tokens += line_tokens
+            # If adding this line would exceed chunk limit, start new chunk
+            if current_chunk_tokens + line_tokens > tokens_per_chunk and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_chunk_tokens = 0
+            
+            # If we haven't reached the chunk limit, add the line
+            if len(chunks) < num_chunks:
+                current_chunk.append(line)
+                current_chunk_tokens += line_tokens
             else:
-                # Stop when we hit token limit
+                # We've filled all chunks, stop adding content
                 break
         
-        # Step 4: Build compressed context with essential structure
-        compressed_context = "Genomic analysis data summary:\n"
-        compressed_context += '\n'.join(compressed_lines[:200])  # Limit to top 200 lines max
-        compressed_context += "\n\nAnalysis complete."
+        # Add the last chunk if it has content
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        # Step 5: Build final compressed context
+        compressed_sections = []
+        for i, chunk in enumerate(chunks):
+            section_header = f"\n--- Analysis Section {i+1}/{len(chunks)} ---"
+            compressed_sections.append(section_header)
+            compressed_sections.extend(chunk)
+        
+        compressed_context = "Comprehensive Genomic Analysis Results:\n"
+        compressed_context += '\n'.join(compressed_sections)
+        compressed_context += "\n\n=== End Analysis ==="
         
         final_tokens = count_tokens(compressed_context)
-        compression_ratio = final_tokens / count_tokens(context) * 100
+        compression_ratio_achieved = final_tokens / original_tokens * 100
         
-        logger.info(f"✅ AGGRESSIVE COMPRESSION: {final_tokens} tokens ({compression_ratio:.1f}% of original)")
+        logger.info(f"✅ PROGRESSIVE COMPRESSION COMPLETE:")
+        logger.info(f"   📊 {final_tokens} tokens ({compression_ratio_achieved:.1f}% of original)")
+        logger.info(f"   🧩 {len(chunks)} chunks, ~{tokens_per_chunk} tokens each")
+        logger.info(f"   📋 Preserved {len(sum(chunks, []))} high-priority lines")
         
         return compressed_context
+    
+    def _is_detailed_report_request(self, question: str) -> bool:
+        """
+        Check if the user is requesting a detailed report that should get minimal compression.
+        
+        Args:
+            question: User's original question
+            
+        Returns:
+            True if this appears to be a detailed report request
+        """
+        detailed_report_keywords = [
+            'detailed report', 'full report', 'comprehensive report', 'complete report',
+            'detailed analysis', 'full analysis', 'comprehensive analysis', 'complete analysis',
+            'show me everything', 'all details', 'full details', 'maximum detail',
+            'don\'t compress', 'no compression', 'uncompressed', 'verbose',
+            'make a detailed report', 'make a report', 'detailed report on', 'report on',
+            'at least five loci', 'five loci', 'top 5', 'top five', 'best loci',
+            'most likely to be', 'based on their novelty'
+        ]
+        
+        question_lower = question.lower() if question else ""
+        return any(keyword in question_lower for keyword in detailed_report_keywords)
     
     def _synthesize_with_model_allocation(self,
                                         context: str,
@@ -957,18 +1075,69 @@ class ProgressiveSynthesizer:
         try:
             from ..dspy_signatures import GenomicSummarizer
             
-            # Estimate token count and compress if needed
-            estimated_tokens = int(len(context) / 3.5)  # More accurate estimate: 3.5 chars per token
-            max_safe_tokens = 18000  # VERY conservative limit for o3 (30K per minute limit)
-            
-            if estimated_tokens > max_safe_tokens:
-                logger.warning(f"🚫 Context too large ({estimated_tokens} tokens), applying intelligent compression")
-                context = self._compress_context_for_synthesis(context, max_tokens=max_safe_tokens)
-                logger.info(f"✅ Context compressed to ~{int(len(context) / 3.5)} tokens")
+            # Check if we have discovery results accumulator available
+            synthesis_context = context
+            if (self.note_keeper and 
+                hasattr(self.note_keeper, 'results_accumulator')):
+                
+                # Use curated discovery results instead of raw compressed data
+                discovery_context = self.note_keeper.results_accumulator.get_synthesis_context()
+                discovery_summary = self.note_keeper.results_accumulator.get_discovery_summary()
+                
+                if discovery_summary['total_discoveries'] > 0:
+                    logger.info(f"🎯 Using discovery results for synthesis: {discovery_summary['total_discoveries']} discoveries found")
+                    synthesis_context = discovery_context
+                else:
+                    logger.info("📝 No discoveries found in accumulator, but checking for detailed report request")
+                    # Check if this is a detailed report request - if so, avoid compression
+                    is_detailed_report = self._is_detailed_report_request(question)
+                    
+                    if is_detailed_report:
+                        logger.info("🎯 Detailed report requested - preserving full context without compression")
+                        # For detailed reports, use the full context but still chunk it safely for o3
+                        estimated_tokens = int(len(context) / 3.5)
+                        if estimated_tokens > 25000:
+                            logger.info(f"🎯 Detailed report context large ({estimated_tokens} tokens) - using minimal compression to stay within o3 limits")
+                            synthesis_context = self._compress_context_for_synthesis(context, max_tokens=28000, is_detailed_report=True)
+                        else:
+                            synthesis_context = context
+                    else:
+                        # Fallback to compression if no discoveries recorded and not detailed report
+                        estimated_tokens = int(len(context) / 3.5)
+                        # Reduce token limit to stay within o3's 30,000 token constraint
+                        max_safe_tokens = 25000  # Safe buffer below o3's 30,000 token limit
+                        
+                        if estimated_tokens > max_safe_tokens:
+                            logger.warning(f"🚫 Context too large ({estimated_tokens} tokens), applying intelligent compression")
+                            synthesis_context = self._compress_context_for_synthesis(context, max_tokens=max_safe_tokens, is_detailed_report=is_detailed_report)
+                            logger.info(f"✅ Context compressed to ~{int(len(synthesis_context) / 3.5)} tokens")
+                        else:
+                            synthesis_context = context
+            else:
+                # No accumulator available - use compression fallback
+                estimated_tokens = int(len(context) / 3.5)
+                # Reduce token limit to stay within o3's 30,000 token constraint
+                max_safe_tokens = 25000  # Safe buffer below o3's 30,000 token limit
+                
+                # Check if this is a detailed report request
+                is_detailed_report = self._is_detailed_report_request(question)
+                
+                if is_detailed_report:
+                    logger.info("🎯 Detailed report requested - using minimal compression to stay within o3 limits")
+                    if estimated_tokens > 25000:
+                        synthesis_context = self._compress_context_for_synthesis(context, max_tokens=28000, is_detailed_report=True)
+                    else:
+                        synthesis_context = context
+                elif estimated_tokens > max_safe_tokens:
+                    logger.warning(f"🚫 Context too large ({estimated_tokens} tokens), applying intelligent compression")
+                    synthesis_context = self._compress_context_for_synthesis(context, max_tokens=max_safe_tokens, is_detailed_report=is_detailed_report)
+                    logger.info(f"✅ Context compressed to ~{int(len(synthesis_context) / 3.5)} tokens")
+                else:
+                    synthesis_context = context
             
             def synthesize_call(module):
                 return module(
-                    genomic_data=context,
+                    genomic_data=synthesis_context,
                     target_length="detailed",
                     focus_areas="biological insights, functional analysis, novelty detection"
                 )

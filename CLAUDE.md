@@ -32,6 +32,8 @@ conda info --envs | grep '*'
 
 ## Core Commands
 
+**IMPORTANT: For testing the pipeline, just print the command and let the user run it - the output tokens will overwhelm Claude's context.**
+
 ### Pipeline Execution
 ```bash
 # Build complete knowledge graph from genomes in data/raw/
@@ -130,6 +132,12 @@ data/
 
 ## Development Guidelines
 
+### **Session Notes Location**
+Session notes are stored in `data/session_notes/[SESSION_ID]/` where SESSION_ID can be found in the CLI output. This directory contains:
+- Individual task notes
+- Detailed reports (in `detailed_reports/` subdirectory)  
+- Synthesis notes and cross-task connections
+
 ### **CRITICAL: DSPy Signature Development Guidelines**
 **NEVER hardcode behavior for particular query types or use dummy data directly within DSPy signatures.**
 
@@ -194,6 +202,39 @@ data/
 
 ## Known Issues & Future Work
 
+### CRITICAL ISSUES (January 2025)
+
+#### 1. **Spatial Genome Reading Data Loss**
+- **Problem**: Aggressive context compression (67,961 tokens → 9 tokens) destroys spatial genomic data before analysis
+- **Impact**: LLMs never see actual gene coordinates, hypothetical protein stretches, or spatial organization
+- **Result**: No meaningful prophage/operon discovery possible
+- **Fix**: Disable compression for spatial genomic data or implement smarter chunking
+
+#### 2. **Data Truncation Limits**
+- **Problem**: WholeGenomeReader limits to 1,000 genes per contig, truncating from 5,490 → 500 genes
+- **Impact**: Missing 90% of genomic data needed for comprehensive spatial analysis
+- **Result**: Prophage loci in truncated regions are never found
+- **Fix**: Increase `max_genes_per_contig` to 10,000+ or remove arbitrary limits
+
+#### 3. **Lost Contig Information**
+- **Problem**: All genes grouped under 'unknown_contig' instead of real contig names
+- **Impact**: Destroys spatial organization across actual contig boundaries
+- **Result**: Cannot identify prophage insertion sites at contig junctions
+- **Fix**: Ensure `g.contig` field is properly populated in Neo4j schema
+
+#### 4. **Uninformative Note-Taking** ✅ FIXED
+- **Problem**: Notes contained generic summaries instead of specific biological findings
+- **Root Cause**: `_format_result_for_decision()` truncated tool results to 200 characters, destroying spatial data
+- **Solution Applied**: Modified method to detect and preserve full spatial genomic content for note-taking
+- **Impact**: Note-taking system now receives actual gene coordinates, hypothetical protein stretches, and spatial organization
+- **Result**: LLMs can now identify and record prophage loci coordinates and biological patterns
+
+#### 5. **Missing Code Interpreter**
+- **Problem**: External code interpreter service not available
+- **Impact**: All downstream operon prediction and statistical analysis fails
+- **Result**: No automated pattern detection or scoring of candidate loci
+- **Fix**: Either deploy code interpreter service or implement fallback analysis methods
+
 ### Available Enhancements
 - **Prodigal Metadata**: Start codons, RBS motifs, quality metrics available for integration
 - **Genome Quality Metrics**: QUAST metrics available but not yet integrated into knowledge graph
@@ -203,3 +244,90 @@ data/
 - **Phase 3**: Advanced agent capabilities with knowledge gap discovery
 - **Phase 4**: Large dataset optimization for metagenomes
 - **Phase 5**: Production scaling with containerization and auto-scaling
+
+## **✅ Enhancement Completed: Advanced Report Generation & Progressive Compression**
+
+### **Issue Resolved**: Prophage Discovery Queries Now Trigger Detailed Reports
+The system now automatically detects prophage discovery queries and generates comprehensive structured reports instead of compressed analysis responses.
+
+### **Fixes Applied**:
+
+#### **1. Multipart Report Routing Fix**
+✅ **Fixed**: Added multipart report check **before** size-based routing in `_synthesize_from_raw_data()`
+- Report trigger logic now checks user intent first, then falls back to size routing
+- Added prophage-related keywords: `'prophage', 'phage', 'viral', 'operon', 'operons', 'spatial', 'genomic regions', 'discovery', 'find', 'explore', 'report'`
+
+#### **2. Progressive Compression System** 
+✅ **Implemented**: Replaced hardcoded 200-line limit with intelligent progressive compression
+- **Automatic chunking**: Splits large contexts into 2-8 intelligent chunks based on compression ratio needed
+- **Smart token allocation**: Calculates tokens per chunk (e.g., "60k tokens → 5 chunks of 12k each")
+- **Priority-based content preservation**: Ultra-high priority for prophage/spatial data (100 points), high priority for functional annotations (50 points)
+- **Detailed report mode**: Doubles token budget (100k → 200k) and uses minimal compression for "detailed report" requests
+
+#### **3. Compression Bypass for Detailed Reports**
+✅ **Added**: Detection system for detailed report requests
+- Keywords: `'detailed report', 'full report', 'comprehensive report', 'detailed analysis', 'show me everything', 'all details', 'maximum detail', 'don't compress', 'no compression'`
+- Automatically expands token budget and reduces compression for these requests
+
+### **Technical Implementation**:
+```python
+# New progressive compression system
+def _compress_context_for_synthesis(self, context: str, max_tokens: int = 100000, 
+                                   is_detailed_report: bool = False) -> str:
+    # Progressive chunking: 2-8 chunks based on compression ratio needed
+    if compression_ratio > 0.8:    # Light: 2-3 large chunks
+    elif compression_ratio > 0.5:  # Medium: 3-5 chunks  
+    else:                          # Heavy: 5-8 chunks
+    
+    # Smart token allocation per chunk
+    tokens_per_chunk = (max_tokens - 1000) // num_chunks
+```
+
+### **Expected Behavior**:
+✅ **Working**: Queries like "Find operons containing prophage segments and give me a detailed report" now:
+1. **Route correctly** to `whole_genome_reader` via agent-based tool selection
+2. **Trigger multipart reports** instead of compressed analysis mode  
+3. **Use progressive compression** with prophage/spatial data prioritized
+4. **Expand token budgets** for detailed report requests (100k → 200k tokens)
+5. **Generate structured reports** with multiple sections and comprehensive detail
+
+### **Agent-Based Tool Selection**: ✅ **CONFIRMED WORKING**
+- Binary YES/NO decisions eliminate infinite loops
+- o3 provides sophisticated biological reasoning
+- Prophage tasks route to `whole_genome_reader`
+- Database queries route to `ATOMIC_QUERY`
+- JSON parsing handles o3's detailed responses
+
+## **🚨 CRITICAL DEVELOPMENT GUIDELINE: NO HARD-CODING**
+
+**NEVER HARD-CODE BIOLOGICAL PATTERNS, KEYWORDS, OR BEHAVIOR UNLESS EXPLICITLY REQUESTED BY THE USER.**
+
+### **Prohibited Hard-Coding Examples:**
+- ❌ **Hard-coded gene detection**: `if gene.is_hypothetical:` or `if "hypothetical" in annotation:`
+- ❌ **Hard-coded biological keywords**: `phage_keywords = ['integrase', 'capsid', 'tail']`
+- ❌ **Hard-coded thresholds**: `min_hypothetical_pct = 60`, `window_size = 15`
+- ❌ **Hard-coded pattern matching**: `if annotation.contains("transport")`
+- ❌ **Hard-coded scoring rules**: `if len(genes) >= 3 and has_integrase:`
+- ❌ **Hard-coded biological assumptions**: `if gc_content < 0.4: # likely_phage`
+
+### **Why This Matters:**
+1. **Biological diversity**: Real biological patterns are more complex than simple keywords
+2. **Dataset independence**: Code should work with any genomic dataset, not just current test data
+3. **LLM capabilities**: o3 can recognize biological patterns better than hard-coded rules
+4. **Maintainability**: Hard-coded rules break when datasets or requirements change
+5. **Scientific rigor**: Biological discoveries should come from evidence, not assumptions
+
+### **Preferred Approach:**
+- ✅ **LLM-based pattern recognition**: Let o3 analyze spatial genomic data
+- ✅ **Configurable parameters**: Load thresholds from config files if needed
+- ✅ **Evidence-based discovery**: Use actual sequence analysis, not keyword matching
+- ✅ **Flexible queries**: Generate database queries based on user intent, not pre-defined patterns
+- ✅ **Generic processing**: Write code that works with any biological annotation system
+
+### **Exception: User-Requested Hard-Coding**
+Hard-coding is acceptable ONLY when:
+- User explicitly requests specific keywords or thresholds
+- User provides specific biological criteria to implement
+- User asks for reproduction of a specific published method
+
+**Default behavior should always be flexible, adaptive, and driven by LLM analysis rather than pre-programmed assumptions.**

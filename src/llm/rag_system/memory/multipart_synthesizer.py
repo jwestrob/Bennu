@@ -29,7 +29,7 @@ class MultiPartReportSynthesizer(ProgressiveSynthesizer):
     """
     
     def __init__(self, note_keeper: NoteKeeper, chunk_size: int = 8, 
-                 max_part_tokens: int = 18000):
+                 max_part_tokens: int = 100000):
         """
         Initialize multi-part report synthesizer.
         

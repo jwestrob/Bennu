@@ -64,6 +64,10 @@ class NoteKeeper:
         # Initialize session metadata
         self.metadata = self._load_or_create_metadata()
         
+        # Initialize discovery results accumulator  
+        from .session_results_accumulator import SessionResultsAccumulator
+        self.results_accumulator = SessionResultsAccumulator(self.session_id, self.session_path)
+        
         # Cache for frequently accessed notes
         self._note_cache = {}
         
