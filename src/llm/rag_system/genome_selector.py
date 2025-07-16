@@ -44,16 +44,6 @@ class GenomeSelector:
         self._cached_genomes = None
         self._cache_timestamp = None
         
-        # Common organism name patterns and their variations
-        self.organism_aliases = {
-            'nomurabacteria': ['nomurabacteria', 'candidatus_nomurabacteria'],
-            'burkholderiales': ['burkholderiales', 'burkholderia'],
-            'acidovorax': ['acidovorax'],
-            'esherichia': ['escherichia', 'e_coli', 'ecoli'],
-            'bacillus': ['bacillus'],
-            'pseudomonas': ['pseudomonas'],
-        }
-        
         # Keywords that indicate specific genome targeting
         self.genome_targeting_keywords = [
             'for the', 'in the', 'from the', 'within the', 'of the',

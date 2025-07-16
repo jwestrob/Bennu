@@ -109,7 +109,7 @@ class WholeGenomeReader:
                    g.endCoordinate AS end_pos,
                    g.strand AS strand,
                    g.lengthAA AS gene_length,
-                   COALESCE(g.contig, 'unknown_contig') AS contig_id,
+                   COALESCE(g.contig, g.id, 'unknown_contig') AS contig_id,
                    ko.id AS ko_id,
                    ko.description AS ko_description,
                    pfam_domains
@@ -178,10 +178,12 @@ class WholeGenomeReader:
         
         for contig_id, genes in contig_groups.items():
             
-            # Limit genes per contig to prevent memory issues
+            # PROPHAGE DISCOVERY FIX: Don't truncate genes - need complete genomic context
             if len(genes) > max_genes_per_contig:
-                logger.warning(f"⚠️ Contig {contig_id} has {len(genes)} genes, limiting to {max_genes_per_contig}")
-                genes = genes[:max_genes_per_contig]
+                logger.info(f"📊 Contig {contig_id} has {len(genes)} genes - processing all for prophage discovery (no truncation)")
+                # genes = genes[:max_genes_per_contig]  # DISABLED: Causes 75% data loss
+            else:
+                logger.info(f"📊 Processing all {len(genes)} genes from contig {contig_id}")
             
             # Separate by strand and sort by position
             plus_genes = [g for g in genes if g.get('strand') == '+1' or g.get('strand') == '+']

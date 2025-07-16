@@ -486,13 +486,12 @@ class NotingDecision(dspy.Signature):
     task_type = dspy.InputField(desc="Type of task executed (ATOMIC_QUERY, TOOL_CALL)")
     analysis_context = dspy.InputField(desc="Type of analysis being performed (discovery, comparison, lookup, exploration)")
 
-    should_record = dspy.OutputField(desc="Boolean: Should we record notes for this task? Default TRUE for all biological content")
-    importance_score = dspy.OutputField(desc="Importance score 1-10 for this information (biological data gets 5+ minimum)")
+    should_record = dspy.OutputField(desc="Boolean: Should we record notes for this task? TRUE unless no biological content whatsoever")
     reasoning = dspy.OutputField(desc="Explanation of note-taking decision emphasizing biological information captured")
-    observations = dspy.OutputField(desc="If recording: DETAILED observations with coordinates, genes, counts, and patterns")
-    key_findings = dspy.OutputField(desc="If recording: ALL biological findings, annotations, and discoveries")
-    cross_connections = dspy.OutputField(desc="If recording: connections to other tasks (task_id:connection_type:description format)")
-    quantitative_data = dspy.OutputField(desc="If recording: ALL numerical data, coordinates, counts, and measurements")
+    observations = dspy.OutputField(desc="DETAILED observations with coordinates, genes, counts, and patterns. If none, return 'Nothing to report'")
+    key_findings = dspy.OutputField(desc="ALL biological findings, annotations, and discoveries. If none, return 'Nothing to report'")
+    cross_connections = dspy.OutputField(desc="Connections to other tasks (task_id:connection_type:description format). If none, return 'Nothing to report'")
+    quantitative_data = dspy.OutputField(desc="ALL numerical data, coordinates, counts, and measurements. If none, return 'Nothing to report'")
 
 class ReportPartGenerator(dspy.Signature):
     """

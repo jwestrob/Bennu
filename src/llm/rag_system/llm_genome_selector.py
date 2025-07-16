@@ -53,16 +53,12 @@ class LLMGenomeSelector:
         self._cached_genomes = None
         self._cache_timestamp = None
         
-        # Initialize DSPy signature for structured genome analysis
-        if DSPY_AVAILABLE:
-            try:
-                import dspy
-                self.genome_analyzer = dspy.Predict(GenomeSelectionSignature)
-            except Exception as e:
-                logger.warning(f"Failed to initialize DSPy genome analyzer: {e}")
-                self.genome_analyzer = None
-        else:
-            self.genome_analyzer = None
+        # Initialize model allocator for intelligent model selection
+        from .memory.model_allocation import get_model_allocator
+        self.model_allocator = get_model_allocator()
+        
+        # DSPy modules are instantiated on-demand via model allocation
+        # No need for persistent instances
     
     async def get_available_genomes(self, force_refresh: bool = False) -> List[str]:
         """
@@ -179,17 +175,35 @@ class LLMGenomeSelector:
         # Format available genomes for prompt
         genomes_text = "\n".join([f"- {genome}" for genome in available_genomes])
         
-        # Call DSPy signature
-        response = self.genome_analyzer(
+        # Call DSPy signature using model allocation
+        def analyze_call(module):
+            return module(
+                query=query,
+                available_genomes=genomes_text
+            )
+        
+        from .dspy_signatures import GenomeSelectionSignature
+        response = self.model_allocator.create_context_managed_call(
+            task_name="biological_interpretation",  # COMPLEX = o3 for biological reasoning
+            signature_class=GenomeSelectionSignature,
+            module_call_func=analyze_call,
             query=query,
-            available_genomes=genomes_text
+            task_context="Genome selection and biological intent analysis"
         )
         
-        # Parse response
-        intent = getattr(response, 'intent', 'ambiguous')
-        target_genomes_str = getattr(response, 'target_genomes', '')
-        reasoning = getattr(response, 'reasoning', 'No reasoning provided')
-        confidence = float(getattr(response, 'confidence', 0.5))
+        # Parse response with fallback handling
+        if response:
+            intent = getattr(response, 'intent', 'ambiguous')
+            target_genomes_str = getattr(response, 'target_genomes', '')
+            reasoning = getattr(response, 'reasoning', 'No reasoning provided')
+            confidence = float(getattr(response, 'confidence', 0.5))
+        else:
+            # Fallback if model allocation failed
+            logger.warning("Genome analysis model allocation failed, using conservative fallback")
+            intent = 'global'
+            target_genomes_str = ''
+            reasoning = 'Model allocation failed - defaulting to global analysis across all genomes'
+            confidence = 0.7
         
         # Parse target genomes list
         target_genomes = self._parse_target_genomes(target_genomes_str, available_genomes)

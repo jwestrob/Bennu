@@ -79,11 +79,10 @@ class IntelligentToolSelector:
         # Use tool capabilities from external_tools
         self.tool_capabilities = TOOL_CAPABILITIES
         
-        # Initialize DSPy modules if available
+        # DSPy modules are instantiated on-demand via model allocation
+        # No need for persistent instances
         if DSPY_AVAILABLE:
-            self.agent_selector = dspy.Predict(AgentToolSelector)
-            self.intent_classifier = dspy.Predict(BiologicalIntentClassifier)
-            logger.info("🤖 Agent-based tool selector initialized with DSPy")
+            logger.info("🤖 Agent-based tool selector initialized with model allocation")
         else:
             logger.warning("⚠️ DSPy not available - falling back to regex-only selection")
     

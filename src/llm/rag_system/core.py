@@ -83,16 +83,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         # Configure DSPy with model allocation
         self._configure_dspy()
         
-        # Initialize DSPy components (using global DSPy configuration)
-        if DSPY_AVAILABLE:
-            self.planner = dspy.Predict(PlannerAgent)
-            self.classifier = dspy.Predict(QueryClassifier)
-            self.retriever = dspy.Predict(ContextRetriever)
-            self.answerer = dspy.Predict(GenomicAnswerer)
-            
-            # Initialize synthesizer for progressive synthesis
-            from .dspy_signatures import GenomicSummarizer
-            self.synthesizer = dspy.Predict(GenomicSummarizer)
+        # DSPy components are now instantiated on-demand via _run() method
+        # No need for persistent Predict attributes
         
         # Store DSPy availability for task executor
         self.dspy_available = DSPY_AVAILABLE
@@ -128,17 +120,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
                         logger.info(f"🎯 DSPy configured with premium model: {model_string}")
                 else:
-                    # Cost-effective mode: use mini for default, but allow allocation for complex tasks
-                    model_name, model_config = self.model_allocator.get_model_for_task("query_classification")  # Gets o3 for complex tasks
-                    model_string = f"openai/{model_name}"
-                    
-                    # Handle reasoning models (o3) properly even in cost-effective mode
-                    if model_name.startswith(('o1', 'o3')):
-                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
-                        logger.info(f"🎯 DSPy configured with reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
-                    else:
-                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
-                        logger.info(f"🎯 DSPy configured with cost-effective model: {model_string}")
+                    # Cost-effective mode: use ultra-cheap fallback as global default
+                    # Individual tasks will use model allocation for intelligent selection
+                    fallback_model = "gpt-4.1-nano"
+                    model_string = f"openai/{fallback_model}"
+                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                    logger.info(f"🎯 DSPy configured with ultra-cheap fallback: {model_string} (temp=0.0, max_tokens=8000)")
+                    logger.info(f"💡 Model allocation will override this fallback for complex tasks")
                 
                 dspy.settings.configure(lm=lm)
                 
@@ -191,6 +179,22 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     logger.info(f"🔄 DSPy configured with fallback model: {model_string}")
             except Exception as fallback_error:
                 logger.error(f"Fallback DSPy configuration also failed: {fallback_error}")
+    
+    def _run(self, task_name: str, signature_cls, **kwargs):
+        """
+        Centralized Predict wrapper. Allocates the appropriate model via ModelAllocator,
+        instantiates the module, executes it, and returns the result.
+        """
+        def _call(module):
+            return module(**kwargs)
+        
+        return self.model_allocator.create_context_managed_call(
+            task_name=task_name,
+            signature_class=signature_cls,
+            module_call_func=_call,
+            query=kwargs.get("question", "") or kwargs.get("user_query", ""),
+            task_context=kwargs.get("task_context", "")
+        )
     
     def health_check(self) -> Dict[str, bool]:
         """Check health of all system components."""
@@ -257,7 +261,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             if planning_result is None:
                 logger.warning("Model allocation failed for planning, falling back to default")
-                planning_result = self.planner(user_query=question)
+                planning_result = self._run("agentic_planning", PlannerAgent, user_query=question)
             
             console.print(f"🎯 Planning decision: {'agentic' if planning_result.requires_planning else 'traditional'}")
             console.print(f"💭 Reasoning: {planning_result.reasoning}")
@@ -357,7 +361,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 logger.warning("No default LM configured, setting up fallback")
                 fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                 dspy.settings.configure(lm=fallback_lm)
-            classification = self.classifier(question=question)
+            classification = self._run("query_classification", QueryClassifier, question=question)
         
         console.print(f"📊 Query type: {classification.query_type}")
         console.print(f"💭 Reasoning: {classification.reasoning}")
@@ -423,7 +427,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 logger.warning("No default LM configured, setting up fallback")
                 fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                 dspy.settings.configure(lm=fallback_lm)
-            retrieval_plan = self.retriever(
+            retrieval_plan = self._run("context_preparation", ContextRetriever,
                 db_schema=NEO4J_SCHEMA,
                 question=question,
                 query_type=classification.query_type,
@@ -553,7 +557,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                 dspy.settings.configure(lm=fallback_lm)
             
-            answer_result = self.answerer(
+            answer_result = self._run("biological_interpretation", GenomicAnswerer,
                 question=question,
                 context=formatted_context
             )
@@ -856,7 +860,7 @@ print("Data available: {data_summary}")
                     # Use progressive synthesis (now with task-based capability for large datasets)
                     answer = self.progressive_synthesizer.synthesize_progressive(
                         task_notes=task_notes,
-                        dspy_synthesizer=self.synthesizer,
+                        dspy_synthesizer=None,  # ProgressiveSynthesizer uses its own model allocation
                         question=question,
                         raw_data=raw_data,
                         rag_system=self  # Pass self for task-based processing
@@ -925,7 +929,7 @@ print("Data available: {data_summary}")
             
             # Use GenomicAnswerer to synthesize final response
             if combined_context.strip():
-                answer_result = self.answerer(
+                answer_result = self._run("final_synthesis", GenomicAnswerer,
                     question=question,
                     context=combined_context
                 )
