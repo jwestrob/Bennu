@@ -106,6 +106,8 @@ class ModelAllocation:
             "literature_search": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for search queries
             "data_aggregation": TaskComplexity.MEDIUM,       # Can use gpt-4.1-mini for combining data
             "statistical_analysis": TaskComplexity.MEDIUM,   # Can use gpt-4.1-mini for basic stats
+            "genomic_synthesis": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for synthesis to avoid o3 token limits
+            "detailed_report_synthesis": TaskComplexity.MEDIUM,  # Force gpt-4.1-mini for detailed reports
             
             # Complex tasks - deep reasoning and synthesis  
             "context_preparation": TaskComplexity.COMPLEX,     # Query generation needs domain knowledge

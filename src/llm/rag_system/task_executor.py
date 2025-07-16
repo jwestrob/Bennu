@@ -57,15 +57,8 @@ class TaskExecutor:
         self.original_user_question = original_user_question or "Unknown query"
         
         # Initialize note-taking decision module if DSPy is available
-        if hasattr(self.rag_system, 'dspy_available') and self.rag_system.dspy_available:
-            try:
-                import dspy
-                self.noting_decision = dspy.Predict(NotingDecision)
-            except ImportError:
-                logger.warning("DSPy not available - note-taking disabled")
-                self.noting_decision = None
-        else:
-            self.noting_decision = None
+        # Note-taking uses model allocation via rag_system
+        # No need for persistent DSPy instances
     
     def _should_chunk_for_analysis_type(self, data_size: int, threshold: int, task_description: str, original_question: str = "") -> bool:
         """
@@ -300,21 +293,17 @@ class TaskExecutor:
         # Determine analysis type for this task based on original question
         analysis_type = self._determine_analysis_type_for_task(task, transformed_description)
         
-        # Generate retrieval strategy using model allocation (o3 for complex query generation)
+        # Generate retrieval strategy using model allocation (MEDIUM for task queries to reduce token usage)
         def retrieval_call(module):
             return module(
                 db_schema=NEO4J_SCHEMA,
                 question=transformed_description,
-                query_type=classification.query_type,
-                task_context=task_context,
-                genome_filter_required=str(genome_filter_required),
-                target_genome=target_genome,
-                analysis_type=analysis_type
+                query_type=classification.query_type
             )
         
         from .dspy_signatures import ContextRetriever
         retrieval_plan = self.rag_system.model_allocator.create_context_managed_call(
-            task_name="context_preparation",  # Maps to COMPLEX = o3
+            task_name="query_generation",  # Maps to MEDIUM = gpt-4.1-mini (reduces token usage)
             signature_class=ContextRetriever,
             module_call_func=retrieval_call,
             query=transformed_description,
@@ -748,7 +737,7 @@ class TaskExecutor:
             "session_id": f"task_{task.task_id}",
             "timeout": 60,  # 1 minute timeout for analysis tasks
             "data_summary": f"Available data: {len(all_structured_data)} records from {len(dependency_data)} dependencies",
-            "structured_data": all_structured_data  # Pass structured data to code context
+            # Remove structured_data from args - it's embedded in the code
         }
     
     def _generate_analysis_code(self, task: Task, structured_data: List[Dict]) -> str:
@@ -769,10 +758,14 @@ class TaskExecutor:
         
         # Detect if this is an operon ranking task
         if any(keyword in task.description.lower() for keyword in ["rank", "score", "top", "highest", "best", "loci"]):
-            # Serialize structured data into Python code
-            structured_data_str = json.dumps(structured_data, indent=2, default=str)
+            # Serialize structured data into Python code safely
+            try:
+                structured_data_str = json.dumps(structured_data, indent=2, default=str)
+            except Exception as e:
+                # Fallback to safer string representation
+                structured_data_str = str(structured_data)
             
-            # Generate operon ranking code
+            # Generate operon ranking code with proper variable scoping
             code = f'''
 import pandas as pd
 import numpy as np
@@ -781,17 +774,17 @@ import json
 print("🔬 Starting operon ranking and analysis task")
 print("Task: {task_desc}")
 
-# Load structured data from previous tasks
-structured_data = {structured_data_str}
+# Define structured data from previous tasks
+data_from_previous_tasks = {structured_data_str}
 
-print(f"Available data: {{len(structured_data)}} records")
+print(f"Available data: {{len(data_from_previous_tasks)}} records")
 
 # Process available structured data from previous tasks
 total_genomes = 0
 total_genes = 0
 genome_summaries = []
 
-for data_item in structured_data:
+for data_item in data_from_previous_tasks:
     if isinstance(data_item, dict):
         if data_item.get("data_type") == "genome_context":
             total_genomes += 1
@@ -980,17 +973,44 @@ print("✅ Analysis completed")
             analysis_context = self._determine_analysis_context(task.description, self.original_user_question)
             
             # Enhanced decision criteria - emphasize comprehensive biological note-taking
-            decision = self.noting_decision(
-                task_description=f"BIOLOGICAL ANALYSIS: {task_description_with_context}",
-                execution_result=f"COMPREHENSIVE BIOLOGICAL DATA: {result_summary}",
-                existing_notes=session_summary,
-                original_user_question=self.original_user_question,
-                task_type=task.task_type.value,
-                analysis_context=analysis_context
+            def noting_call(module):
+                return module(
+                    task_description=f"BIOLOGICAL ANALYSIS: {task_description_with_context}",
+                    execution_result=f"COMPREHENSIVE BIOLOGICAL DATA: {result_summary}",
+                    existing_notes=session_summary,
+                    original_user_question=self.original_user_question,
+                    task_type=task.task_type.value,
+                    analysis_context=analysis_context
+                )
+            
+            from .dspy_signatures import NotingDecision
+            decision = self.rag_system.model_allocator.create_context_managed_call(
+                task_name="progress_tracking",  # Simple task - uses mini
+                signature_class=NotingDecision,
+                module_call_func=noting_call,
+                query=self.original_user_question,
+                task_context=task_description_with_context
             )
             
-            # Parse decision result
-            should_record = getattr(decision, 'should_record', False)
+            # Parse decision result with aggressive defaults
+            if decision:
+                should_record = getattr(decision, 'should_record', True)  # Default to TRUE
+            else:
+                # Fallback if model allocation failed - always record biological data
+                should_record = True
+                logger.warning("Note-taking decision failed, defaulting to recording notes")
+            
+            # AGGRESSIVE FALLBACK: If DSPy said not to record, check if we have biological data anyway
+            if not should_record:
+                result_str = str(execution_result.result).lower()
+                biological_indicators = [
+                    'gene', 'protein', 'genome', 'contig', 'coordinate', 'strand',
+                    'hypothetical', 'domain', 'pfam', 'ko', 'annotation', 'spatial'
+                ]
+                
+                if any(indicator in result_str for indicator in biological_indicators):
+                    should_record = True
+                    logger.info(f"🔄 Overriding DSPy decision - biological data detected for task {task.task_id}")
             
             if should_record:
                 logger.info(f"📝 Recording notes for task {task.task_id}: {decision.reasoning}")
@@ -1001,34 +1021,46 @@ print("✅ Analysis completed")
                 cross_connections = self._parse_cross_connections(getattr(decision, 'cross_connections', []))
                 quantitative_data = self._parse_quantitative_data(getattr(decision, 'quantitative_data', {}))
                 
-                # Create decision result
-                decision_result = NotingDecisionResult(
-                    should_record=should_record,
-                    reasoning=getattr(decision, 'reasoning', ''),
-                    importance_score=float(getattr(decision, 'importance_score', 5.0))
+                # Check if we have any actual content (not just "Nothing to report")
+                has_content = (
+                    any(obs and obs.lower() != 'nothing to report' for obs in observations) or
+                    any(finding and finding.lower() != 'nothing to report' for finding in key_findings) or
+                    len(cross_connections) > 0 or
+                    any(v and str(v).lower() != 'nothing to report' for v in quantitative_data.values())
                 )
                 
-                # Record the notes
-                success = self.note_keeper.record_task_notes(
-                    task_id=task.task_id,
-                    task_type=task.task_type.value,
-                    description=task.description,
-                    decision_result=decision_result,
-                    observations=observations,
-                    key_findings=key_findings,
-                    quantitative_data=quantitative_data,
-                    cross_connections=cross_connections,
-                    confidence=ConfidenceLevel.MEDIUM,
-                    execution_time=execution_result.execution_time,
-                    tokens_used=self._estimate_tokens_used(execution_result)
-                )
+                # Only record if there's actual meaningful content
+                if has_content:
+                    # Create decision result (removed importance_score requirement)
+                    decision_result = NotingDecisionResult(
+                        should_record=True,
+                        reasoning=getattr(decision, 'reasoning', ''),
+                        importance_score=8.0  # Default high importance for all biological content
+                    )
+                    
+                    # Record the notes
+                    success = self.note_keeper.record_task_notes(
+                        task_id=task.task_id,
+                        task_type=task.task_type.value,
+                        description=task.description,
+                        decision_result=decision_result,
+                        observations=observations,
+                        key_findings=key_findings,
+                        quantitative_data=quantitative_data,
+                        cross_connections=cross_connections,
+                        confidence=ConfidenceLevel.MEDIUM,
+                        execution_time=execution_result.execution_time,
+                        tokens_used=self._estimate_tokens_used(execution_result)
+                    )
                 
-                if success:
-                    logger.info(f"✅ Notes recorded for task {task.task_id}")
+                    if success:
+                        logger.info(f"✅ Notes recorded for task {task.task_id}")
+                    else:
+                        logger.warning(f"❌ Failed to record notes for task {task.task_id}")
                 else:
-                    logger.warning(f"❌ Failed to record notes for task {task.task_id}")
+                    logger.debug(f"⏭️ No meaningful content found for task {task.task_id}, skipping note-taking")
             else:
-                logger.debug(f"⏭️ Skipping notes for task {task.task_id}: {decision.reasoning}")
+                logger.debug(f"⏭️ Skipping notes for task {task.task_id}: {getattr(decision, 'reasoning', 'No reason provided')}")
                 
         except Exception as e:
             logger.error(f"Error in note-taking consideration: {e}")

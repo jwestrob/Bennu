@@ -58,33 +58,26 @@ class MultiPartReportSynthesizer(ProgressiveSynthesizer):
             self.tokenizer = None
     
     def initialize_dspy_modules(self, dspy_module):
-        """Initialize DSPy modules for multi-part report generation using global configuration."""
-        try:
-            import dspy
-            from ..dspy_signatures import (
-                ReportPartGenerator, 
-                ExecutiveSummaryGenerator, 
-                ReportSynthesisGenerator
-            )
-            
-            # Use global DSPy configuration (same as main system)
-            self.report_part_generator = dspy.Predict(ReportPartGenerator)
-            self.executive_summary_generator = dspy.Predict(ExecutiveSummaryGenerator)
-            self.report_synthesis_generator = dspy.Predict(ReportSynthesisGenerator)
-            
-            # Initialize basic synthesizer for fallback to standard synthesis
-            from ..dspy_signatures import GenomicSummarizer
-            self.synthesizer = dspy.Predict(GenomicSummarizer)
-            
-            logger.info("📄 Multi-part report DSPy modules initialized with global configuration")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize multi-part report DSPy modules: {e}")
-            
-            # Set modules to None so fallback methods are used
-            self.report_part_generator = None
-            self.executive_summary_generator = None
-            self.report_synthesis_generator = None
+        """Initialize DSPy modules for multi-part report generation using model allocation."""
+        # Note: DSPy modules are now instantiated on-demand via model allocation
+        # No need for persistent instances
+        logger.info("📄 Multi-part report synthesizer initialized with model allocation")
+    
+    def _run(self, task_name: str, signature_cls, **kwargs):
+        """
+        Centralized Predict wrapper for MultipartSynthesizer.
+        Uses model allocation for intelligent model selection.
+        """
+        def _call(module):
+            return module(**kwargs)
+        
+        return self.model_allocator.create_context_managed_call(
+            task_name=task_name,
+            signature_class=signature_cls,
+            module_call_func=_call,
+            query=kwargs.get("question", "") or kwargs.get("user_query", ""),
+            task_context=kwargs.get("task_context", "")
+        )
     
     def synthesize_multipart_report(self, 
                                    task_notes: List[TaskNote],
@@ -172,8 +165,9 @@ class MultiPartReportSynthesizer(ProgressiveSynthesizer):
             # Create report structure description
             report_structure = self._describe_report_structure(report_plan)
             
-            # Generate executive summary
-            result = self.executive_summary_generator(
+            # Generate executive summary using model allocation
+            from ..dspy_signatures import ExecutiveSummaryGenerator
+            result = self._run("executive_summary", ExecutiveSummaryGenerator,
                 question=question,
                 data_overview=data_overview,
                 key_patterns=key_patterns,
@@ -199,8 +193,9 @@ class MultiPartReportSynthesizer(ProgressiveSynthesizer):
             # Format data chunk for processing
             data_chunk_formatted = self._format_data_chunk(chunk.data_subset)
             
-            # Generate part content
-            result = self.report_part_generator(
+            # Generate part content using model allocation
+            from ..dspy_signatures import ReportPartGenerator
+            result = self._run("report_part_generation", ReportPartGenerator,
                 question=question,
                 data_chunk=data_chunk_formatted,
                 part_context=chunk.context,
@@ -233,8 +228,9 @@ class MultiPartReportSynthesizer(ProgressiveSynthesizer):
             # Create quantitative integration
             quantitative_integration = self._create_quantitative_integration(report_parts)
             
-            # Generate synthesis
-            result = self.report_synthesis_generator(
+            # Generate synthesis using model allocation
+            from ..dspy_signatures import ReportSynthesisGenerator
+            result = self._run("final_synthesis", ReportSynthesisGenerator,
                 question=question,
                 all_parts_summary=all_parts_summary,
                 cross_cutting_themes=cross_cutting_themes,

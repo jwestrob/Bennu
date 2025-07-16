@@ -52,8 +52,8 @@ class ProgressiveSynthesizer:
     
     def synthesize_progressive(self, 
                              task_notes: List[TaskNote],
-                             dspy_synthesizer,
                              question: str,
+                             dspy_synthesizer=None,
                              raw_data: List[Dict[str, Any]] = None,
                              rag_system = None) -> str:
         """
@@ -61,7 +61,7 @@ class ProgressiveSynthesizer:
         
         Args:
             task_notes: List of TaskNote objects (used as metadata)
-            dspy_synthesizer: DSPy synthesizer module
+            dspy_synthesizer: DSPy synthesizer module (deprecated, uses model allocation)
             question: Original user question
             raw_data: Raw data from task execution (PRIMARY DATA SOURCE)
             rag_system: Optional RAG system for task-based processing
@@ -78,11 +78,11 @@ class ProgressiveSynthesizer:
         # NEW APPROACH: Prioritize raw data from task execution
         if raw_data and len(raw_data) > 0:
             logger.info(f"✅ Using RAW DATA as primary source ({len(raw_data)} items)")
-            return self._synthesize_from_raw_data(raw_data, task_notes, dspy_synthesizer, question)
+            return self._synthesize_from_raw_data(raw_data, task_notes, question, None)
         
         # Fallback: If no raw data, use notes-based synthesis
         logger.warning("⚠️ No raw data available, falling back to notes-only synthesis")
-        return self._synthesize_standard(task_notes, dspy_synthesizer, question)
+        return self._synthesize_standard(task_notes, question, None)
     
     def _should_use_multipart_report(self, raw_data: List[Dict[str, Any]], question: str) -> bool:
         """
@@ -155,18 +155,18 @@ class ProgressiveSynthesizer:
         except Exception as e:
             logger.error(f"Multi-part report synthesis failed: {e}")
             logger.info("Falling back to standard progressive synthesis")
-            return self._synthesize_standard(task_notes, dspy_synthesizer, question)
+            return self._synthesize_standard(task_notes, question, None)
     
     def _synthesize_standard(self, 
                            task_notes: List[TaskNote],
-                           dspy_synthesizer,
-                           question: str) -> str:
+                           question: str,
+                           dspy_synthesizer=None) -> str:
         """
         Perform standard progressive synthesis.
         
         Args:
             task_notes: List of TaskNote objects to synthesize
-            dspy_synthesizer: DSPy synthesizer module
+            dspy_synthesizer: DSPy synthesizer module (deprecated, uses model allocation)
             question: Original user question
             
         Returns:
@@ -180,7 +180,7 @@ class ProgressiveSynthesizer:
             logger.info(f"Processing synthesis chunk {chunk_id} with {len(chunk)} tasks")
             
             # Synthesize this chunk
-            synthesis_result = self._synthesize_chunk(chunk, dspy_synthesizer, chunk_id)
+            synthesis_result = self._synthesize_chunk(chunk, None, chunk_id)
             
             if synthesis_result:
                 self.synthesis_chunks.append(synthesis_result)
@@ -198,7 +198,7 @@ class ProgressiveSynthesizer:
                 )
         
         # Generate final synthesis
-        final_synthesis = self._generate_final_synthesis(dspy_synthesizer, question)
+        final_synthesis = self._generate_final_synthesis(question, None)
         
         logger.info(f"Completed progressive synthesis with {len(self.synthesis_chunks)} chunks")
         return final_synthesis
@@ -556,17 +556,18 @@ The complete detailed analysis has been saved to: `{report_path}`
         # Extract high-level insights from task notes for context
         cross_task_context = self._extract_cross_task_context(task_notes)
         
-        # CHECK FOR DETAILED REPORT REQUEST FIRST (before any size-based routing)
+        # CHECK FOR DETAILED REPORT REQUEST FIRST - HARD BYPASS ALL COMPRESSION
         is_detailed_report = self._is_detailed_report_request(question)
         
         if is_detailed_report:
-            logger.info("🎯 DETAILED REPORT DETECTED - bypassing compression and using multipart synthesis")
-            return self._synthesize_multipart_report(task_notes, dspy_synthesizer, question, raw_data)
+            logger.info("🚨 DETAILED REPORT DETECTED - BYPASSING ALL COMPRESSION AND ROUTING")
+            return self._synthesize_full_context_no_compression(organized_data, cross_task_context, dspy_synthesizer, question)
         
         # CHECK FOR MULTIPART REPORT REQUEST SECOND (prophage/spatial keywords)
         if self._should_use_multipart_report(raw_data, question):
-            logger.info("🎯 Multipart report requested - using multipart synthesis")
-            return self._synthesize_multipart_report(task_notes, dspy_synthesizer, question, raw_data)
+            logger.info("🎯 Multipart report requested - using task-based synthesis")
+            # Use task-based synthesis to avoid token limits
+            return self._synthesize_large_raw_dataset(organized_data, cross_task_context, dspy_synthesizer, question)
         
         # Determine synthesis strategy based on data size and complexity
         if len(raw_data) > 1000:
@@ -735,6 +736,51 @@ The complete detailed analysis has been saved to: `{report_path}`
         # Use model allocation for detailed synthesis
         return self._synthesize_with_model_allocation(full_context, dspy_synthesizer, question, "detailed_analysis")
     
+    def _synthesize_full_context_no_compression(self,
+                                              organized_data: Dict[str, Any],
+                                              cross_task_context: Dict[str, Any],
+                                              dspy_synthesizer,
+                                              question: str) -> str:
+        """Direct synthesis with zero compression for detailed reports."""
+        logger.info("🔥 FULL CONTEXT SYNTHESIS - NO COMPRESSION")
+        
+        # Extract all data without any filtering or truncation
+        all_data = []
+        for category, items in organized_data.items():
+            if isinstance(items, list):
+                all_data.extend(items)
+        
+        # Format all raw data without any truncation limits
+        full_context = self._format_raw_data_for_synthesis(all_data, max_length=None)
+        context_summary = self._format_cross_task_context(cross_task_context)
+        
+        complete_context = f"COMPLETE GENOMIC ANALYSIS (NO COMPRESSION):\n{full_context}\n\nCross-Task Context:\n{context_summary}"
+        
+        # Force gpt-4.1-mini for detailed reports (higher token limit than o3)
+        from ..dspy_signatures import GenomicSummarizer
+        
+        def synthesize_call(module):
+            return module(
+                genomic_data=complete_context,
+                target_length="detailed",
+                focus_areas="specific prophage loci with coordinates, gene clusters, hypothetical stretches, spatial organization"
+            )
+        
+        # Use detailed_report_synthesis task to force gpt-4.1-mini
+        result = self.model_allocator.create_context_managed_call(
+            task_name="detailed_report_synthesis",  # Maps to MEDIUM = gpt-4.1-mini
+            signature_class=GenomicSummarizer,
+            module_call_func=synthesize_call,
+            query=question,
+            task_context="Full context detailed report generation with no compression"
+        )
+        
+        if result:
+            return result.summary
+        else:
+            logger.error("Full context synthesis failed")
+            return "Full context synthesis failed - no compression bypass unsuccessful"
+    
     def _synthesize_significance_chunk(self,
                                      data_chunk: List[Dict[str, Any]],
                                      chunk_name: str,
@@ -763,14 +809,25 @@ The complete detailed analysis has been saved to: `{report_path}`
         
         return self._synthesize_with_model_allocation(context, dspy_synthesizer, question, "tool_analysis")
     
-    def _format_raw_data_for_synthesis(self, raw_data: List[Dict[str, Any]]) -> str:
-        """Format raw data for DSPy synthesis."""
+    def _format_raw_data_for_synthesis(self, raw_data: List[Dict[str, Any]], max_length: Optional[int] = 1000) -> str:
+        """Format raw data for DSPy synthesis.
+        
+        Args:
+            raw_data: Raw data to format
+            max_length: Maximum length per item (None = unlimited for detailed reports)
+        """
         if not raw_data:
             return "No data available"
         
         formatted_items = []
         for i, item in enumerate(raw_data):
-            formatted_items.append(f"Item {i+1}: {str(item)}")
+            item_str = str(item)
+            
+            # Only truncate if max_length is specified (not None for detailed reports)
+            if max_length is not None and len(item_str) > max_length:
+                item_str = item_str[:max_length] + "..."
+            
+            formatted_items.append(f"Item {i+1}: {item_str}")
         
         return "\n".join(formatted_items)
     
@@ -1060,7 +1117,10 @@ The complete detailed analysis has been saved to: `{report_path}`
             'don\'t compress', 'no compression', 'uncompressed', 'verbose',
             'make a detailed report', 'make a report', 'detailed report on', 'report on',
             'at least five loci', 'five loci', 'top 5', 'top five', 'best loci',
-            'most likely to be', 'based on their novelty'
+            'most likely to be', 'based on their novelty', 'give me a detailed report',
+            'detailed report', 'report', 'summarize', 'summary', 'comprehensive',
+            # Add user's specific query keywords
+            'prophage segments', 'operons containing', 'find operons', 'loci'
         ]
         
         question_lower = question.lower() if question else ""
@@ -1094,13 +1154,10 @@ The complete detailed analysis has been saved to: `{report_path}`
                     
                     if is_detailed_report:
                         logger.info("🎯 Detailed report requested - preserving full context without compression")
-                        # For detailed reports, use the full context but still chunk it safely for o3
-                        estimated_tokens = int(len(context) / 3.5)
-                        if estimated_tokens > 25000:
-                            logger.info(f"🎯 Detailed report context large ({estimated_tokens} tokens) - using minimal compression to stay within o3 limits")
-                            synthesis_context = self._compress_context_for_synthesis(context, max_tokens=28000, is_detailed_report=True)
-                        else:
-                            synthesis_context = context
+                        # For detailed reports, use the full context and force gpt-4.1-mini to avoid o3 token limits
+                        synthesis_context = context
+                        # Force use of gpt-4.1-mini for detailed reports to avoid o3 token limits
+                        logger.info("🎯 Detailed report: Using gpt-4.1-mini to avoid o3 token limits")
                     else:
                         # Fallback to compression if no discoveries recorded and not detailed report
                         estimated_tokens = int(len(context) / 3.5)
@@ -1116,18 +1173,17 @@ The complete detailed analysis has been saved to: `{report_path}`
             else:
                 # No accumulator available - use compression fallback
                 estimated_tokens = int(len(context) / 3.5)
-                # Reduce token limit to stay within o3's 30,000 token constraint
-                max_safe_tokens = 25000  # Safe buffer below o3's 30,000 token limit
+                # Use gpt-4.1-mini token limit since we're not using o3 for synthesis
+                max_safe_tokens = 100000  # gpt-4.1-mini has higher limits
                 
                 # Check if this is a detailed report request
                 is_detailed_report = self._is_detailed_report_request(question)
                 
                 if is_detailed_report:
-                    logger.info("🎯 Detailed report requested - using minimal compression to stay within o3 limits")
-                    if estimated_tokens > 25000:
-                        synthesis_context = self._compress_context_for_synthesis(context, max_tokens=28000, is_detailed_report=True)
-                    else:
-                        synthesis_context = context
+                    logger.info("🎯 Detailed report requested - preserving full context without compression")
+                    # For detailed reports, use full context with gpt-4.1-mini (higher token limit)
+                    synthesis_context = context
+                    logger.info("🎯 Detailed report: Using gpt-4.1-mini (higher token limit) to avoid compression")
                 elif estimated_tokens > max_safe_tokens:
                     logger.warning(f"🚫 Context too large ({estimated_tokens} tokens), applying intelligent compression")
                     synthesis_context = self._compress_context_for_synthesis(context, max_tokens=max_safe_tokens, is_detailed_report=is_detailed_report)
@@ -1142,9 +1198,9 @@ The complete detailed analysis has been saved to: `{report_path}`
                     focus_areas="biological insights, functional analysis, novelty detection"
                 )
             
-            # Use biological interpretation task for o3 allocation
+            # Use final synthesis task for o3 allocation (complex biological reasoning)
             result = self.model_allocator.create_context_managed_call(
-                task_name="biological_interpretation",
+                task_name="final_synthesis",  # Maps to COMPLEX = o3
                 signature_class=GenomicSummarizer, 
                 module_call_func=synthesize_call,
                 query=question,
@@ -1166,12 +1222,12 @@ The complete detailed analysis has been saved to: `{report_path}`
             logger.error(f"Model allocation synthesis failed: {e}")
             return f"Synthesis error for {task_type}: {str(e)}"
     
-    def _generate_final_synthesis(self, dspy_synthesizer, question: str) -> str:
+    def _generate_final_synthesis(self, question: str, dspy_synthesizer=None) -> str:
         """
         Generate final synthesis from all chunks.
         
         Args:
-            dspy_synthesizer: DSPy synthesizer module
+            dspy_synthesizer: DSPy synthesizer module (deprecated, uses model allocation)
             question: Original user question
             
         Returns:
