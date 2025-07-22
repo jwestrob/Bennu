@@ -598,7 +598,11 @@ class IntelligentChunkingManager:
                 task_id=clean_task_id,
                 task_type=original_task.task_type,
                 description=enhanced_description,  # Now includes root biological discovery context
-                query=getattr(original_task, 'query', None)
+                query=getattr(original_task, 'query', None),
+                # Hierarchy information for cached tool selection
+                is_main_task=False,  # Chunks are never main tasks
+                parent_task_id=original_task.task_id,  # Inherit tool selection from parent
+                tool_selection_result=getattr(original_task, 'tool_selection_result', None)  # Copy if available
             )
             # Attach chunk data and mark as already chunked to prevent recursion
             task.chunk_data = chunk.data_subset
@@ -606,6 +610,10 @@ class IntelligentChunkingManager:
             task.root_biological_context = original_question  # Store for note-taking context
             task._already_chunked = True  # Prevent recursive chunking
             task._intelligent_chunked = True  # Mark as using new intelligent system
+            
+            # Set tool selection source for tracking
+            task.tool_selection_source = "inherited_from_chunking"
+            
             chunk_tasks.append(task)
         
         # Execute all chunks concurrently

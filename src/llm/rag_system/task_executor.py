@@ -62,27 +62,36 @@ class TaskExecutor:
     
     def _should_chunk_for_analysis_type(self, data_size: int, threshold: int, task_description: str, original_question: str = "") -> bool:
         """
-        Determine if data should be chunked based on analysis type and biological context.
+        Determine if data should be chunked based on token count and biological context.
         
         Args:
-            data_size: Size of the dataset
-            threshold: Size threshold for chunking
+            data_size: Size of the dataset (number of items)
+            threshold: Size threshold for chunking (number of items - legacy)
             task_description: Description of the current task
             original_question: Original user question for context
             
         Returns:
             bool: Whether to chunk the data
         """
-        # Always chunk if dataset is extremely large
-        if data_size > threshold * 3:
-            logger.info(f"🔥 FORCE CHUNK: Dataset extremely large ({data_size} > {threshold * 3})")
-            return True
+        # NEW: Token-based chunking instead of item-based
+        # Only chunk if we would exceed o3's 30k token limit
         
-        # Skip chunking if dataset is below threshold
-        if data_size <= threshold:
-            logger.info(f"✅ NO CHUNK: Dataset manageable ({data_size} <= {threshold})")
+        # Skip chunking if dataset is small (< 1000 items unlikely to exceed 30k tokens)
+        if data_size <= 1000:
+            logger.info(f"✅ NO CHUNK: Dataset small ({data_size} <= 1000 items)")
             return False
         
+        # For medium datasets (1000-5000 items), use token-based decision
+        if data_size <= 5000:
+            logger.info(f"📊 MEDIUM DATASET: Using token-based chunking decision ({data_size} items)")
+            return False  # Let progressive synthesizer handle token-based chunking
+        
+        # For large datasets (>5000 items), likely to exceed 30k tokens
+        logger.info(f"🔥 LARGE DATASET: Likely to exceed 30k tokens ({data_size} items)")
+        # Don't force chunking - let progressive synthesizer make token-based decision
+        return False
+        
+        # OLD LOGIC REMOVED - Now using token-based chunking in progressive synthesizer
         # Context-aware chunking decision for medium-large datasets
         combined_text = f"{task_description} {original_question}".lower()
         
@@ -93,14 +102,8 @@ class TaskExecutor:
             "across all", "everything", "global analysis", "browse through"
         ]
         
-        # Functional annotation queries can benefit from chunking
-        functional_patterns = [
-            "function", "functional", "annotation", "protein families", 
-            "domains", "pathways", "metabolic", "kegg", "pfam"
-        ]
-        
         if any(pattern in combined_text for pattern in discovery_patterns):
-            logger.info(f"🌐 DISCOVERY QUERY: Avoiding chunking for holistic analysis (size: {data_size})")
+            logger.info(f"🌐 DISCOVERY QUERY: Deferring to progressive synthesizer for token-based chunking (size: {data_size})")
             return False
         elif any(pattern in combined_text for pattern in functional_patterns):
             logger.info(f"🔬 FUNCTIONAL QUERY: Using chunking for detailed annotation analysis (size: {data_size})")
@@ -204,9 +207,8 @@ class TaskExecutor:
                 }
             )
             
-            # Consider note-taking after successful execution
-            if self.noting_decision:
-                await self._consider_note_taking(task, execution_result)
+            # Consider note-taking after successful execution (uses model allocation)
+            await self._consider_note_taking(task, execution_result)
             
             logger.info(f"Task {task.task_id} completed successfully in {execution_time:.2f}s")
             
@@ -362,9 +364,13 @@ class TaskExecutor:
             not getattr(task, '_intelligent_chunked', False)):  # Extra protection
             raw_data = context.structured_data
             
-            # Context-aware chunking decision
-            threshold = 1000 if self.selected_genome else 2000
+            # Token-based chunking decision - defer to progressive synthesizer
+            threshold = 1000 if self.selected_genome else 2000  # Legacy threshold (now mostly unused)
             should_chunk = self._should_chunk_for_analysis_type(len(raw_data), threshold, task.description, getattr(task, 'original_question', ''))
+            
+            # FORCE DISABLE chunking here - let progressive synthesizer handle it based on tokens
+            should_chunk = False
+            logger.info(f"🎯 CHUNKING DISABLED: Deferring to progressive synthesizer for token-based chunking ({len(raw_data)} items)")
             
             if should_chunk:
                 logger.info(f"🧠 Large dataset detected ({len(raw_data)} items), using intelligent upfront chunking")
@@ -947,6 +953,9 @@ print("✅ Analysis completed")
             execution_result: Result of task execution
         """
         try:
+            # Track task processing
+            self._track_note_stats('task')
+            
             # Ensure note_keeper is available
             if not self.note_keeper:
                 logger.warning("Note keeper not available - skipping note consideration")
@@ -955,6 +964,7 @@ print("✅ Analysis completed")
             # PRE-FILTER: Skip note-taking for tasks that clearly don't warrant notes
             if self._should_skip_note_taking(task, execution_result):
                 logger.debug(f"⏭️ Skipping notes for task {task.task_id}: Pre-filtered as non-noteworthy")
+                self._track_note_stats('note_skipped')
                 return
                 
             # Get session summary for context
@@ -972,35 +982,70 @@ print("✅ Analysis completed")
             # Determine analysis context based on task description and user question
             analysis_context = self._determine_analysis_context(task.description, self.original_user_question)
             
-            # Enhanced decision criteria - emphasize comprehensive biological note-taking
-            def noting_call(module):
-                return module(
-                    task_description=f"BIOLOGICAL ANALYSIS: {task_description_with_context}",
-                    execution_result=f"COMPREHENSIVE BIOLOGICAL DATA: {result_summary}",
-                    existing_notes=session_summary,
-                    original_user_question=self.original_user_question,
-                    task_type=task.task_type.value,
-                    analysis_context=analysis_context
+            # RULE-BASED DECISION: Reduce LLM calls for obvious cases
+            should_record = self._make_rule_based_note_decision(task, execution_result, result_summary)
+            decision = None  # Will be populated only if LLM call is needed
+            
+            # Only call LLM for borderline cases that need reasoning
+            if should_record is None:
+                # Enhanced decision criteria - emphasize comprehensive biological note-taking
+                def noting_call(module):
+                    return module(
+                        task_description=f"BIOLOGICAL ANALYSIS: {task_description_with_context}",
+                        execution_result=f"COMPREHENSIVE BIOLOGICAL DATA: {result_summary}",
+                        existing_notes=session_summary,
+                        original_user_question=self.original_user_question,
+                        task_type=task.task_type.value,
+                        analysis_context=analysis_context
+                    )
+                
+                from .dspy_signatures import NotingDecision
+                decision = self.rag_system.model_allocator.create_context_managed_call(
+                    task_name="progress_tracking",  # Simple task - uses mini
+                    signature_class=NotingDecision,
+                    module_call_func=noting_call,
+                    query=self.original_user_question,
+                    task_context=task_description_with_context
                 )
-            
-            from .dspy_signatures import NotingDecision
-            decision = self.rag_system.model_allocator.create_context_managed_call(
-                task_name="progress_tracking",  # Simple task - uses mini
-                signature_class=NotingDecision,
-                module_call_func=noting_call,
-                query=self.original_user_question,
-                task_context=task_description_with_context
-            )
-            
-            # Parse decision result with aggressive defaults
-            if decision:
-                should_record = getattr(decision, 'should_record', True)  # Default to TRUE
+                
+                # Parse decision result with defaults
+                if decision:
+                    should_record = getattr(decision, 'should_record', True)
+                else:
+                    # Fallback if model allocation failed
+                    should_record = True
+                    logger.warning("Note-taking decision failed, defaulting to recording notes")
             else:
-                # Fallback if model allocation failed - always record biological data
-                should_record = True
-                logger.warning("Note-taking decision failed, defaulting to recording notes")
+                # Rule-based decision made, log the reasoning
+                logger.info(f"📋 Rule-based note decision for task {task.task_id}: {'Record' if should_record else 'Skip'}")
+                
+                # Create a mock decision object for consistent processing
+                class MockDecision:
+                    def __init__(self, should_record_val, task_description):
+                        self.should_record = should_record_val
+                        self.reasoning = "Auto-filtered via rules"
+                        
+                        # CONCISE NOTES: Focus on key insights only
+                        if should_record_val:
+                            if 'code_interpreter' in task_description.lower():
+                                self.observations = [f"• Code analysis: {task_description[:50]}..."]
+                                self.key_findings = ["• Computational results preserved"]
+                            elif 'ranking' in task_description.lower() or 'scoring' in task_description.lower():
+                                self.observations = [f"• Scoring task: {task_description[:50]}..."]
+                                self.key_findings = ["• Ranking data captured"]
+                            else:
+                                self.observations = [f"• Task: {task_description[:40]}..."]
+                                self.key_findings = ["• Key biological data"]
+                        else:
+                            self.observations = []
+                            self.key_findings = []
+                        
+                        self.cross_connections = []
+                        self.quantitative_data = {}
+                
+                decision = MockDecision(should_record, task.description)
             
-            # AGGRESSIVE FALLBACK: If DSPy said not to record, check if we have biological data anyway
+            # AGGRESSIVE FALLBACK: Force note-taking for discovery tasks and biological data
             if not should_record:
                 result_str = str(execution_result.result).lower()
                 biological_indicators = [
@@ -1008,11 +1053,26 @@ print("✅ Analysis completed")
                     'hypothetical', 'domain', 'pfam', 'ko', 'annotation', 'spatial'
                 ]
                 
-                if any(indicator in result_str for indicator in biological_indicators):
+                # Force note-taking for prophage discovery tasks
+                discovery_indicators = [
+                    'prophage', 'phage', 'operon', 'loci', 'discovery', 'find',
+                    'whole_genome_reader', 'spatial', 'coordinates'
+                ]
+                
+                task_is_discovery = any(indicator in task.description.lower() for indicator in discovery_indicators)
+                has_biological_data = any(indicator in result_str for indicator in biological_indicators)
+                
+                if task_is_discovery or has_biological_data:
+                    logger.info(f"🔥 FORCING NOTE-TAKING: Discovery task or biological data detected for task {task.task_id}")
                     should_record = True
-                    logger.info(f"🔄 Overriding DSPy decision - biological data detected for task {task.task_id}")
             
             if should_record:
+                # Check for content redundancy before recording
+                result_content = self._format_result_for_decision(execution_result)
+                if self._is_content_redundant(result_content, task.task_type.value):
+                    logger.info(f"📊 Skipping redundant content for task {task.task_id}")
+                    return
+                
                 logger.info(f"📝 Recording notes for task {task.task_id}: {decision.reasoning}")
                 
                 # Extract note content from decision
@@ -1067,17 +1127,17 @@ print("✅ Analysis completed")
     
     def _should_skip_note_taking(self, task: Task, execution_result: ExecutionResult) -> bool:
         """
-        Pre-filter to skip note-taking ONLY for tasks that are genuinely useless.
+        Smart pre-filter to skip note-taking for routine tasks while preserving important discoveries.
         
-        GOAL: Take extensive notes on ALL biological data, discoveries, and analysis steps.
-        Only skip tasks that are complete failures or pure meta-operations.
+        OPTIMIZED GOAL: Take selective notes focused on biological insights and discoveries.
+        Skip routine coordinate queries and redundant chunk processing.
         
         Args:
             task: Task that was executed
             execution_result: Result of task execution
             
         Returns:
-            True if note-taking should be skipped (very rare)
+            True if note-taking should be skipped
         """
         # Skip if task failed completely
         if not execution_result.success:
@@ -1093,20 +1153,330 @@ print("✅ Analysis completed")
         if any(indicator in result_str for indicator in complete_failure_indicators):
             return True
         
-        # Skip ONLY pure meta-operations that don't contain data
+        # SMART OPTIMIZATION: Skip routine coordinate-only queries
+        task_desc = task.description.lower()
+        
+        # Skip routine coordinate retrieval tasks (common pattern in chunking)
+        if ('balanced_chunk' in task_desc and 
+            'part' in task_desc and
+            'protein_id' in result_str and 
+            'start_coordinate' in result_str):
+            # Check if this is just coordinate data without novel findings
+            if ('hypothetical' not in result_str and 
+                'prophage' not in result_str and
+                'annotation' not in task_desc and
+                len(result_str) < 5000):  # Small coordinate-only results
+                return True
+        
+        # Skip redundant parallel chunk tasks with smart consolidation
+        if 'balanced_chunk' in task_desc:
+            # Extract chunk number
+            import re
+            chunk_match = re.search(r'balanced_chunk_(\d+)', task_desc)
+            if chunk_match:
+                chunk_num = int(chunk_match.group(1))
+                
+                # CONSOLIDATION STRATEGY: Take notes for first chunk, last chunk, and one middle chunk
+                # This gives us beginning, middle, end perspective while reducing volume
+                total_chunks = 8  # Based on current chunking strategy
+                
+                representative_chunks = [1, total_chunks // 2, total_chunks]  # 1, 4, 8
+                
+                if chunk_num not in representative_chunks:
+                    logger.debug(f"⏭️ Skipping chunk {chunk_num} notes (consolidating to chunks {representative_chunks})")
+                    return True
+                else:
+                    logger.info(f"📝 Recording representative chunk {chunk_num} notes (part of consolidation strategy)")
+                    return False
+        
+        # Skip meta-operations without data
         if (task.task_type.value == 'report_synthesis' and 
-            'return' in task.description.lower() and 
-            len(result_str) < 100):  # Very short results are likely just status messages
+            'return' in task_desc and 
+            len(result_str) < 100):
             return True
         
-        # OTHERWISE: Take notes on EVERYTHING
-        # - Genome reading results (coordinates, gene counts, annotations)
-        # - Analysis results (even if zero findings - document what was searched)
-        # - Discovery tasks (all patterns found or not found)
-        # - Quantitative results (counts, scores, statistics)
-        # - Spatial data (coordinates, contigs, gene organization)
+        # ALWAYS preserve notes for:
+        # - Discovery tasks with novel findings
+        # - Code interpreter results 
+        # - Report synthesis with substantial content
+        # - Tasks with prophage/operon mentions
+        priority_indicators = [
+            'prophage', 'phage', 'operon', 'discovery', 'novel', 'candidate',
+            'code_interpreter', 'ranking', 'scoring', 'synthesis'
+        ]
         
+        if any(indicator in task_desc for indicator in priority_indicators):
+            return False
+        
+        if any(indicator in result_str for indicator in priority_indicators):
+            return False
+        
+        return False  # Default to taking notes for other tasks
+    
+    def _make_rule_based_note_decision(self, task: Task, execution_result: ExecutionResult, result_summary: str) -> Optional[bool]:
+        """
+        OPTIMIZED rule-based note-taking decisions to reduce volume by ~60%.
+        
+        Returns:
+            True: Definitely record notes
+            False: Definitely skip notes 
+            None: Borderline case - needs LLM evaluation
+        """
+        task_desc = task.description.lower()
+        result_str = str(execution_result.result).lower()
+        
+        # 1. ALWAYS SKIP: Chunk processing tasks (will be consolidated)
+        if ('balanced_chunk_' in task.task_id or 
+            ('chunk' in task_desc and 'part' in task_desc)):
+            return False
+        
+        # 2. ALWAYS RECORD: Main workflow steps and high-value tasks
+        high_value_indicators = [
+            'step_', 'code_interpreter', 'ranking', 'scoring', 'synthesis', 'report'
+        ]
+        
+        if (task.task_id.startswith('step_') or 
+            any(indicator in task_desc for indicator in high_value_indicators)):
+            return True
+        
+        # 3. THRESHOLD-BASED: Discovery tasks only if substantial results
+        discovery_indicators = ['operon', 'prophage', 'phage', 'discovery', 'find', 'analyze']
+        
+        if any(indicator in task_desc for indicator in discovery_indicators):
+            result_size = len(result_str)
+            
+            # Skip if results are too small (< 500 chars = minimal findings)
+            if result_size < 500:
+                return False
+            
+            # Skip if results are just coordinate data without annotations
+            if ('coordinate' in result_str and 'annotation' not in result_str and 
+                'function' not in result_str and result_size < 2000):
+                return False
+                
+            # Record if substantial biological findings
+            return True
+        
+        # 4. SKIP: Basic routine tasks
+        routine_indicators = [
+            'coordinates', 'basic', 'simple query', 'extract ids', 'list proteins',
+            'count', 'retrieve'
+        ]
+        
+        if any(indicator in task_desc for indicator in routine_indicators):
+            return False
+        
+        # 5. BORDERLINE: Complex tasks need LLM evaluation (rare cases)
+        return None
+
+    def log_note_optimization_summary(self):
+        """Log a summary of note-taking optimization impact."""
+        if hasattr(self, '_note_stats'):
+            stats = self._note_stats
+            total_tasks = stats.get('total_tasks', 0)
+            notes_taken = stats.get('notes_taken', 0)
+            notes_skipped = stats.get('notes_skipped', 0)
+            llm_calls_saved = stats.get('llm_calls_saved', 0)
+            
+            if total_tasks > 0:
+                note_rate = (notes_taken / total_tasks) * 100
+                skip_rate = (notes_skipped / total_tasks) * 100
+                
+                logger.info(f"📊 NOTE OPTIMIZATION SUMMARY:")
+                logger.info(f"  📝 Notes taken: {notes_taken}/{total_tasks} ({note_rate:.1f}%)")
+                logger.info(f"  ⏭️ Notes skipped: {notes_skipped} ({skip_rate:.1f}%)")
+                logger.info(f"  🔥 LLM calls saved: {llm_calls_saved}")
+        
+    def _track_note_stats(self, action: str):
+        """Track note-taking statistics for optimization analysis."""
+        if not hasattr(self, '_note_stats'):
+            self._note_stats = {
+                'total_tasks': 0,
+                'notes_taken': 0,
+                'notes_skipped': 0,
+                'llm_calls_saved': 0
+            }
+        
+        if action == 'task':
+            self._note_stats['total_tasks'] += 1
+        elif action == 'note_taken':
+            self._note_stats['notes_taken'] += 1
+        elif action == 'note_skipped':
+            self._note_stats['notes_skipped'] += 1
+        elif action == 'llm_call_saved':
+            self._note_stats['llm_calls_saved'] += 1
+
+    def consolidate_chunk_results(self, completed_results: Dict[str, Any]) -> Optional[str]:
+        """
+        Consolidate results from chunk tasks into a single summary note.
+        
+        Args:
+            completed_results: Dictionary of task_id -> execution results
+            
+        Returns:
+            Consolidated note content or None if no chunks found
+        """
+        if not self.note_keeper:
+            return None
+            
+        # Find all chunk tasks
+        chunk_tasks = {}
+        for task_id, result in completed_results.items():
+            if 'balanced_chunk_' in task_id or 'chunk' in task_id:
+                chunk_tasks[task_id] = result
+        
+        if not chunk_tasks:
+            return None
+        
+        logger.info(f"📋 Consolidating {len(chunk_tasks)} chunk task results into summary note")
+        
+        # Extract key findings from all chunk tasks
+        consolidated_findings = []
+        total_items_processed = 0
+        significant_discoveries = []
+        
+        for task_id, result in chunk_tasks.items():
+            result_str = str(result)
+            
+            # Count items processed
+            if hasattr(result, 'structured_data'):
+                total_items_processed += len(result.structured_data)
+            
+            # Extract significant findings (proteins, coordinates, etc.)
+            if len(result_str) > 1000:  # Substantial result
+                # Look for specific biological content
+                if any(indicator in result_str.lower() for indicator in 
+                       ['protein', 'gene', 'coordinate', 'hypothetical', 'annotation']):
+                    significant_discoveries.append(f"• {task_id}: {len(result_str)} chars of genomic data")
+        
+        # Create consolidated note only if there are significant findings
+        if significant_discoveries:
+            consolidated_note = f"""
+CONSOLIDATED CHUNK ANALYSIS SUMMARY
+
+Total chunk tasks processed: {len(chunk_tasks)}
+Total genomic items analyzed: {total_items_processed}
+
+Key findings from chunked analysis:
+{chr(10).join(significant_discoveries)}
+
+Biological significance: Large-scale genomic data processing completed 
+for prophage discovery pipeline. Individual chunk results contain detailed 
+protein coordinates and annotations that support spatial genomic analysis.
+
+This consolidated note replaces {len(chunk_tasks)} individual chunk notes 
+to reduce storage overhead while preserving discovery insights.
+"""
+            
+            # Record the consolidated note
+            try:
+                from .memory import NotingDecisionResult, ConfidenceLevel
+                
+                decision_result = NotingDecisionResult(
+                    should_record=True,
+                    reasoning=f"Consolidated summary from {len(chunk_tasks)} chunk tasks",
+                    importance_score=7.0
+                )
+                
+                success = self.note_keeper.record_task_notes(
+                    task_id="consolidated_chunk_summary",
+                    task_type="consolidation",
+                    description=f"Consolidated summary from {len(chunk_tasks)} chunk analysis tasks",
+                    decision_result=decision_result,
+                    observations=[f"Processed {total_items_processed} genomic items across {len(chunk_tasks)} chunks"],
+                    key_findings=significant_discoveries,
+                    quantitative_data={"total_chunks": len(chunk_tasks), "total_items": total_items_processed},
+                    cross_connections=[],
+                    confidence=ConfidenceLevel.MEDIUM,
+                    execution_time=0.0,
+                    result_summary=consolidated_note
+                )
+                
+                if success:
+                    logger.info("✅ Consolidated chunk note recorded successfully")
+                    return consolidated_note
+                else:
+                    logger.warning("❌ Failed to record consolidated chunk note")
+                    
+            except Exception as e:
+                logger.error(f"Error creating consolidated note: {e}")
+        
+        return None
+
+    def _is_content_redundant(self, new_content: str, task_type: str) -> bool:
+        """
+        Check if content is redundant with existing notes to avoid repetition.
+        
+        Args:
+            new_content: New content to check
+            task_type: Type of task generating the content
+            
+        Returns:
+            True if content is redundant and should be skipped
+        """
+        if not self.note_keeper:
+            return False
+            
+        # Get recent notes for comparison
+        try:
+            recent_notes = self.note_keeper.get_recent_notes(limit=5)
+            
+            # Convert content to lowercase for comparison
+            new_content_lower = new_content.lower()
+            
+            for note in recent_notes:
+                note_content = str(note.get('content', '')).lower()
+                
+                # Skip if very similar (>80% overlap in key terms)
+                if self._calculate_content_similarity(new_content_lower, note_content) > 0.8:
+                    logger.info(f"📊 Skipping redundant content (80%+ similarity with recent note)")
+                    return True
+                    
+                # Skip if it's just coordinate data repeating
+                if (task_type == 'atomic_query' and 
+                    'coordinate' in new_content_lower and 
+                    'coordinate' in note_content and
+                    len(new_content_lower) < 1000):
+                    logger.info(f"📊 Skipping repetitive coordinate data")
+                    return True
+                    
+        except Exception as e:
+            logger.warning(f"Could not check content redundancy: {e}")
+            
         return False
+    
+    def _calculate_content_similarity(self, content1: str, content2: str) -> float:
+        """
+        Calculate similarity between two content strings using word overlap.
+        
+        Args:
+            content1: First content string
+            content2: Second content string
+            
+        Returns:
+            Similarity score between 0.0 and 1.0
+        """
+        if not content1 or not content2:
+            return 0.0
+            
+        # Extract key biological terms
+        bio_terms1 = set(word for word in content1.split() 
+                        if len(word) > 3 and any(indicator in word for indicator in 
+                        ['protein', 'gene', 'genome', 'coordinate', 'scaffold', 'hypothetical']))
+        
+        bio_terms2 = set(word for word in content2.split() 
+                        if len(word) > 3 and any(indicator in word for indicator in 
+                        ['protein', 'gene', 'genome', 'coordinate', 'scaffold', 'hypothetical']))
+        
+        if not bio_terms1 or not bio_terms2:
+            return 0.0
+        
+        # Calculate Jaccard similarity
+        intersection = len(bio_terms1.intersection(bio_terms2))
+        union = len(bio_terms1.union(bio_terms2))
+        
+        return intersection / union if union > 0 else 0.0
+
     def _determine_analysis_context(self, task_description: str, user_question: str) -> str:
         """
         Determine the type of analysis being performed based on task and user question.

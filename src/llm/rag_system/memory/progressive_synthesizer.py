@@ -1,14 +1,15 @@
 """
 Progressive synthesis system for handling large multi-task agentic workflows.
 
-Processes task notes in chunks to maintain memory persistence across token limits
-and generates comprehensive final synthesis from accumulated insights.
+Uses a Map-Reduce architecture to process task notes and raw data efficiently,
+with token-based decision making for optimal model utilization.
 """
 
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import tiktoken
+import concurrent.futures
 
 from .note_keeper import NoteKeeper
 from .note_schemas import TaskNote, SynthesisNote, ConfidenceLevel
@@ -20,27 +21,38 @@ logger = logging.getLogger(__name__)
 
 class ProgressiveSynthesizer:
     """
-    Handles progressive synthesis of task notes into comprehensive final answers.
+    Map-Reduce based progressive synthesis system for genomic analysis workflows.
     
-    Processes notes in chunks to avoid token limits while maintaining cross-task
-    insights and building comprehensive understanding across complex workflows.
+    Architecture:
+    - Unified entry point that processes both raw_data and task_notes
+    - Token-based decision making (not keyword or count based)
+    - Direct synthesis for data that fits within model limits
+    - Map-Reduce pipeline for larger datasets:
+      * Map: Split data into chunks, summarize each chunk
+      * Reduce: Combine chunk summaries into final synthesis
     """
     
-    def __init__(self, note_keeper: NoteKeeper, chunk_size: int = 8, target_tokens: int = 15000):
+    def __init__(self, note_keeper: NoteKeeper, chunk_size: int = 8, target_tokens: int = 15000, max_concurrent_calls: int = 6):
         """
-        Initialize progressive synthesizer.
+        Initialize progressive synthesizer with Map-Reduce architecture and parallel processing.
         
         Args:
             note_keeper: NoteKeeper instance for accessing notes
-            chunk_size: Number of tasks to process per chunk
+            chunk_size: Number of tasks to process per chunk (legacy parameter)
             target_tokens: Target token count for each synthesis chunk
+            max_concurrent_calls: Maximum number of concurrent API calls (default: 6 for safe rate limiting)
         """
         self.note_keeper = note_keeper
         self.chunk_size = chunk_size
         self.target_tokens = target_tokens
-        self.synthesis_chunks = []
+        self.max_concurrent_calls = max_concurrent_calls
         
-        # Initialize tokenizer for token counting
+        # Map-Reduce configuration - Model-aware limits
+        # We'll set final limits after model allocator is available
+        self.direct_synthesis_limit = 20000  # Will be updated based on actual model limits
+        self.map_chunk_limit = 15000  # Will be updated based on actual model limits
+        
+        # Initialize tokenizer for accurate token counting
         try:
             self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
         except Exception as e:
@@ -49,1297 +61,925 @@ class ProgressiveSynthesizer:
         
         # Initialize model allocator for intelligent model selection
         self.model_allocator = get_model_allocator()
+        
+        # Caching system to reduce API calls
+        self.synthesis_cache = {}  # Cache for synthesis results
+        self.cache_hits = 0
+        self.cache_misses = 0
+        
+        # Update chunk limits based on actual model capabilities
+        self._update_model_aware_limits()
+        
+        logger.info("🏗️ ProgressiveSynthesizer initialized with Map-Reduce architecture and caching")
+    
+    def _update_model_aware_limits(self):
+        """Update chunk limits based on actual model capabilities."""
+        try:
+            # Get limits for the models we'll be using
+            _, final_synthesis_model = self.model_allocator.get_model_for_task("final_synthesis", "")
+            _, map_step_model = self.model_allocator.get_model_for_task("genomic_summarization", "")
+            
+            # Set direct synthesis limit to 30% of final synthesis model capacity 
+            self.direct_synthesis_limit = int(final_synthesis_model.max_context * 0.3)
+            
+            # Set map chunk limit to 40% of map step model capacity
+            self.map_chunk_limit = int(map_step_model.max_context * 0.4)
+            
+            logger.info(f"📊 Model-aware limits updated: direct={self.direct_synthesis_limit:,}, chunk={self.map_chunk_limit:,}")
+            logger.info(f"📊 Models: final_synthesis={final_synthesis_model.model_name}, map_step={map_step_model.model_name}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not update model-aware limits: {e}, using defaults")
     
     def synthesize_progressive(self, 
                              task_notes: List[TaskNote],
                              question: str,
+                             synthesis_mode: str = "report",
                              dspy_synthesizer=None,
                              raw_data: List[Dict[str, Any]] = None,
-                             rag_system = None) -> str:
+                             rag_system=None) -> str:
         """
-        Perform progressive synthesis prioritizing raw task results over compressed notes.
+        Main entry point for progressive synthesis with hybrid mode support.
         
         Args:
-            task_notes: List of TaskNote objects (used as metadata)
-            dspy_synthesizer: DSPy synthesizer module (deprecated, uses model allocation)
+            task_notes: List of TaskNote objects
             question: Original user question
-            raw_data: Raw data from task execution (PRIMARY DATA SOURCE)
-            rag_system: Optional RAG system for task-based processing
+            synthesis_mode: "guidance" for lightweight agent guidance or "report" for comprehensive final analysis
+            dspy_synthesizer: DEPRECATED - uses model allocation (kept for compatibility)
+            raw_data: Raw data from task execution (prioritized over task_notes)
+            rag_system: DEPRECATED - not used in Map-Reduce architecture
             
         Returns:
-            Final comprehensive synthesis
+            Final comprehensive synthesis or brief guidance summary
         """
-        logger.info(f"🔄 REDESIGNED SYNTHESIS: Prioritizing raw data over compressed notes")
-        logger.info(f"📊 Input: {len(task_notes)} task notes, {len(raw_data) if raw_data else 0} raw data items")
+        # Warn about deprecated parameters
+        if dspy_synthesizer is not None:
+            logger.warning("⚠️ dspy_synthesizer parameter is deprecated and will be ignored")
+        if rag_system is not None:
+            logger.warning("⚠️ rag_system parameter is deprecated and will be ignored")
         
-        if not task_notes and not raw_data:
+        # HYBRID MODEL: Branch based on synthesis mode
+        if synthesis_mode == "guidance":
+            logger.info(f"🧭 Guidance synthesis: {len(task_notes)} recent notes")
+            return self._guidance_synthesis(task_notes, question)
+        else:
+            logger.info(f"📊 Report synthesis: {len(task_notes)} notes, {len(raw_data) if raw_data else 0} raw items")
+            return self._report_synthesis(task_notes, question, raw_data)
+    
+    def _guidance_synthesis(self, task_notes: List[TaskNote], question: str) -> str:
+        """
+        Lightweight guidance synthesis for agent situational awareness.
+        
+        Args:
+            task_notes: Recent task notes (typically last 3 steps)
+            question: Original user question
+            
+        Returns:
+            Brief guidance summary (2-3 sentences)
+        """
+        logger.info("🧭 Running lightweight guidance synthesis")
+        
+        # Simple format for guidance - just recent findings
+        if not task_notes:
+            return "Continue exploration - no recent notes available for guidance."
+        
+        # Format recent findings 
+        recent_findings = []
+        for note in task_notes[-3:]:  # Last 3 notes max
+            findings = " | ".join(note.key_findings) if note.key_findings else note.description
+            recent_findings.append(f"Step {note.task_id}: {findings}")
+        
+        context = "RECENT PROGRESS:\n" + "\n".join(recent_findings)
+        
+        # Use fast model for guidance
+        try:
+            guidance = self._call_synthesis_model(
+                context=context,
+                question=question,
+                task_name="guidance_synthesis",  # Maps to MEDIUM = gpt-4.1-mini
+                focus="brief guidance for next steps (2-3 sentences max)"
+            )
+            
+            return guidance
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Guidance synthesis failed: {e}")
+            return f"Recent findings: {len(task_notes)} steps completed. Continue systematic exploration."
+    
+    def _report_synthesis(self, task_notes: List[TaskNote], question: str, raw_data: List[Dict[str, Any]] = None) -> str:
+        """
+        Comprehensive report synthesis using full Map-Reduce architecture.
+        
+        Args:
+            task_notes: All task notes from session
+            question: Original user question  
+            raw_data: Raw data from task execution
+            
+        Returns:
+            Comprehensive final report
+        """
+        logger.info("📊 Running comprehensive report synthesis")
+        
+        # Step 1: Determine primary data source (prioritize raw_data)
+        unified_data = self._prepare_unified_data(raw_data, task_notes)
+        
+        if not unified_data:
             return "No data available for synthesis."
         
-        # NEW APPROACH: Prioritize raw data from task execution
-        if raw_data and len(raw_data) > 0:
-            logger.info(f"✅ Using RAW DATA as primary source ({len(raw_data)} items)")
-            return self._synthesize_from_raw_data(raw_data, task_notes, question, None)
+        # Step 2: Token-based decision making
+        total_tokens = self._count_data_tokens(unified_data)
+        logger.info(f"📊 Total input tokens: {total_tokens}")
         
-        # Fallback: If no raw data, use notes-based synthesis
-        logger.warning("⚠️ No raw data available, falling back to notes-only synthesis")
-        return self._synthesize_standard(task_notes, question, None)
+        # Step 3: Choose synthesis strategy based on token count
+        if total_tokens <= self.direct_synthesis_limit:
+            logger.info("🎯 Using direct synthesis (data fits within model limits)")
+            return self._direct_synthesis(unified_data, question)
+        else:
+            logger.info("🗂️ Using Map-Reduce synthesis (data exceeds model limits)")
+            return self._map_reduce_synthesis(unified_data, question)
     
-    def _should_use_multipart_report(self, raw_data: List[Dict[str, Any]], question: str) -> bool:
+    def _prepare_unified_data(self, raw_data: Optional[List[Dict[str, Any]]], 
+                             task_notes: List[TaskNote]) -> List[Dict[str, Any]]:
         """
-        Determine if multi-part report synthesis should be used.
+        Prepare unified data format for processing.
         
         Args:
-            raw_data: Raw data for analysis
-            question: User question
+            raw_data: Raw data from task execution
+            task_notes: Task notes for context
             
         Returns:
-            True if multi-part report should be used
+            Unified data format (list of dictionaries)
         """
-        # Use multi-part for medium datasets (but task-based for very large)
-        if 50 < len(raw_data) <= 1000:
-            return True
+        unified_data = []
         
-        # Use multi-part for specific report types
-        multipart_keywords = [
-            'crispr', 'comprehensive', 'all genomes', 'complete analysis',
-            'detailed report', 'full analysis', 'compare across genomes',
-            # Add prophage discovery terms:
-            'prophage', 'phage', 'viral', 'operon', 'operons', 'spatial',
-            'genomic regions', 'discovery', 'find', 'explore', 'report'
-        ]
+        # Priority 1: Use raw_data if available
+        if raw_data:
+            logger.info(f"✅ Using raw_data as primary source ({len(raw_data)} items)")
+            unified_data.extend(raw_data)
         
-        question_lower = question.lower() if question else ""
-        if any(keyword in question_lower for keyword in multipart_keywords) and len(raw_data) <= 1000:
-            return True
+        # Priority 2: Convert task_notes to unified format if no raw_data
+        if not raw_data and task_notes:
+            logger.info(f"📝 Converting task_notes to unified format ({len(task_notes)} notes)")
+            for note in task_notes:
+                unified_data.append({
+                    'type': 'task_note',
+                    'task_id': note.task_id,
+                    'description': note.description,
+                    'observations': note.observations,
+                    'key_findings': note.key_findings,
+                    'confidence_level': note.confidence_level.value,
+                    'quantitative_data': note.quantitative_data,
+                    'cross_task_connections': [
+                        {
+                            'connected_task': conn.connected_task,
+                            'connection_type': conn.connection_type.value,
+                            'description': conn.description
+                        } for conn in note.cross_task_connections
+                    ]
+                })
         
-        return False
+        # Add task_notes as metadata if we have raw_data
+        if raw_data and task_notes:
+            logger.info(f"📋 Adding task_notes as metadata ({len(task_notes)} notes)")
+            unified_data.append({
+                'type': 'task_metadata',
+                'task_count': len(task_notes),
+                'key_insights': [finding for note in task_notes for finding in note.key_findings],
+                'cross_connections': [
+                    {
+                        'from_task': note.task_id,
+                        'to_task': conn.connected_task,
+                        'relationship': conn.connection_type.value,
+                        'description': conn.description
+                    } for note in task_notes for conn in note.cross_task_connections
+                ]
+            })
+        
+        return unified_data
     
-    def _synthesize_multipart_report(self, 
-                                   task_notes: List[TaskNote],
-                                   dspy_synthesizer,
-                                   question: str,
-                                   raw_data: List[Dict[str, Any]]) -> str:
+    def _count_data_tokens(self, data: List[Dict[str, Any]]) -> int:
         """
-        Synthesize using multi-part report generation.
+        Count tokens in unified data format.
         
         Args:
-            task_notes: List of TaskNote objects
-            dspy_synthesizer: DSPy synthesizer module
-            question: Original user question
-            raw_data: Raw data for multi-part report
+            data: Unified data to count tokens for
             
         Returns:
-            Multi-part report synthesis
+            Total token count
         """
+        if not self.tokenizer:
+            # Fallback estimation: 3.5 characters per token for English
+            total_chars = sum(len(str(item)) for item in data)
+            return int(total_chars / 3.5)
+        
         try:
-            # Import here to avoid circular imports
-            from .multipart_synthesizer import MultiPartReportSynthesizer
-            
-            # Initialize multi-part synthesizer
-            multipart_synthesizer = MultiPartReportSynthesizer(
-                note_keeper=self.note_keeper,
-                chunk_size=self.chunk_size,
-                max_part_tokens=100000
-            )
-            
-            # Initialize DSPy modules (now uses global config)
-            multipart_synthesizer.initialize_dspy_modules(None)  # Pass None to avoid serialization issues
-            
-            # Generate multi-part report
-            return multipart_synthesizer.synthesize_multipart_report(
-                task_notes=task_notes,
-                question=question,
-                data=raw_data
-            )
-            
+            # More accurate token counting
+            full_text = "\n".join(str(item) for item in data)
+            return len(self.tokenizer.encode(full_text))
         except Exception as e:
-            logger.error(f"Multi-part report synthesis failed: {e}")
-            logger.info("Falling back to standard progressive synthesis")
-            return self._synthesize_standard(task_notes, question, None)
+            logger.warning(f"Token counting failed: {e}")
+            # Fallback to character-based estimation
+            total_chars = sum(len(str(item)) for item in data)
+            return int(total_chars / 3.5)
     
-    def _synthesize_standard(self, 
-                           task_notes: List[TaskNote],
-                           question: str,
-                           dspy_synthesizer=None) -> str:
+    def _direct_synthesis(self, data: List[Dict[str, Any]], question: str) -> str:
         """
-        Perform standard progressive synthesis.
+        Direct synthesis for data that fits within model limits.
         
         Args:
-            task_notes: List of TaskNote objects to synthesize
-            dspy_synthesizer: DSPy synthesizer module (deprecated, uses model allocation)
+            data: Unified data to synthesize
             question: Original user question
             
         Returns:
-            Final comprehensive synthesis
+            Direct synthesis result
         """
-        # Process notes in chunks
-        chunks = self._create_note_chunks(task_notes)
+        logger.info("🎯 Performing direct synthesis with full context")
+        
+        # Format data for synthesis
+        formatted_data = self._format_data_for_synthesis(data)
+        
+        return self._call_synthesis_model(
+            context=formatted_data,
+            question=question,
+            task_name="final_synthesis",  # Use o3 for complex biological reasoning
+            focus="comprehensive biological analysis with full context"
+        )
+    
+    def _map_reduce_synthesis(self, data: List[Dict[str, Any]], question: str) -> str:
+        """
+        Map-Reduce synthesis for large datasets with sequential processing.
+        
+        Args:
+            data: Unified data to synthesize
+            question: Original user question
+            
+        Returns:
+            Map-Reduce synthesis result
+        """
+        logger.info("🗂️ Performing Map-Reduce synthesis with sequential processing")
+        
+        # Store question for pre-summarization context
+        self._current_question = question
+        
+        # MAP STEP: Split data into chunks and summarize each sequentially  
+        chunks = self._create_chunks(data)
+        
+        # Log chunk sizes for debugging
+        chunk_sizes = [self._count_data_tokens(chunk) for chunk in chunks]
+        logger.info(f"📦 Created {len(chunks)} chunks for parallel Map step processing")
+        logger.info(f"📊 Chunk sizes: {chunk_sizes} tokens (limit: {self.map_chunk_limit})")
+        
+        # MAP STEP: Parallelize chunk processing
+        logger.info(f"🚀 Starting parallel chunk processing with {self.max_concurrent_calls} workers")
+        chunk_summaries = [None] * len(chunks)  # Pre-allocate results list
+        
+        def process_chunk(index_and_chunk):
+            index, chunk = index_and_chunk
+            try:
+                logger.info(f"📝 Processing chunk {index+1}/{len(chunks)}")
+                summary = self._map_step(chunk, question, index+1)
+                return index, summary
+            except Exception as e:
+                logger.error(f"❌ Chunk {index+1} processing failed: {e}")
+                return index, None
+        
+        # CRITICAL FIX: Replace parallel with SEQUENTIAL processing to prevent TPM overflow
+        logger.info(f"🔄 Processing chunks SEQUENTIALLY to prevent rate limits")
         
         for i, chunk in enumerate(chunks):
-            chunk_id = f"chunk_{i+1:03d}"
-            logger.info(f"Processing synthesis chunk {chunk_id} with {len(chunk)} tasks")
-            
-            # Synthesize this chunk
-            synthesis_result = self._synthesize_chunk(chunk, None, chunk_id)
-            
-            if synthesis_result:
-                self.synthesis_chunks.append(synthesis_result)
+            try:
+                logger.info(f"📝 Processing chunk {i+1}/{len(chunks)}")
                 
-                # Record synthesis notes
-                self.note_keeper.record_synthesis_notes(
-                    chunk_id=chunk_id,
-                    source_tasks=[note.task_id for note in chunk],
-                    chunk_theme=synthesis_result.get("theme", ""),
-                    integrated_findings=synthesis_result.get("integrated_findings", []),
-                    cross_task_synthesis=synthesis_result.get("cross_task_synthesis", []),
-                    emergent_insights=synthesis_result.get("emergent_insights", []),
-                    confidence=ConfidenceLevel(synthesis_result.get("confidence", "medium")),
-                    tokens_used=synthesis_result.get("tokens_used", 0)
-                )
+                # Add rate limiting between main chunk API calls
+                if i > 0:  # Don't delay before first call
+                    import time
+                    delay = 2.0  # 2 second delay between main chunk API calls
+                    logger.info(f"⏳ Rate limiting: waiting {delay}s before next chunk")
+                    time.sleep(delay)
+                
+                summary = self._map_step(chunk, question, i+1)
+                if summary:  # Only store successful summaries
+                    chunk_summaries[i] = summary
+                    logger.info(f"✅ Completed chunk {i+1}/{len(chunks)}")
+                else:
+                    logger.warning(f"⚠️ Chunk {i+1} returned no summary")
+                    
+            except Exception as e:
+                logger.error(f"❌ Chunk {i+1} failed: {e}")
         
-        # Generate final synthesis
-        final_synthesis = self._generate_final_synthesis(question, None)
+        # Filter out None values from failed chunks
+        chunk_summaries = [s for s in chunk_summaries if s is not None]
+        logger.info(f"🎯 Sequential chunk processing complete: {len(chunk_summaries)}/{len(chunks)} successful")
         
-        logger.info(f"Completed progressive synthesis with {len(self.synthesis_chunks)} chunks")
-        return final_synthesis
+        # REDUCE STEP: Combine chunk summaries into final synthesis
+        logger.info(f"🔄 Reduce step: combining {len(chunk_summaries)} summaries")
+        return self._reduce_step(chunk_summaries, question)
     
-    def _synthesize_with_task_system(self, 
-                                   task_notes: List[TaskNote],
-                                   dspy_synthesizer,
-                                   question: str,
-                                   raw_data: List[Dict[str, Any]],
-                                   rag_system) -> str:
+    def _create_chunks(self, data: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
         """
-        Use task-based synthesis for very large datasets.
+        Split data into chunks for Map step processing with pre-summarization of oversized items.
         
         Args:
-            task_notes: List of TaskNote objects
-            dspy_synthesizer: DSPy synthesizer module
-            question: Original user question
-            raw_data: Complete raw data (no size limits)
-            rag_system: RAG system for task execution
+            data: Unified data to chunk
             
         Returns:
-            Comprehensive synthesis using task management
+            List of data chunks
         """
-        try:
-            from .task_based_synthesizer import TaskBasedSynthesizer
-            
-            # Initialize task-based synthesizer with large but manageable chunks
-            task_synthesizer = TaskBasedSynthesizer(
-                note_keeper=self.note_keeper,
-                chunk_size=self.chunk_size,
-                max_items_per_task=2000  # Large chunks for detailed analysis without bypassing multi-part structure
-            )
-            
-            # Use task-based synthesis for unlimited dataset processing
-            return task_synthesizer.synthesize_unlimited_dataset(
-                task_notes=task_notes,
-                dspy_synthesizer=dspy_synthesizer,
-                question=question,
-                raw_data=raw_data,
-                rag_system=rag_system
-            )
-            
-        except Exception as e:
-            logger.error(f"Task-based synthesis failed: {e}")
-            logger.info("Falling back to multi-part report synthesis")
-            return self._synthesize_multipart_report(task_notes, dspy_synthesizer, question, raw_data)
-    
-    def _create_note_chunks(self, task_notes: List[TaskNote]) -> List[List[TaskNote]]:
-        """
-        Create chunks of task notes for processing.
+        # Step 1: Pre-processing - handle oversized items
+        logger.info(f"🔍 Pre-processing {len(data)} items for oversized content")
+        processed_data = []
         
-        Args:
-            task_notes: List of TaskNote objects
+        for i, item in enumerate(data):
+            item_tokens = self._count_data_tokens([item])
             
-        Returns:
-            List of note chunks
-        """
+            if item_tokens > self.map_chunk_limit:
+                # This item is oversized, pre-summarize it (NO TRUNCATION - ALWAYS PRESERVE BIOLOGICAL DATA)
+                logger.warning(f"📝 Item {i+1}/{len(data)} is oversized ({item_tokens:,} tokens > {self.map_chunk_limit:,}) - will summarize to preserve all biological content")
+                
+                # Get the question from context (we need to pass this through)
+                question = getattr(self, '_current_question', 'biological analysis')
+                summarized_item = self._summarize_oversized_item(item, question)
+                processed_data.append(summarized_item)
+            else:
+                # Item is fine as-is
+                processed_data.append(item)
+        
+        logger.info(f"✅ Pre-processing complete: {len(processed_data)} items ready for chunking")
+        
+        # Step 2: Main chunking logic (now guaranteed that no item exceeds chunk limit)
         chunks = []
         current_chunk = []
         current_tokens = 0
         
-        for note in task_notes:
-            # Estimate token count for this note
-            note_tokens = self._estimate_note_tokens(note)
+        for item in processed_data:
+            item_tokens = self._count_data_tokens([item])
             
-            # Check if adding this note would exceed chunk limits
-            if (len(current_chunk) >= self.chunk_size or 
-                (current_tokens + note_tokens > self.target_tokens and current_chunk)):
-                
-                # Start new chunk
-                if current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = []
-                    current_tokens = 0
+            # Check if adding this item would exceed chunk limit
+            if current_tokens + item_tokens > self.map_chunk_limit and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_tokens = 0
             
-            current_chunk.append(note)
-            current_tokens += note_tokens
+            current_chunk.append(item)
+            current_tokens += item_tokens
         
         # Add final chunk if not empty
         if current_chunk:
             chunks.append(current_chunk)
         
-        return chunks
+        # B. Compress any chunks that are still too big
+        compressed_chunks = []
+        for i, chunk in enumerate(chunks):
+            chunk_tokens = self._count_data_tokens(chunk)
+            if chunk_tokens > self.map_chunk_limit:
+                logger.warning(f"🗜️ Chunk {i+1} exceeds limit ({chunk_tokens:,} > {self.map_chunk_limit:,} tokens) - compressing")
+                compressed_chunk = self._compress_oversized_chunk(chunk, i+1)
+                compressed_chunks.append(compressed_chunk)
+            else:
+                compressed_chunks.append(chunk)
+        
+        return compressed_chunks
     
-    def _estimate_note_tokens(self, note: TaskNote) -> int:
+    def _summarize_oversized_item(self, item: Dict[str, Any], question: str) -> Dict[str, Any]:
         """
-        Estimate token count for a task note.
+        Summarize oversized data items using recursive Map-Reduce.
         
         Args:
-            note: TaskNote to estimate
+            item: Oversized data item to summarize
+            question: Original user question for context
             
         Returns:
-            Estimated token count
+            Summarized item that fits within token limits
         """
-        if not self.tokenizer:
-            # Fallback estimation: ~4 characters per token
-            text = f"{note.description} {' '.join(note.observations)} {' '.join(note.key_findings)}"
-            return len(text) // 4
+        item_tokens = self._count_data_tokens([item])
+        logger.warning(f"🔄 Pre-summarizing oversized item ({item_tokens:,} tokens → target: {self.map_chunk_limit:,})")
         
-        try:
-            # More accurate token counting
-            text_content = self._format_note_for_counting(note)
-            return len(self.tokenizer.encode(text_content))
-        except Exception as e:
-            logger.warning(f"Token counting failed for note {note.task_id}: {e}")
-            return 500  # Conservative fallback
-    
-    def _format_note_for_counting(self, note: TaskNote) -> str:
-        """Format note content for token counting."""
-        parts = [
-            f"Task: {note.description}",
-            f"Observations: {'; '.join(note.observations)}",
-            f"Key Findings: {'; '.join(note.key_findings)}",
-            f"Confidence: {note.confidence_level.value}"
-        ]
+        # Extract the main content to summarize
+        content = ""
+        if 'result' in item and isinstance(item['result'], dict):
+            result = item['result']
+            if 'tool_output' in result:
+                content = str(result['tool_output'])
+            else:
+                content = str(result)
+        else:
+            content = str(item)
         
-        if note.quantitative_data:
-            parts.append(f"Data: {str(note.quantitative_data)}")
+        # Sub-chunking: Split content into manageable pieces
+        sub_chunks = self._split_content_into_subchunks(content)
+        logger.info(f"📦 Split oversized item into {len(sub_chunks)} sub-chunks for pre-summarization")
         
-        if note.cross_task_connections:
-            connections = [f"{conn.connected_task}:{conn.connection_type.value}" 
-                          for conn in note.cross_task_connections]
-            parts.append(f"Connections: {'; '.join(connections)}")
+        # Sub-Map: SEQUENTIAL sub-chunk summarization to prevent API flood
+        logger.info(f"🔄 Starting SEQUENTIAL sub-chunk summarization ({len(sub_chunks)} chunks)")
+        sub_summaries = []
         
-        return " | ".join(parts)
-    
-    def _synthesize_chunk(self, 
-                         chunk: List[TaskNote],
-                         dspy_synthesizer,
-                         chunk_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Synthesize a chunk of task notes.
-        
-        Args:
-            chunk: List of TaskNote objects to synthesize
-            dspy_synthesizer: DSPy synthesizer module
-            chunk_id: Identifier for this chunk
-            
-        Returns:
-            Synthesis result dictionary
-        """
-        try:
-            # Prepare chunk context
-            chunk_context = self._format_chunk_context(chunk)
-            
-            # Generate synthesis theme
-            theme = self._generate_chunk_theme(chunk)
-            
-            # Use model allocation system with context manager approach
-            logger.info(f"🔥 Using model allocation for chunk synthesis: {chunk_id}")
-            
-            from ..dspy_signatures import GenomicSummarizer
-            
-            def synthesize_call(module):
-                return module(
-                    genomic_data=chunk_context,
-                    target_length="medium",
-                    focus_areas="cross-task connections, biological patterns, quantitative insights"
+        for i, sub_chunk in enumerate(sub_chunks):
+            try:
+                logger.info(f"🔄 Pre-summarizing sub-chunk {i+1}/{len(sub_chunks)}")
+                
+                # Add aggressive rate limiting between API calls
+                if i > 0:  # Don't delay before first call
+                    import time
+                    delay = 3.0  # 3 second delay between sub-chunk API calls
+                    logger.info(f"⏳ Rate limiting: waiting {delay}s before next API call")
+                    time.sleep(delay)
+                
+                summary = self._call_synthesis_model(
+                    context=sub_chunk,
+                    question=question,
+                    task_name="genomic_summarization", 
+                    focus=f"key biological patterns and insights from data chunk {i+1}"
                 )
+                sub_summaries.append(summary)
+                logger.info(f"✅ Completed sub-chunk {i+1}/{len(sub_chunks)}")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to summarize sub-chunk {i+1}: {e}")
+                # Include truncated version as fallback
+                truncated = sub_chunk[:5000] + "...[truncated for synthesis]"
+                sub_summaries.append(f"Sub-chunk {i+1} (summarization failed): {truncated}")
+        
+        logger.info(f"🎯 Sequential sub-chunk summarization complete: {len(sub_summaries)}/{len(sub_chunks)} successful")
+        
+        # Sub-Reduce: Combine all sub-summaries
+        if sub_summaries:
+            combined_summary = "\n\n".join([
+                f"=== Summary Part {i+1} ===\n{summary}" 
+                for i, summary in enumerate(sub_summaries)
+            ])
             
-            synthesis_result = self.model_allocator.create_context_managed_call(
-                task_name="biological_interpretation",
-                signature_class=GenomicSummarizer,
-                module_call_func=synthesize_call
+            # Final synthesis of combined summaries
+            final_summary = self._call_synthesis_model(
+                context=combined_summary,
+                question=question,
+                task_name="genomic_summarization",
+                focus="integrate biological insights from all data sections"
+            )
+        else:
+            final_summary = f"Pre-summarization failed for oversized item ({item_tokens:,} tokens)"
+        
+        # Create summarized item preserving structure
+        summarized_item = item.copy()
+        
+        # Replace the large content with summary
+        if 'result' in summarized_item and isinstance(summarized_item['result'], dict):
+            summarized_item['result'] = summarized_item['result'].copy()
+            summarized_item['result']['tool_output'] = final_summary
+            summarized_item['result']['_original_token_count'] = item_tokens
+            summarized_item['result']['_summarization_applied'] = True
+        else:
+            summarized_item = {
+                'original_type': str(type(item).__name__),
+                'summarized_content': final_summary,
+                '_original_token_count': item_tokens,
+                '_summarization_applied': True
+            }
+        
+        final_tokens = self._count_data_tokens([summarized_item])
+        logger.info(f"✅ Pre-summarization complete: {item_tokens:,} → {final_tokens:,} tokens ({(1-final_tokens/item_tokens)*100:.1f}% reduction)")
+        
+        return summarized_item
+    
+    def _split_content_into_subchunks(self, content: str) -> List[str]:
+        """
+        Split large content into smaller sub-chunks for pre-summarization.
+        
+        Args:
+            content: Large content string to split
+            
+        Returns:
+            List of content sub-chunks (maximum 10 chunks to prevent API flood)
+        """
+        # OPTIMIZED: Create fewer, larger sub-chunks for better performance while preserving all biological data
+        max_subchunks = 5  # Even fewer sub-chunks for faster processing
+        min_chunk_size = len(content) // max_subchunks  # Ensure we don't exceed max chunks
+        
+        # Calculate safe sub-chunk size based on model limits
+        # Get model that will be used for summarization (genomic_summarization task uses gpt-4.1-mini)
+        model_name, model_config = self.model_allocator.get_model_for_task("genomic_summarization", "")
+        
+        # Use 40% of model context for sub-chunks (leaving room for system messages, response, etc.)
+        max_safe_tokens = int(model_config.max_context * 0.4)
+        target_subchunk_tokens = min(25000, max_safe_tokens)  # Use smaller of 25k or 40% of model limit
+        target_chars = int(target_subchunk_tokens * 3.5)
+        
+        logger.debug(f"📊 Sub-chunk sizing: {target_subchunk_tokens:,} tokens max for {model_name} (context: {model_config.max_context:,})")
+        
+        if len(content) <= target_chars:
+            return [content]
+        
+        # Split content into chunks, trying to break at natural boundaries
+        sub_chunks = []
+        current_pos = 0
+        
+        while current_pos < len(content):
+            end_pos = min(current_pos + target_chars, len(content))
+            
+            # Try to find a good break point near the target position
+            if end_pos < len(content):
+                # Look for natural breaks (newlines, periods, etc.)
+                break_positions = []
+                search_range = min(500, target_chars // 4)  # Search within reasonable range
+                
+                for offset in range(search_range):
+                    if end_pos - offset > current_pos:
+                        char = content[end_pos - offset]
+                        if char in ['\n\n', '\n', '.', '!', '?']:  # Prefer paragraph/sentence breaks
+                            break_positions.append(end_pos - offset + 1)
+                
+                if break_positions:
+                    end_pos = break_positions[0]  # Use the closest good break point
+            
+            chunk = content[current_pos:end_pos].strip()
+            if chunk:
+                sub_chunks.append(chunk)
+            
+            current_pos = end_pos
+        
+        # ENFORCE HARD LIMIT: If we still have too many chunks, merge them to preserve all data
+        if len(sub_chunks) > max_subchunks:
+            logger.warning(f"🔄 Too many sub-chunks ({len(sub_chunks)} > {max_subchunks}), merging to stay under limit while preserving all biological data")
+            merged_chunks = []
+            chunks_per_merge = (len(sub_chunks) + max_subchunks - 1) // max_subchunks  # Ceiling division
+            
+            for i in range(0, len(sub_chunks), chunks_per_merge):
+                merged_chunk = "\n\n".join(sub_chunks[i:i + chunks_per_merge])
+                merged_chunks.append(merged_chunk)
+            
+            sub_chunks = merged_chunks
+        
+        logger.info(f"📝 Split {len(content):,} chars into {len(sub_chunks)} sub-chunks (max: {max_subchunks}, avg: {len(content)//len(sub_chunks):,} chars each)")
+        return sub_chunks
+    
+    def _map_step(self, chunk: List[Dict[str, Any]], question: str, chunk_id: int) -> Optional[str]:
+        """
+        Map step: Summarize a single chunk of data.
+        
+        Args:
+            chunk: Data chunk to summarize
+            question: Original user question for context
+            chunk_id: Chunk identifier for logging
+            
+        Returns:
+            Chunk summary or None if failed
+        """
+        try:
+            # Format chunk for processing
+            formatted_chunk = self._format_data_for_synthesis(chunk)
+            
+            # Use cheaper model for Map step (summarization task)
+            summary = self._call_synthesis_model(
+                context=formatted_chunk,
+                question=question,
+                task_name="genomic_summarization",  # Use cheaper model for chunk summarization
+                focus=f"key insights and biological patterns from chunk {chunk_id}"
             )
             
-            if synthesis_result is None:
-                # Fallback to provided dspy_synthesizer if allocation fails
-                logger.warning("Model allocation failed, falling back to default synthesizer")
-                synthesis_result = dspy_synthesizer(
-                    genomic_data=chunk_context,
-                    target_length="medium",
-                    focus_areas="cross-task connections, biological patterns, quantitative insights"
-                )
-            
-            # Extract and structure results
-            integrated_findings = self._extract_findings(synthesis_result.summary)
-            cross_task_synthesis = self._extract_cross_task_insights(chunk)
-            emergent_insights = self._extract_emergent_insights(synthesis_result.key_findings)
-            
-            # Count tokens used
-            tokens_used = self._estimate_synthesis_tokens(synthesis_result)
-            
-            return {
-                "chunk_id": chunk_id,
-                "theme": theme,
-                "integrated_findings": integrated_findings,
-                "cross_task_synthesis": cross_task_synthesis,
-                "emergent_insights": emergent_insights,
-                "confidence": getattr(synthesis_result, 'confidence', 'medium'),
-                "tokens_used": tokens_used,
-                "raw_synthesis": synthesis_result.summary
-            }
+            return summary
             
         except Exception as e:
-            logger.error(f"Failed to synthesize chunk {chunk_id}: {e}")
+            logger.error(f"Map step failed for chunk {chunk_id}: {e}")
             return None
     
-    def _format_chunk_context(self, chunk: List[TaskNote]) -> str:
-        """Format chunk notes for DSPy synthesis."""
-        context_parts = []
-        
-        for note in chunk:
-            note_context = [
-                f"Task: {note.description}",
-                f"Observations: {'; '.join(note.observations)}",
-                f"Key Findings: {'; '.join(note.key_findings)}"
-            ]
-            
-            if note.quantitative_data:
-                note_context.append(f"Data: {str(note.quantitative_data)}")
-            
-            if note.cross_task_connections:
-                connections = [f"{conn.connected_task} ({conn.connection_type.value}: {conn.description})"
-                              for conn in note.cross_task_connections]
-                note_context.append(f"Connections: {'; '.join(connections)}")
-            
-            context_parts.append(" | ".join(note_context))
-        
-        return "\n\n".join(context_parts)
-    
-    def _generate_chunk_theme(self, chunk: List[TaskNote]) -> str:
-        """Generate a theme for the chunk based on task content."""
-        # Extract common themes from task descriptions
-        descriptions = [note.description for note in chunk]
-        
-        # Simple theme generation based on common terms
-        common_terms = {}
-        for desc in descriptions:
-            words = desc.lower().split()
-            for word in words:
-                if len(word) > 3:  # Skip short words
-                    common_terms[word] = common_terms.get(word, 0) + 1
-        
-        # Get most common meaningful terms
-        if common_terms:
-            top_terms = sorted(common_terms.items(), key=lambda x: x[1], reverse=True)[:3]
-            theme_words = [term[0] for term in top_terms]
-            return f"Analysis of {', '.join(theme_words)}"
-        
-        return f"Task Analysis (Tasks {chunk[0].task_id}-{chunk[-1].task_id})"
-    
-    def _extract_findings(self, synthesis_text: str) -> List[str]:
-        """Extract key findings from synthesis text."""
-        # Simple extraction - split by sentences and filter for key insights
-        sentences = synthesis_text.split('. ')
-        findings = []
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if (len(sentence) > 50 and 
-                any(keyword in sentence.lower() for keyword in 
-                    ['significant', 'important', 'reveals', 'indicates', 'shows', 'demonstrates'])):
-                findings.append(sentence)
-        
-        return findings[:5]  # Top 5 findings
-    
-    def _extract_cross_task_insights(self, chunk: List[TaskNote]) -> List[Dict[str, Any]]:
-        """Extract cross-task insights from chunk."""
-        insights = []
-        
-        for note in chunk:
-            for connection in note.cross_task_connections:
-                insight = {
-                    "connection": f"{note.task_id} {connection.connection_type.value} {connection.connected_task}",
-                    "insight": connection.description,
-                    "confidence": connection.confidence.value
-                }
-                insights.append(insight)
-        
-        return insights
-    
-    def _extract_emergent_insights(self, key_findings: str) -> List[str]:
-        """Extract emergent insights from key findings."""
-        # Simple extraction of insights that suggest emergent patterns
-        sentences = key_findings.split('. ')
-        emergent = []
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if (len(sentence) > 40 and 
-                any(keyword in sentence.lower() for keyword in 
-                    ['pattern', 'trend', 'correlation', 'relationship', 'connection', 'emerges'])):
-                emergent.append(sentence)
-        
-        return emergent[:3]  # Top 3 emergent insights
-    
-    def _estimate_synthesis_tokens(self, synthesis_result) -> int:
-        """Estimate tokens used in synthesis."""
-        text = f"{synthesis_result.summary} {synthesis_result.key_findings}"
-        
-        if self.tokenizer:
-            try:
-                return len(self.tokenizer.encode(text))
-            except Exception:
-                pass
-        
-        return len(text) // 4  # Fallback estimation
-    
-    def _synthesize_from_raw_data(self, 
-                                raw_data: List[Dict[str, Any]], 
-                                task_notes: List[TaskNote],
-                                dspy_synthesizer,
-                                question: str) -> str:
+    def _reduce_step(self, chunk_summaries: List[str], question: str) -> str:
         """
-        NEW PRIMARY SYNTHESIS METHOD: Process raw task execution data directly.
+        Reduce step: Combine chunk summaries into final synthesis.
         
         Args:
-            raw_data: Raw data from task execution (primary source)
-            task_notes: Task notes for context and cross-task insights
-            dspy_synthesizer: DSPy synthesizer module
+            chunk_summaries: List of chunk summaries from Map step
             question: Original user question
             
         Returns:
-            Comprehensive synthesis based on raw data
+            Final synthesis result
         """
-        logger.info(f"🎯 SYNTHESIZING FROM RAW DATA: {len(raw_data)} items")
+        if not chunk_summaries:
+            return "No chunk summaries available for final synthesis."
         
-        # Check for report files first - if we find one, return it directly to avoid compression
-        for item in raw_data:
-            if (isinstance(item, dict) and 
-                'tool_result' in item and 
-                isinstance(item['tool_result'], dict) and 
-                'report_file_path' in item['tool_result']):
-                
-                report_path = item['tool_result']['report_file_path']
-                logger.info(f"📄 Found detailed report file: {report_path}")
-                
-                try:
-                    # Read the full report from file
-                    with open(report_path, 'r', encoding='utf-8') as f:
-                        full_report = f.read()
-                    
-                    logger.info(f"📄 Successfully read detailed report ({len(full_report)} chars)")
-                    
-                    # Return the full report directly to avoid compression
-                    return f"""
-**📄 DETAILED REPORT GENERATED**
+        # Combine all chunk summaries
+        combined_context = "\n\n".join([
+            f"=== Chunk {i+1} Summary ===\n{summary}" 
+            for i, summary in enumerate(chunk_summaries)
+        ])
+        
+        # Add synthesis metadata
+        synthesis_context = f"""
+QUESTION: {question}
 
-The complete detailed analysis has been saved to: `{report_path}`
+CHUNK SUMMARIES ({len(chunk_summaries)} chunks):
+{combined_context}
 
-{full_report}
-
----
-*Note: This detailed report was preserved from compression to maintain all analytical details.*
+SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.
 """
-                    
-                except Exception as e:
-                    logger.error(f"Failed to read report file {report_path}: {e}")
-                    # Continue with normal synthesis if file reading fails
         
-        # Organize raw data by type and significance
-        organized_data = self._organize_raw_data_by_significance(raw_data)
-        
-        # Extract high-level insights from task notes for context
-        cross_task_context = self._extract_cross_task_context(task_notes)
-        
-        # CHECK FOR DETAILED REPORT REQUEST FIRST - HARD BYPASS ALL COMPRESSION
-        is_detailed_report = self._is_detailed_report_request(question)
-        
-        if is_detailed_report:
-            logger.info("🚨 DETAILED REPORT DETECTED - BYPASSING ALL COMPRESSION AND ROUTING")
-            return self._synthesize_full_context_no_compression(organized_data, cross_task_context, dspy_synthesizer, question)
-        
-        # CHECK FOR MULTIPART REPORT REQUEST SECOND (prophage/spatial keywords)
-        if self._should_use_multipart_report(raw_data, question):
-            logger.info("🎯 Multipart report requested - using task-based synthesis")
-            # Use task-based synthesis to avoid token limits
-            return self._synthesize_large_raw_dataset(organized_data, cross_task_context, dspy_synthesizer, question)
-        
-        # Determine synthesis strategy based on data size and complexity
-        if len(raw_data) > 1000:
-            logger.info("📚 Large dataset detected - using chunked synthesis approach")
-            return self._synthesize_large_raw_dataset(organized_data, cross_task_context, dspy_synthesizer, question)
-        elif len(raw_data) > 100:
-            logger.info("📊 Medium dataset detected - using structured synthesis approach") 
-            return self._synthesize_medium_raw_dataset(organized_data, cross_task_context, dspy_synthesizer, question)
-        else:
-            logger.info("📝 Small dataset detected - using detailed synthesis approach")
-            return self._synthesize_small_raw_dataset(organized_data, cross_task_context, dspy_synthesizer, question)
+        # Use high-capability model for final synthesis
+        return self._call_synthesis_model(
+            context=synthesis_context,
+            question=question,
+            task_name="final_synthesis",  # Use o3 for complex integration
+            focus="comprehensive integration of chunk summaries with biological insights"
+        )
     
-    def _organize_raw_data_by_significance(self, raw_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _format_data_for_synthesis(self, data: List[Dict[str, Any]]) -> str:
         """
-        Organize raw data by biological significance and data type.
+        Format unified data for synthesis model.
         
         Args:
-            raw_data: Raw execution results
+            data: Unified data to format
             
         Returns:
-            Organized data structure
+            Formatted string for synthesis
         """
-        # Don't pre-categorize data - let the LLM see everything and decide what's important
-        # This preserves the agentic architecture principle of model-driven analysis
-        organized = {
-            'all_data': raw_data,  # Everything goes to the LLM for analysis
-            'metadata': {}
-        }
-        
-        logger.info(f"📋 all_data: {len(raw_data)} items (no pre-filtering)")
-        
-        return organized
-    
-    def _is_high_significance_item(self, item: Dict[str, Any]) -> bool:
-        """Check if item represents high biological significance."""
-        if not isinstance(item, dict):
-            return False
-        
-        # Check for novelty indicators
-        novelty_keywords = ['novel', 'uncharacterized', 'hypothetical', 'unknown', 'rare']
-        
-        # Check descriptions for novelty
-        desc = item.get('ko_description', '') or item.get('description', '')
-        if desc and any(keyword in desc.lower() for keyword in novelty_keywords):
-            return True
-        
-        # Check for BGC-related data (biosynthetic gene clusters are often novel)
-        if any(key in item for key in ['bgc', 'biosynthetic', 'cluster', 'secondary_metabolite']):
-            return True
-        
-        # Check for CAZyme data (carbohydrate-active enzymes can be novel)
-        if any(key in item for key in ['cazyme', 'carbohydrate', 'glycoside']):
-            return True
-        
-        return False
-    
-    def _is_functional_annotation(self, item: Dict[str, Any]) -> bool:
-        """Check if item is functional annotation data."""
-        annotation_keys = ['ko_id', 'ko_description', 'pfam', 'protein_id', 'function']
-        return isinstance(item, dict) and any(key in item for key in annotation_keys)
-    
-    def _is_comparative_data(self, item: Dict[str, Any]) -> bool:
-        """Check if item is comparative analysis data."""
-        comparative_keys = ['genome_id', 'comparison', 'across_genomes', 'distribution']
-        return isinstance(item, dict) and any(key in item for key in comparative_keys)
-    
-    def _is_tool_result(self, item: Dict[str, Any]) -> bool:
-        """Check if item is from external tool execution."""
-        return isinstance(item, dict) and 'tool_result' in str(item)
-    
-    def _extract_cross_task_context(self, task_notes: List[TaskNote]) -> Dict[str, Any]:
-        """Extract cross-task insights from notes for context."""
-        context = {
-            'key_insights': [],
-            'cross_connections': [],
-            'execution_summary': {}
-        }
-        
-        for note in task_notes:
-            # Extract key findings
-            context['key_insights'].extend(note.key_findings)
-            
-            # Extract cross-task connections
-            for connection in note.cross_task_connections:
-                context['cross_connections'].append({
-                    'from_task': note.task_id,
-                    'to_task': connection.connected_task,
-                    'relationship': connection.connection_type.value,
-                    'description': connection.description
-                })
-        
-        return context
-    
-    def _synthesize_large_raw_dataset(self, 
-                                    organized_data: Dict[str, Any],
-                                    cross_task_context: Dict[str, Any], 
-                                    dspy_synthesizer,
-                                    question: str) -> str:
-        """Synthesize large datasets (>1000 items) using chunked approach."""
-        logger.info("🏗️ Large dataset synthesis: Chunking by significance")
-        
-        synthesis_parts = []
-        
-        # Let the LLM analyze ALL data without any pre-filtering or categorization
-        if organized_data['all_data']:
-            all_data_synthesis = self._synthesize_significance_chunk(
-                organized_data['all_data'], 
-                f"Complete Dataset Analysis ({len(organized_data['all_data'])} items)",
-                dspy_synthesizer, 
-                question
-            )
-            synthesis_parts.append(all_data_synthesis)
-        
-        # Add cross-task insights
-        if cross_task_context['key_insights']:
-            context_summary = f"Cross-task insights: {'; '.join(cross_task_context['key_insights'][:5])}"
-            synthesis_parts.append(context_summary)
-        
-        return "\n\n".join(synthesis_parts)
-    
-    def _synthesize_medium_raw_dataset(self,
-                                     organized_data: Dict[str, Any],
-                                     cross_task_context: Dict[str, Any],
-                                     dspy_synthesizer, 
-                                     question: str) -> str:
-        """Synthesize medium datasets (100-1000 items) with structured approach."""
-        logger.info("📊 Medium dataset synthesis: Structured analysis")
-        
-        # Combine all data for comprehensive analysis
-        all_data = []
-        for category, items in organized_data.items():
-            if isinstance(items, list):
-                all_data.extend(items)
-        
-        # Format for DSPy synthesis
-        formatted_data = self._format_raw_data_for_synthesis(all_data[:300])  # Manageable chunk
-        
-        # Include cross-task context
-        context_summary = self._format_cross_task_context(cross_task_context)
-        
-        full_context = f"Raw Data Analysis:\n{formatted_data}\n\nCross-Task Context:\n{context_summary}"
-        
-        # Use model allocation for synthesis
-        return self._synthesize_with_model_allocation(full_context, dspy_synthesizer, question, "medium_dataset")
-    
-    def _synthesize_small_raw_dataset(self,
-                                    organized_data: Dict[str, Any],
-                                    cross_task_context: Dict[str, Any],
-                                    dspy_synthesizer,
-                                    question: str) -> str:
-        """Synthesize small datasets (<100 items) with detailed analysis."""
-        logger.info("📝 Small dataset synthesis: Detailed analysis")
-        
-        # Include all data for comprehensive analysis
-        all_data = []
-        for category, items in organized_data.items():
-            if isinstance(items, list):
-                all_data.extend(items)
-        
-        # Format all data for synthesis
-        formatted_data = self._format_raw_data_for_synthesis(all_data)
-        context_summary = self._format_cross_task_context(cross_task_context)
-        
-        full_context = f"Complete Data Analysis:\n{formatted_data}\n\nTask Execution Context:\n{context_summary}"
-        
-        # Use model allocation for detailed synthesis
-        return self._synthesize_with_model_allocation(full_context, dspy_synthesizer, question, "detailed_analysis")
-    
-    def _synthesize_full_context_no_compression(self,
-                                              organized_data: Dict[str, Any],
-                                              cross_task_context: Dict[str, Any],
-                                              dspy_synthesizer,
-                                              question: str) -> str:
-        """Direct synthesis with zero compression for detailed reports."""
-        logger.info("🔥 FULL CONTEXT SYNTHESIS - NO COMPRESSION")
-        
-        # Extract all data without any filtering or truncation
-        all_data = []
-        for category, items in organized_data.items():
-            if isinstance(items, list):
-                all_data.extend(items)
-        
-        # Format all raw data without any truncation limits
-        full_context = self._format_raw_data_for_synthesis(all_data, max_length=None)
-        context_summary = self._format_cross_task_context(cross_task_context)
-        
-        complete_context = f"COMPLETE GENOMIC ANALYSIS (NO COMPRESSION):\n{full_context}\n\nCross-Task Context:\n{context_summary}"
-        
-        # Force gpt-4.1-mini for detailed reports (higher token limit than o3)
-        from ..dspy_signatures import GenomicSummarizer
-        
-        def synthesize_call(module):
-            return module(
-                genomic_data=complete_context,
-                target_length="detailed",
-                focus_areas="specific prophage loci with coordinates, gene clusters, hypothetical stretches, spatial organization"
-            )
-        
-        # Use detailed_report_synthesis task to force gpt-4.1-mini
-        result = self.model_allocator.create_context_managed_call(
-            task_name="detailed_report_synthesis",  # Maps to MEDIUM = gpt-4.1-mini
-            signature_class=GenomicSummarizer,
-            module_call_func=synthesize_call,
-            query=question,
-            task_context="Full context detailed report generation with no compression"
-        )
-        
-        if result:
-            return result.summary
-        else:
-            logger.error("Full context synthesis failed")
-            return "Full context synthesis failed - no compression bypass unsuccessful"
-    
-    def _synthesize_significance_chunk(self,
-                                     data_chunk: List[Dict[str, Any]],
-                                     chunk_name: str,
-                                     dspy_synthesizer,
-                                     question: str) -> str:
-        """Synthesize a chunk of significant data."""
-        # Let the LLM see all data - no filtering (agentic architecture principle)
-        filtered_chunk = data_chunk
-        formatted_chunk = self._format_raw_data_for_synthesis(filtered_chunk)
-        
-        context = f"{chunk_name}:\n{formatted_chunk}"
-        
-        return self._synthesize_with_model_allocation(context, dspy_synthesizer, question, "significance_analysis")
-    
-    def _synthesize_tool_results_chunk(self,
-                                     tool_results: List[Dict[str, Any]],
-                                     dspy_synthesizer,
-                                     question: str) -> str:
-        """Synthesize external tool execution results."""
-        formatted_tools = []
-        
-        for result in tool_results:
-            formatted_tools.append(f"Tool Result: {str(result)[:1000]}")  # Include substantial detail
-        
-        context = f"External Tool Analysis:\n" + "\n".join(formatted_tools)
-        
-        return self._synthesize_with_model_allocation(context, dspy_synthesizer, question, "tool_analysis")
-    
-    def _format_raw_data_for_synthesis(self, raw_data: List[Dict[str, Any]], max_length: Optional[int] = 1000) -> str:
-        """Format raw data for DSPy synthesis.
-        
-        Args:
-            raw_data: Raw data to format
-            max_length: Maximum length per item (None = unlimited for detailed reports)
-        """
-        if not raw_data:
+        if not data:
             return "No data available"
         
         formatted_items = []
-        for i, item in enumerate(raw_data):
-            item_str = str(item)
+        for i, item in enumerate(data):
+            # Format based on item type
+            if item.get('type') == 'task_note':
+                formatted_item = f"Task {item['task_id']}: {item['description']}\n"
+                formatted_item += f"Observations: {'; '.join(item['observations'])}\n"
+                formatted_item += f"Key Findings: {'; '.join(item['key_findings'])}\n"
+                if item.get('quantitative_data'):
+                    formatted_item += f"Data: {item['quantitative_data']}\n"
+                if item.get('cross_task_connections'):
+                    connections = [f"{conn['connected_task']} ({conn['connection_type']})" 
+                                 for conn in item['cross_task_connections']]
+                    formatted_item += f"Connections: {'; '.join(connections)}\n"
+            elif item.get('type') == 'task_metadata':
+                formatted_item = f"Task Metadata ({item['task_count']} tasks):\n"
+                formatted_item += f"Key Insights: {'; '.join(item['key_insights'][:5])}\n"
+                if item.get('cross_connections'):
+                    connections = [f"{conn['from_task']} → {conn['to_task']}" 
+                                 for conn in item['cross_connections'][:3]]
+                    formatted_item += f"Cross-connections: {'; '.join(connections)}\n"
+            else:
+                # Raw data item
+                formatted_item = f"Data Item {i+1}: {str(item)}\n"
             
-            # Only truncate if max_length is specified (not None for detailed reports)
-            if max_length is not None and len(item_str) > max_length:
-                item_str = item_str[:max_length] + "..."
-            
-            formatted_items.append(f"Item {i+1}: {item_str}")
+            formatted_items.append(formatted_item)
         
         return "\n".join(formatted_items)
     
-    def _format_cross_task_context(self, context: Dict[str, Any]) -> str:
-        """Format cross-task context for synthesis."""
-        parts = []
-        
-        if context.get('key_insights'):
-            parts.append(f"Key Insights: {'; '.join(context['key_insights'][:5])}")
-        
-        if context.get('cross_connections'):
-            connections = [f"{conn['from_task']} → {conn['to_task']}: {conn['description']}" 
-                         for conn in context['cross_connections'][:3]]
-            parts.append(f"Cross-Task Connections: {'; '.join(connections)}")
-        
-        return "\n".join(parts) if parts else "No additional context available"
-    
-    def _intelligent_data_filter(self, data_chunk: List[Dict[str, Any]], max_items: int = 100, question: str = "") -> List[Dict[str, Any]]:
+    def _enforce_context_limits(self, context: str, task_name: str, question: str = "") -> str:
         """
-        Intelligently filter data to focus on task-relevant findings while staying under token limits.
+        Enforce strict context limits for the selected model to prevent context overflow.
         
         Args:
-            data_chunk: Raw data to filter
-            max_items: Maximum items to include
-            question: User question for context-aware filtering
+            context: Input context to validate/compress
+            task_name: Task name for model selection
+            question: Question for context (used for compression if needed)
             
         Returns:
-            Filtered data prioritizing task-relevant findings
+            Context guaranteed to fit within model limits
         """
-        if len(data_chunk) <= max_items:
-            return data_chunk
+        # Get the model that will be used for this task
+        model_name, model_config = self.model_allocator.get_model_for_task(task_name, question)
         
-        # Task-specific relevance scoring
-        scored_items = []
-        question_lower = question.lower() if question else ""
+        # Calculate safe limits (leave room for system messages, response, etc.)
+        safety_margin = 2000  # Reserve tokens for system messages and response
+        max_input_tokens = model_config.max_context - safety_margin
         
-        # Determine query focus
-        is_phage_query = any(term in question_lower for term in ['phage', 'prophage', 'virus', 'viral', 'operons'])
-        is_transport_query = any(term in question_lower for term in ['transport', 'transporter', 'permease'])
-        is_crispr_query = any(term in question_lower for term in ['crispr', 'cas'])
-        is_metabolic_query = any(term in question_lower for term in ['metabolic', 'pathway', 'enzyme'])
-            
-        # Determine and log filtering strategy
-        filter_type = "generic novelty"
-        if is_phage_query:
-            filter_type = "phage relevance"
-        elif is_transport_query:
-            filter_type = "transport relevance"
-        elif is_crispr_query:
-            filter_type = "CRISPR relevance"
-        elif is_metabolic_query:
-            filter_type = "metabolic relevance"
-            
-        logger.info(f"🎯 Intelligent filtering ({filter_type}): {len(data_chunk)} items → {max_items} items")
+        # Count actual tokens in context
+        context_tokens = self._count_data_tokens([context]) if isinstance(context, str) else self._count_data_tokens(context)
         
-        for item in data_chunk:
-            score = 0
-            item_str = str(item).lower()
-            
-            # TASK-SPECIFIC HIGH PRIORITY SCORING
-            if is_phage_query:
-                # Phage-specific keywords get massive boost
-                if any(keyword in item_str for keyword in ['phage', 'prophage', 'viral', 'virus', 'integrase', 'terminase', 'capsid', 'tail', 'lysis', 'holin']):
-                    score += 50
-                # Hypothetical proteins in operon context
-                if any(keyword in item_str for keyword in ['hypothetical', 'uncharacterized', 'unknown']) and 'gene' in item_str:
-                    score += 25
-                # Other proteins get minimal score
-                else:
-                    score += 1
-                    
-            elif is_transport_query:
-                # Transport-specific keywords
-                if any(keyword in item_str for keyword in ['transport', 'transporter', 'permease', 'channel', 'efflux', 'influx']):
-                    score += 50
-                elif any(keyword in item_str for keyword in ['membrane', 'abc', 'mfs']):
-                    score += 25
-                else:
-                    score += 1
-                    
-            elif is_crispr_query:
-                # CRISPR-specific keywords
-                if any(keyword in item_str for keyword in ['crispr', 'cas', 'spacer', 'repeat']):
-                    score += 50
-                else:
-                    score += 1
-                    
-            else:
-                # Generic novelty scoring (fallback)
-                if any(keyword in item_str for keyword in ['unknown', 'hypothetical', 'uncharacterized', 'duf']):
-                    score += 10
-                elif any(keyword in item_str for keyword in ['bgc', 'cluster', 'biosynthetic']):
-                    score += 8
-                elif any(keyword in item_str for keyword in ['transport', 'regulator', 'sensor', 'kinase']):
-                    score += 5
-                elif any(keyword in item_str for keyword in ['dehydrogenase', 'oxidase', 'reductase', 'synthase']):
-                    score += 4
-                elif any(keyword in item_str for keyword in ['ribosomal', 'translation', 'replication']):
-                    score += 1
-                
-            # Boost for longer proteins (more likely to be interesting)
-            if 'length' in item and isinstance(item.get('length'), (int, str)):
-                try:
-                    length = int(item['length'])
-                    if length > 500:  # Large proteins often more interesting
-                        score += 3
-                except:
-                    pass
-                    
-            scored_items.append((score, item))
+        logger.info(f"🔍 Context check: {context_tokens:,} tokens for {model_name} (limit: {max_input_tokens:,})")
         
-        # Sort by score (descending) and take top items
-        scored_items.sort(key=lambda x: x[0], reverse=True)
-        filtered_items = [item for score, item in scored_items[:max_items]]
+        if context_tokens <= max_input_tokens:
+            return context  # Safe to use as-is
         
-        # Log filtering results
-        avg_score = sum(score for score, _ in scored_items[:max_items]) / max_items if max_items > 0 else 0
-        logger.info(f"✅ Filtered to top {len(filtered_items)} items (avg novelty score: {avg_score:.1f})")
-        
-        return filtered_items
-    
-    def _compress_context_for_synthesis(self, context: str, max_tokens: int = 25000, 
-                                       is_detailed_report: bool = False) -> str:
-        """
-        Progressively compress context using intelligent chunking and priority-based compression.
-        
-        Args:
-            context: Original context string
-            max_tokens: Maximum tokens allowed
-            is_detailed_report: If True, use minimal compression and larger chunks
-            
-        Returns:
-            Optimally compressed context preserving maximum detail within token limits
-        """
-        # Use actual tokenizer for accurate token counting
-        def count_tokens(text: str) -> int:
-            if self.tokenizer:
-                try:
-                    return len(self.tokenizer.encode(text))
-                except:
-                    pass
-            # Fallback: more accurate estimate (3.5 chars per token for English)
-            return int(len(text) / 3.5)
-        
-        original_tokens = count_tokens(context)
-        
-        # If we're already under the limit, no compression needed
-        if original_tokens <= max_tokens:
-            logger.info(f"✅ NO COMPRESSION NEEDED: {original_tokens} tokens (under {max_tokens} limit)")
-            return context
-        
-        # For detailed reports, use larger token budget and minimal compression
-        if is_detailed_report:
-            max_tokens = min(max_tokens * 1.2, 28000)  # Slightly expand for detailed reports but stay within o3 limits
-            logger.info(f"📋 DETAILED REPORT MODE: Expanded token budget to {max_tokens}")
-        
-        logger.info(f"🗜️ PROGRESSIVE COMPRESSION: {original_tokens} → target {max_tokens} tokens")
+        # Context is too large - need to compress intelligently
+        logger.warning(f"⚠️ Context exceeds {model_name} limits ({context_tokens:,} > {max_input_tokens:,}) - applying intelligent compression")
         
         # Calculate compression ratio needed
-        compression_ratio = max_tokens / original_tokens
+        compression_ratio = max_input_tokens / context_tokens
+        target_chars = int(len(context) * compression_ratio * 0.95)  # Use 95% of target for safety
         
-        # Step 1: Parse and organize content
-        lines = context.split('\n')
+        # Apply intelligent compression that preserves biological information
+        compressed_context = self._intelligent_compress(context, target_chars, question)
         
-        # Enhanced priority categories for biological analysis
-        ultra_high_priority = [
-            'unknown', 'hypothetical', 'uncharacterized', 'novel', 'duf', 'unusual',
-            'bgc', 'cluster', 'biosynthetic', 'unique', 'rare', 'cryptic',
-            'novelty', 'stands out', 'interesting', 'unusual', 'orphan',
-            'domain of unknown function', 'no functional annotation', 'no annotation',
-            'putative', 'predicted protein', 'hypothetical protein',
-            # Add prophage/spatial keywords
-            'prophage', 'phage', 'viral', 'operon', 'spatial', 'coordinates'
-        ]
+        # Verify the compressed context fits
+        final_tokens = self._count_data_tokens([compressed_context])
+        logger.info(f"✅ Compression complete: {context_tokens:,} → {final_tokens:,} tokens ({(1-final_tokens/context_tokens)*100:.1f}% reduction)")
         
-        high_priority_keywords = [
-            'transport', 'regulator', 'sensor', 'kinase', 'dehydrogenase',
-            'oxidase', 'reductase', 'synthase', 'transferase', 'recombinase',
-            'toxin', 'antitoxin', 'resistance', 'virulence', 'integrase'
-        ]
-        
-        # Step 2: Score and prioritize content
-        scored_lines = []
-        for line in lines:
-            if not line.strip() or len(line) < 10:
-                continue
-                
-            score = 0
-            line_lower = line.lower()
-            
-            # ULTRA HIGH priority for novel/unknown functions and spatial data
-            if any(keyword in line_lower for keyword in ultra_high_priority):
-                score += 100
-                
-            # High priority for functional annotations
-            elif any(keyword in line_lower for keyword in high_priority_keywords):
-                score += 50
-                
-            # Medium priority for genomic context
-            elif any(keyword in line_lower for keyword in ['coordinate', 'scaffold', 'contig', 'gene']):
-                score += 25
-                
-            # Basic priority for metadata
-            elif any(keyword in line_lower for keyword in ['genome_id', 'protein_id']):
-                score += 5
-            
-            # Only keep lines with some biological relevance
-            if score >= 5:
-                scored_lines.append((score, line))
-        
-        # Step 3: Progressive chunking strategy
-        # Calculate how many chunks we need based on compression ratio
-        if compression_ratio > 0.8:
-            # Light compression - use 2-3 large chunks
-            num_chunks = min(3, max(2, len(scored_lines) // 500))
-        elif compression_ratio > 0.5:
-            # Medium compression - use 3-5 chunks  
-            num_chunks = min(5, max(3, len(scored_lines) // 300))
-        else:
-            # Heavy compression - use 5-8 chunks
-            num_chunks = min(8, max(5, len(scored_lines) // 200))
-        
-        # Step 4: Distribute content across chunks with smart allocation
-        sorted_lines = sorted(scored_lines, key=lambda x: x[0], reverse=True)
-        tokens_per_chunk = (max_tokens - 1000) // num_chunks  # Reserve 1000 tokens for headers/structure
-        
-        chunks = []
-        current_chunk = []
-        current_chunk_tokens = 0
-        
-        for score, line in sorted_lines:
-            line_tokens = count_tokens(line + '\n')
-            
-            # If adding this line would exceed chunk limit, start new chunk
-            if current_chunk_tokens + line_tokens > tokens_per_chunk and current_chunk:
-                chunks.append(current_chunk)
-                current_chunk = []
-                current_chunk_tokens = 0
-            
-            # If we haven't reached the chunk limit, add the line
-            if len(chunks) < num_chunks:
-                current_chunk.append(line)
-                current_chunk_tokens += line_tokens
-            else:
-                # We've filled all chunks, stop adding content
-                break
-        
-        # Add the last chunk if it has content
-        if current_chunk:
-            chunks.append(current_chunk)
-        
-        # Step 5: Build final compressed context
-        compressed_sections = []
-        for i, chunk in enumerate(chunks):
-            section_header = f"\n--- Analysis Section {i+1}/{len(chunks)} ---"
-            compressed_sections.append(section_header)
-            compressed_sections.extend(chunk)
-        
-        compressed_context = "Comprehensive Genomic Analysis Results:\n"
-        compressed_context += '\n'.join(compressed_sections)
-        compressed_context += "\n\n=== End Analysis ==="
-        
-        final_tokens = count_tokens(compressed_context)
-        compression_ratio_achieved = final_tokens / original_tokens * 100
-        
-        logger.info(f"✅ PROGRESSIVE COMPRESSION COMPLETE:")
-        logger.info(f"   📊 {final_tokens} tokens ({compression_ratio_achieved:.1f}% of original)")
-        logger.info(f"   🧩 {len(chunks)} chunks, ~{tokens_per_chunk} tokens each")
-        logger.info(f"   📋 Preserved {len(sum(chunks, []))} high-priority lines")
+        if final_tokens > max_input_tokens:
+            logger.error(f"❌ CRITICAL: Compressed context still exceeds limits ({final_tokens:,} > {max_input_tokens:,})")
+            raise ValueError(f"Cannot compress context enough for {model_name} (limit: {max_input_tokens:,} tokens)")
         
         return compressed_context
     
-    def _is_detailed_report_request(self, question: str) -> bool:
+    def _intelligent_compress(self, context: str, target_chars: int, question: str = "") -> str:
         """
-        Check if the user is requesting a detailed report that should get minimal compression.
+        Intelligently compress context while preserving biological information.
         
         Args:
-            question: User's original question
+            context: Original context to compress
+            target_chars: Target character count
+            question: Question context for relevance scoring
             
         Returns:
-            True if this appears to be a detailed report request
+            Compressed context preserving key biological information
         """
-        detailed_report_keywords = [
-            'detailed report', 'full report', 'comprehensive report', 'complete report',
-            'detailed analysis', 'full analysis', 'comprehensive analysis', 'complete analysis',
-            'show me everything', 'all details', 'full details', 'maximum detail',
-            'don\'t compress', 'no compression', 'uncompressed', 'verbose',
-            'make a detailed report', 'make a report', 'detailed report on', 'report on',
-            'at least five loci', 'five loci', 'top 5', 'top five', 'best loci',
-            'most likely to be', 'based on their novelty', 'give me a detailed report',
-            'detailed report', 'report', 'summarize', 'summary', 'comprehensive',
-            # Add user's specific query keywords
-            'prophage segments', 'operons containing', 'find operons', 'loci'
+        if len(context) <= target_chars:
+            return context
+        
+        # Split into logical sections
+        sections = context.split('\n\n')
+        
+        # Score sections by biological relevance
+        scored_sections = []
+        for i, section in enumerate(sections):
+            score = self._score_biological_relevance(section, question)
+            scored_sections.append((score, i, section))
+        
+        # Sort by relevance (highest first)
+        scored_sections.sort(reverse=True)
+        
+        # Build compressed context by adding highest-scoring sections
+        compressed_parts = []
+        current_chars = 0
+        
+        for score, original_index, section in scored_sections:
+            if current_chars + len(section) + 2 <= target_chars:  # +2 for \n\n
+                compressed_parts.append((original_index, section))
+                current_chars += len(section) + 2
+            else:
+                # Try to fit a truncated version of this section
+                remaining_chars = target_chars - current_chars - 100  # Leave room for truncation message
+                if remaining_chars > 200:  # Only if we have meaningful space
+                    truncated = section[:remaining_chars] + "...[section continues]"
+                    compressed_parts.append((original_index, truncated))
+                break
+        
+        # Sort by original order and rebuild
+        compressed_parts.sort()  # Sort by original_index
+        compressed_context = '\n\n'.join([section for _, section in compressed_parts])
+        
+        # Add compression notice if context was significantly compressed
+        reduction = (len(context) - len(compressed_context)) / len(context)
+        if reduction > 0.3:  # If >30% reduction
+            header = f"[CONTEXT INTELLIGENTLY COMPRESSED - {reduction*100:.1f}% reduction while preserving biological relevance]\n\n"
+            compressed_context = header + compressed_context
+        
+        return compressed_context
+    
+    def _score_biological_relevance(self, section: str, question: str = "") -> float:
+        """
+        Score a text section for biological relevance.
+        
+        Args:
+            section: Text section to score
+            question: Question context for relevance
+            
+        Returns:
+            Relevance score (higher = more important to preserve)
+        """
+        score = 0.0
+        section_lower = section.lower()
+        
+        # High priority biological terms
+        high_priority_terms = [
+            'protein', 'gene', 'enzyme', 'pathway', 'metabolism', 'biosynthesis',
+            'annotation', 'function', 'domain', 'pfam', 'kegg', 'go:', 'ec:',
+            'prophage', 'phage', 'viral', 'integrase', 'operon', 'cluster',
+            'transport', 'binding', 'kinase', 'synthase', 'oxidase', 'reductase'
         ]
         
-        question_lower = question.lower() if question else ""
-        return any(keyword in question_lower for keyword in detailed_report_keywords)
+        # Medium priority terms
+        medium_priority_terms = [
+            'sequence', 'blast', 'similarity', 'identity', 'coverage',
+            'structure', 'motif', 'region', 'site', 'residue', 'amino acid'
+        ]
+        
+        # Score based on biological term density
+        for term in high_priority_terms:
+            score += section_lower.count(term) * 2.0
+        
+        for term in medium_priority_terms:
+            score += section_lower.count(term) * 1.0
+        
+        # Bonus for question relevance if question provided
+        if question:
+            question_lower = question.lower()
+            question_words = set(question_lower.split())
+            section_words = set(section_lower.split())
+            overlap = len(question_words.intersection(section_words))
+            score += overlap * 1.5
+        
+        # Bonus for structured data (likely annotations)
+        if any(indicator in section for indicator in [':', '=>', '|', '\t']):
+            score += 1.0
+        
+        # Penalty for very short sections (likely noise)
+        if len(section) < 50:
+            score *= 0.5
+        
+        return score
     
-    def _synthesize_with_model_allocation(self,
-                                        context: str,
-                                        dspy_synthesizer,
-                                        question: str,
-                                        task_type: str) -> str:
-        """Synthesize using model allocation system with intelligent token management."""
-        try:
-            from ..dspy_signatures import GenomicSummarizer
+    def _call_synthesis_model(self, context: str, question: str, task_name: str, focus: str) -> str:
+        """
+        Call synthesis model using model allocation system with caching.
+        
+        Args:
+            context: Formatted context for synthesis
+            question: Original user question
+            task_name: Task name for model allocation
+            focus: Focus areas for synthesis
             
-            # Check if we have discovery results accumulator available
-            synthesis_context = context
-            if (self.note_keeper and 
-                hasattr(self.note_keeper, 'results_accumulator')):
-                
-                # Use curated discovery results instead of raw compressed data
-                discovery_context = self.note_keeper.results_accumulator.get_synthesis_context()
-                discovery_summary = self.note_keeper.results_accumulator.get_discovery_summary()
-                
-                if discovery_summary['total_discoveries'] > 0:
-                    logger.info(f"🎯 Using discovery results for synthesis: {discovery_summary['total_discoveries']} discoveries found")
-                    synthesis_context = discovery_context
-                else:
-                    logger.info("📝 No discoveries found in accumulator, but checking for detailed report request")
-                    # Check if this is a detailed report request - if so, avoid compression
-                    is_detailed_report = self._is_detailed_report_request(question)
-                    
-                    if is_detailed_report:
-                        logger.info("🎯 Detailed report requested - preserving full context without compression")
-                        # For detailed reports, use the full context and force gpt-4.1-mini to avoid o3 token limits
-                        synthesis_context = context
-                        # Force use of gpt-4.1-mini for detailed reports to avoid o3 token limits
-                        logger.info("🎯 Detailed report: Using gpt-4.1-mini to avoid o3 token limits")
-                    else:
-                        # Fallback to compression if no discoveries recorded and not detailed report
-                        estimated_tokens = int(len(context) / 3.5)
-                        # Reduce token limit to stay within o3's 30,000 token constraint
-                        max_safe_tokens = 25000  # Safe buffer below o3's 30,000 token limit
-                        
-                        if estimated_tokens > max_safe_tokens:
-                            logger.warning(f"🚫 Context too large ({estimated_tokens} tokens), applying intelligent compression")
-                            synthesis_context = self._compress_context_for_synthesis(context, max_tokens=max_safe_tokens, is_detailed_report=is_detailed_report)
-                            logger.info(f"✅ Context compressed to ~{int(len(synthesis_context) / 3.5)} tokens")
-                        else:
-                            synthesis_context = context
-            else:
-                # No accumulator available - use compression fallback
-                estimated_tokens = int(len(context) / 3.5)
-                # Use gpt-4.1-mini token limit since we're not using o3 for synthesis
-                max_safe_tokens = 100000  # gpt-4.1-mini has higher limits
-                
-                # Check if this is a detailed report request
-                is_detailed_report = self._is_detailed_report_request(question)
-                
-                if is_detailed_report:
-                    logger.info("🎯 Detailed report requested - preserving full context without compression")
-                    # For detailed reports, use full context with gpt-4.1-mini (higher token limit)
-                    synthesis_context = context
-                    logger.info("🎯 Detailed report: Using gpt-4.1-mini (higher token limit) to avoid compression")
-                elif estimated_tokens > max_safe_tokens:
-                    logger.warning(f"🚫 Context too large ({estimated_tokens} tokens), applying intelligent compression")
-                    synthesis_context = self._compress_context_for_synthesis(context, max_tokens=max_safe_tokens, is_detailed_report=is_detailed_report)
-                    logger.info(f"✅ Context compressed to ~{int(len(synthesis_context) / 3.5)} tokens")
-                else:
-                    synthesis_context = context
+        Returns:
+            Synthesis result
+        """
+        # Create cache key based on context hash and parameters
+        import hashlib
+        cache_key = hashlib.md5(f"{context[:1000]}{question}{task_name}{focus}".encode()).hexdigest()
+        
+        # Check cache first
+        if cache_key in self.synthesis_cache:
+            self.cache_hits += 1
+            logger.info(f"📋 Cache hit for synthesis (key: {cache_key[:8]}...)")
+            return self.synthesis_cache[cache_key]
+        
+        self.cache_misses += 1
+        logger.info(f"🔄 Cache miss - making API call (key: {cache_key[:8]}...)")
+        
+        try:
+            # CRITICAL: Enforce context limits before API call
+            safe_context = self._enforce_context_limits(context, task_name, question)
+            
+            from ..dspy_signatures import GenomicSummarizer
             
             def synthesize_call(module):
                 return module(
-                    genomic_data=synthesis_context,
+                    genomic_data=safe_context,  # Use context-limit-enforced version
                     target_length="detailed",
-                    focus_areas="biological insights, functional analysis, novelty detection"
+                    focus_areas=focus
                 )
             
-            # Use final synthesis task for o3 allocation (complex biological reasoning)
-            result = self.model_allocator.create_context_managed_call(
-                task_name="final_synthesis",  # Maps to COMPLEX = o3
-                signature_class=GenomicSummarizer, 
-                module_call_func=synthesize_call,
-                query=question,
-                task_context=f"Synthesis of {task_type} data"
-            )
+            # ENHANCED retry logic with better rate limit detection
+            max_retries = 5  # More retries for rate limits
+            retry_delay = 5  # Start with longer delay (5 seconds)
             
-            if result:
-                return result.summary
+            for attempt in range(max_retries):
+                try:
+                    result = self.model_allocator.create_context_managed_call(
+                        task_name=task_name,
+                        signature_class=GenomicSummarizer,
+                        module_call_func=synthesize_call,
+                        query=question,
+                        task_context=f"Progressive synthesis: {focus}"
+                    )
+                    break  # Success, exit retry loop
+                    
+                except Exception as e:
+                    error_str = str(e).lower()
+                    is_rate_limit = any(indicator in error_str for indicator in [
+                        "429", "rate limit", "too many requests", "quota", "tokens per minute"
+                    ])
+                    
+                    if is_rate_limit and attempt < max_retries - 1:
+                        logger.warning(f"⏳ Rate limited detected, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                        logger.warning(f"🔍 Error details: {error_str[:200]}...")
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 30)  # Cap at 30 seconds
+                        continue
+                    else:
+                        raise  # Not rate limited or max retries reached
+            
+            if result and hasattr(result, 'summary'):
+                synthesis_result = result.summary
+                # Cache the result
+                self.synthesis_cache[cache_key] = synthesis_result
+                return synthesis_result
             else:
-                # Fallback to provided synthesizer
-                fallback_result = dspy_synthesizer(
-                    genomic_data=context,
-                    target_length="detailed", 
-                    focus_areas="biological insights, functional analysis, novelty detection"
-                )
-                return fallback_result.summary
+                logger.warning("Model allocation returned unexpected result format")
+                fallback_result = f"Synthesis completed but result format unexpected. Context: {context[:500]}..."
+                self.synthesis_cache[cache_key] = fallback_result
+                return fallback_result
                 
         except Exception as e:
-            logger.error(f"Model allocation synthesis failed: {e}")
-            return f"Synthesis error for {task_type}: {str(e)}"
-    
-    def _generate_final_synthesis(self, question: str, dspy_synthesizer=None) -> str:
-        """
-        Generate final synthesis from all chunks.
-        
-        Args:
-            dspy_synthesizer: DSPy synthesizer module (deprecated, uses model allocation)
-            question: Original user question
-            
-        Returns:
-            Final synthesis text
-        """
-        if not self.synthesis_chunks:
-            return "No synthesis chunks available for final synthesis."
-        
-        # Combine all chunk insights
-        all_findings = []
-        all_insights = []
-        all_connections = []
-        
-        for chunk in self.synthesis_chunks:
-            all_findings.extend(chunk.get("integrated_findings", []))
-            all_insights.extend(chunk.get("emergent_insights", []))
-            all_connections.extend(chunk.get("cross_task_synthesis", []))
-        
-        # Create comprehensive context
-        final_context = {
-            "original_question": question,
-            "total_chunks": len(self.synthesis_chunks),
-            "integrated_findings": all_findings,
-            "emergent_insights": all_insights,
-            "cross_task_connections": all_connections,
-            "chunk_summaries": [chunk.get("raw_synthesis", "") for chunk in self.synthesis_chunks]
-        }
-        
-        # Format for DSPy
-        formatted_context = self._format_final_context(final_context)
-        
-        try:
-            # Use model allocation system with context manager for final synthesis
-            logger.info("🔥 Using model allocation for final synthesis (o3 for complex task)")
-            
-            from ..dspy_signatures import GenomicSummarizer
-            
-            def final_synthesize_call(module):
-                return module(
-                    genomic_data=formatted_context,
-                    target_length="detailed",
-                    focus_areas="comprehensive biological insights, cross-task integration, quantitative analysis"
-                )
-            
-            final_result = self.model_allocator.create_context_managed_call(
-                task_name="final_synthesis",  # Maps to COMPLEX = o3
-                signature_class=GenomicSummarizer,
-                module_call_func=final_synthesize_call
-            )
-            
-            if final_result is not None:
-                return final_result.summary
-            else:
-                # Fallback to provided dspy_synthesizer if allocation fails
-                logger.warning("Model allocation failed for final synthesis, falling back to default")
-                final_result = dspy_synthesizer(
-                    genomic_data=formatted_context,
-                    target_length="detailed",
-                    focus_areas="comprehensive biological insights, cross-task integration, quantitative analysis"
-                )
-                return final_result.summary
-            
-        except Exception as e:
-            logger.error(f"Failed to generate final synthesis: {e}")
-            
-            # Fallback: create manual synthesis
-            return self._create_fallback_synthesis(final_context)
-    
-    def _format_final_context(self, context: Dict[str, Any]) -> str:
-        """Format final context for DSPy synthesis."""
-        parts = [
-            f"Original Question: {context['original_question']}",
-            f"Analysis completed in {context['total_chunks']} synthesis chunks",
-            "",
-            "Integrated Findings:",
-            *[f"- {finding}" for finding in context['integrated_findings'][:10]],
-            "",
-            "Emergent Insights:",
-            *[f"- {insight}" for insight in context['emergent_insights'][:5]],
-            "",
-            "Cross-Task Connections:",
-            *[f"- {conn.get('insight', '')}" for conn in context['cross_task_connections'][:5]],
-            "",
-            "Chunk Summaries:",
-            *[f"Chunk {i+1}: {summary[:200]}..." for i, summary in enumerate(context['chunk_summaries'])]
-        ]
-        
-        return "\n".join(parts)
-    
-    def _create_fallback_synthesis(self, context: Dict[str, Any]) -> str:
-        """Create fallback synthesis when DSPy fails."""
-        parts = [
-            f"Based on analysis of {context['total_chunks']} synthesis chunks:",
-            "",
-            "Key Findings:",
-            *[f"• {finding}" for finding in context['integrated_findings'][:8]],
-            "",
-            "Emergent Insights:",
-            *[f"• {insight}" for insight in context['emergent_insights'][:4]],
-            "",
-            f"Analysis completed through progressive synthesis to handle complex multi-task workflow."
-        ]
-        
-        return "\n".join(parts)
+            logger.error(f"Synthesis model call failed: {e}")
+            error_result = f"Synthesis failed: {str(e)}"
+            # Don't cache errors
+            return error_result
     
     def get_synthesis_statistics(self) -> Dict[str, Any]:
-        """Get statistics about the synthesis process."""
-        total_tokens = sum(chunk.get("tokens_used", 0) for chunk in self.synthesis_chunks)
+        """
+        Get statistics about the synthesis process.
+        
+        Returns:
+            Dictionary with synthesis statistics
+        """
+        total_calls = self.cache_hits + self.cache_misses
+        cache_hit_rate = (self.cache_hits / total_calls * 100) if total_calls > 0 else 0
         
         return {
-            "total_chunks": len(self.synthesis_chunks),
-            "total_tokens_used": total_tokens,
-            "average_tokens_per_chunk": total_tokens / len(self.synthesis_chunks) if self.synthesis_chunks else 0,
-            "chunk_themes": [chunk.get("theme", "") for chunk in self.synthesis_chunks]
+            "architecture": "Map-Reduce",
+            "direct_synthesis_limit": self.direct_synthesis_limit,
+            "map_chunk_limit": self.map_chunk_limit,
+            "tokenizer_available": self.tokenizer is not None,
+            "model_allocator_available": self.model_allocator is not None,
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "cache_hit_rate_percent": cache_hit_rate,
+            "api_call_reduction": f"{cache_hit_rate:.1f}% fewer API calls"
         }

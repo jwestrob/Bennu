@@ -641,3 +641,24 @@ class GenomeQuality(dspy.Signature):
     quality_thresholds = dspy.InputField(desc="Quality thresholds for different analyses")
     quality_assessment = dspy.OutputField(desc="Overall genome quality assessment")
     recommendations = dspy.OutputField(desc="Recommendations for genome usage")
+
+class GenomeSelectionSignature(dspy.Signature):
+    """
+    Analyze user query to determine genome selection intent and target genomes.
+    
+    Use natural language understanding to classify whether the user wants to:
+    1. Analyze specific genome(s) - return their exact IDs
+    2. Compare across genomes - return empty list (comparative analysis)
+    3. Analyze all genomes globally - return empty list (global analysis)
+    4. Ambiguous intent - return empty list and request clarification
+    
+    Be conservative: if unclear, classify as "global" rather than guessing specific genomes.
+    """
+    
+    query = dspy.InputField(desc="User's natural language query about genomic data")
+    available_genomes = dspy.InputField(desc="List of available genome IDs in the database")
+    
+    intent = dspy.OutputField(desc="Intent classification: 'specific', 'comparative', 'global', or 'ambiguous'")
+    target_genomes = dspy.OutputField(desc="Comma-separated exact genome IDs if intent='specific', otherwise empty")
+    reasoning = dspy.OutputField(desc="1-2 sentence explanation of the classification decision")
+    confidence = dspy.OutputField(desc="Confidence score from 0.0 to 1.0 for the analysis")

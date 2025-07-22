@@ -26,17 +26,18 @@ from ..config import LLMConfig
 from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
 from .dspy_signatures import NEO4J_SCHEMA
 from .utils import setup_debug_logging, GenomicContext
+from .log_formatter import setup_enhanced_logging
 from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
 from .task_management import TaskGraph, Task, TaskType, TaskStatus
 from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
-from .genome_scoping import QueryScopeEnforcer
+from .genome_selection import UnifiedGenomeSelector
 from .context_compression import ContextCompressor
 from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
 from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
 from .query_validator import QueryValidator
-from .genome_selector import GenomeSelector
+# Old genome_selector.py replaced by unified genome_selection.py
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
     and intelligent code interpreter enhancement.
     """
     
-    def __init__(self, config: LLMConfig, chunk_context_size: int = 4096, enable_memory: bool = True):
+    def __init__(self, config: LLMConfig, chunk_context_size: int = 4096, enable_memory: bool = True, enhanced_logging: bool = False):
         """Initialize the genomic RAG system."""
         if DSPY_AVAILABLE:
             super().__init__()
@@ -64,11 +65,11 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         # Initialize new intelligent components
         self.intelligent_router = IntelligentRouter()
-        self.scope_enforcer = QueryScopeEnforcer()
+        self.genome_selector = UnifiedGenomeSelector(self.neo4j_processor)
         self.context_compressor = ContextCompressor()
         self.genome_context_extractor = GenomeContextExtractor()
         self.query_validator = QueryValidator()
-        self.genome_selector = GenomeSelector(self.neo4j_processor)
+# Unified genome selector initialized above
         
         # Initialize memory system
         self.note_keeper = NoteKeeper() if enable_memory else None
@@ -89,10 +90,26 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         # Store DSPy availability for task executor
         self.dspy_available = DSPY_AVAILABLE
         
-        # Setup debug logging
-        setup_debug_logging()
+        # Set up enhanced logging if requested, otherwise use debug logging
+        if enhanced_logging:
+            try:
+                setup_enhanced_logging(
+                    log_level="INFO",
+                    filter_noise=True,
+                    show_timestamps=True,
+                    export_to_file=False
+                )
+                logger.info("🎯 GenomicRAG initialized with enhanced logging")
+            except Exception as e:
+                logger.warning(f"Enhanced logging setup failed: {e}, using default logging")
+                setup_debug_logging()
+        else:
+            setup_debug_logging()
         
-        logger.info("🧬 GenomicRAG initialized with working implementation")
+        logger.info("✅ GenomicRAG system initialized successfully")
+        logger.info(f"🔧 Configuration: Neo4j={bool(config.database.neo4j_uri)}, LanceDB={bool(config.database.lancedb_path)}")
+        logger.info(f"🧠 Memory: {'Enabled' if enable_memory else 'Disabled'}, Chunk Size: {chunk_context_size}")
+        logger.info(f"🔥 Model: {config.llm_model} ({config.model_mode} mode)")
     
     def _configure_dspy(self):
         """Configure DSPy with model allocation system."""
@@ -278,8 +295,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 console.print("🧠 [bold blue]Analyzing genome selection intent for agentic workflow[/bold blue]")
                 
                 try:
-                    from .llm_genome_selector import LLMGenomeSelector
-                    llm_selector = LLMGenomeSelector(self.neo4j_processor)
+                    # Use unified genome selector for LLM-based analysis
+                    llm_selector = self.genome_selector
                     
                     selection_result = await llm_selector.analyze_genome_intent(question)
                     
@@ -354,6 +371,36 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         # Step 1.5: Determine analysis type for biological context
         analysis_type = self._determine_analysis_type(question)
         
+        # Step 1.6: Handle SPATIAL_GENOMIC analysis with tool selection
+        if analysis_type == "SPATIAL_GENOMIC":
+            console.print("🧬 [bold cyan]Spatial genomic analysis detected - using whole_genome_reader tool[/bold cyan]")
+            try:
+                from .external_tools import WholeGenomeReader
+                reader = WholeGenomeReader(self.neo4j_processor)
+                
+                # Execute the whole genome reading for spatial analysis
+                spatial_results = await reader.read_full_genomic_context(question)
+                
+                if spatial_results and 'genomic_data' in spatial_results:
+                    # Format the spatial results into a context object
+                    context = GenomicContext(
+                        structured_data=spatial_results['genomic_data'],
+                        semantic_data=[],
+                        metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader'},
+                        query_time=0.0,
+                        compressed_context=""
+                    )
+                    
+                    # Skip to synthesis step with spatial context
+                    formatted_context = self._format_spatial_context(context)
+                    return await self._synthesize_answer(question, formatted_context, classification.query_type, analysis_type)
+                else:
+                    console.print("⚠️ [yellow]Whole genome reader returned no results, falling back to standard query[/yellow]")
+                    
+            except Exception as e:
+                logger.error(f"Spatial genomic analysis failed: {e}")
+                console.print(f"⚠️ [yellow]Spatial analysis error, falling back to standard query: {e}[/yellow]")
+        
         if classification is None:
             logger.warning("Model allocation failed for classification, falling back to default")
             # Ensure there's a default LM configured for fallback
@@ -372,8 +419,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         task_context = "Global query across all genomes"
         
         try:
-            from .llm_genome_selector import LLMGenomeSelector
-            llm_selector = LLMGenomeSelector(self.neo4j_processor)
+            # Use unified genome selector for LLM-based analysis  
+            llm_selector = self.genome_selector
             
             # Check if this query needs genome selection analysis  
             if llm_selector.should_use_genome_selection(question):
@@ -468,7 +515,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 console.print(f"✅ [green]Query validation passed - genome filtering present[/green]")
         
         # Step 3: Enforce genome scoping in generated query
-        scoped_query, scope_metadata = self.scope_enforcer.enforce_genome_scope(question, validated_query)
+        scoped_query, scope_metadata = self.genome_selector.enforce_genome_scope(question, validated_query)
         
         if scope_metadata['scope_applied']:
             console.print(f"🎯 Applied genome scoping: {scope_metadata['scope_reasoning']}")
@@ -517,7 +564,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 
                 # Get raw results for compression
                 all_results = context.structured_data + context.semantic_data
-                compressed_context, compression_stats = compressor.compress_context(all_results, target_size=25)
+                compressed_context, compression_stats = compressor.compress_context(all_results, target_size=25000)
                 
                 logger.info(f"Context compression: {compression_stats.original_count} -> {compression_stats.compressed_count} results")
                 formatted_context = compressed_context
@@ -768,517 +815,53 @@ print("Data available: {data_summary}")
         return integrated_context
     
     async def _execute_agentic_plan(self, question: str, planning_result, selected_genome: Optional[str] = None) -> Dict[str, Any]:
-        """Execute multi-step agentic plan using TaskGraph."""
-        console.print("🤖 [bold]Using agentic execution path[/bold]")
-        console.print(f"📋 Task plan: {planning_result.task_plan}")
+        """Execute unified agent workflow with dynamic tool chaining."""
+        console.print("🤖 [bold]Using unified agent execution path[/bold]")
+        console.print("🔗 [dim]Agent will dynamically chain tools based on discoveries[/dim]")
         
         try:
-            # Import parser and executor
-            from .task_plan_parser import TaskPlanParser
-            from .task_executor import TaskExecutor
+            # Import unified agent executor
+            from .agent_executor import UnifiedAgentExecutor
             
-            # Step 1: Parse DSPy plan into Task objects
-            parser = TaskPlanParser()
-            parsed_plan = parser.parse_dspy_plan(planning_result.task_plan)
+            # Create and execute unified agent
+            agent = UnifiedAgentExecutor(self, note_keeper=self.note_keeper)
             
-            if not parsed_plan.parsing_success:
-                console.print(f"⚠️ [yellow]Plan parsing failed: {parsed_plan.errors}[/yellow]")
-                console.print("🔄 [dim]Falling back to traditional mode[/dim]")
-                return await self._execute_traditional_query(question)
-            
-            console.print(f"✅ [green]Successfully parsed {len(parsed_plan.tasks)} tasks[/green]")
-            
-            # Step 2: Create TaskGraph and add tasks
-            graph = TaskGraph()
-            for task in parsed_plan.tasks:
-                # CRITICAL FIX: Inject original question into each task for biological context preservation
-                task.original_question = question
-                logger.info(f"🧬 Injected original question into task {task.task_id}: '{question[:50]}...'")
-                graph.add_task(task)
-            
-            # Step 3: Execute TaskGraph with dependency resolution and pre-selected genome
-            executor = TaskExecutor(self, note_keeper=self.note_keeper, selected_genome=selected_genome, original_user_question=question)
             if selected_genome:
-                console.print(f"🧬 [cyan]All tasks will target genome:[/cyan] {selected_genome}")
-            execution_results = await executor.execute_graph(graph)
+                console.print(f"🧬 [cyan]Agent will target genome:[/cyan] {selected_genome}")
             
-            # Check execution success
-            if not execution_results["success"]:
-                console.print("⚠️ [yellow]Task execution failed[/yellow]")
+            # Execute agent workflow
+            agent_result = await agent.execute_agent_workflow(question, selected_genome)
+            
+            if not agent_result.success:
+                console.print("⚠️ [yellow]Agent execution failed[/yellow]")
                 console.print("🔄 [dim]Falling back to traditional mode[/dim]")
                 return await self._execute_traditional_query(question)
             
-            console.print(f"✅ [green]Task graph executed successfully[/green]")
-            console.print(f"📊 Execution summary: {execution_results['execution_summary']}")
+            console.print(f"✅ [green]Agent completed {agent_result.total_steps} steps[/green]")
+            console.print(f"🛠️ Tools used: {', '.join(agent_result.tools_used)}")
+            console.print(f"⏱️ Total time: {agent_result.total_execution_time:.1f}s")
             
-            # Step 4: Synthesize final answer from all task results
-            return await self._synthesize_agentic_results(question, execution_results)
+            # Convert agent result to expected format
+            return {
+                "question": question,
+                "answer": agent_result.final_answer,
+                "confidence": agent_result.confidence,
+                "citations": agent_result.citations,
+                "query_metadata": {
+                    "execution_mode": "unified_agent",
+                    "total_steps": agent_result.total_steps,
+                    "tools_used": agent_result.tools_used,
+                    "execution_time": agent_result.total_execution_time,
+                    "note_taking_enabled": self.note_keeper is not None
+                }
+            }
             
         except Exception as e:
-            logger.error(f"Agentic execution failed: {str(e)}")
-            console.print(f"⚠️ [yellow]Agentic execution error: {str(e)}[/yellow]")
+            logger.error(f"Agent execution failed: {str(e)}")
+            console.print(f"⚠️ [yellow]Agent execution error: {str(e)}[/yellow]")
             console.print("🔄 [dim]Falling back to traditional mode[/dim]")
             return await self._execute_traditional_query(question)
     
-    async def _synthesize_agentic_results(self, question: str, execution_results: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Synthesize final answer from agentic task execution results using progressive synthesis.
-        
-        Args:
-            question: Original user question
-            execution_results: Results from TaskGraph execution
-            
-        Returns:
-            Formatted response dict with answer, confidence, and citations
-        """
-        logger.info("Synthesizing agentic results into final answer")
-        
-        try:
-            # Set session context for note-taking
-            if self.note_keeper:
-                self.note_keeper.set_session_context(question, "agentic")
-            
-            # Check if we have notes to use for progressive synthesis
-            if self.note_keeper:
-                task_notes = self.note_keeper.get_all_task_notes()
-                
-                if task_notes:
-                    logger.info(f"🧠 Using progressive synthesis with {len(task_notes)} task notes")
-                    
-                    # Initialize progressive synthesizer
-                    if not self.progressive_synthesizer:
-                        self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
-                    
-                    # Organize raw data for multi-part reports - ENHANCED data extraction
-                    completed_results = execution_results.get("completed_results", {})
-                    raw_data = self._extract_raw_data_for_multipart(completed_results)
-                    
-                    # ENHANCEMENT: Include raw task results in synthesis for richer data flow
-                    # This ensures detailed analysis from chunking and code interpreter reaches final answer
-                    logger.info(f"📊 Including {len(completed_results)} task results alongside {len(raw_data)} raw data items")
-                    
-                    # Use progressive synthesis (now with task-based capability for large datasets)
-                    answer = self.progressive_synthesizer.synthesize_progressive(
-                        task_notes=task_notes,
-                        dspy_synthesizer=None,  # ProgressiveSynthesizer uses its own model allocation
-                        question=question,
-                        raw_data=raw_data,
-                        rag_system=self  # Pass self for task-based processing
-                    )
-                    
-                    # ENHANCEMENT: If progressive synthesis seems sparse, supplement with task results
-                    if len(answer) < 500 and completed_results:
-                        logger.warning("🔄 Progressive synthesis seems sparse, enriching with task results")
-                        supplemented_answer = self._supplement_synthesis_with_task_results(
-                            answer, completed_results, question
-                        )
-                        if len(supplemented_answer) > len(answer):
-                            answer = supplemented_answer
-                    
-                    # Get synthesis statistics
-                    synthesis_stats = self.progressive_synthesizer.get_synthesis_statistics()
-                    
-                    return {
-                        "question": question,
-                        "answer": answer,
-                        "confidence": "high",
-                        "citations": f"Progressive synthesis from {len(task_notes)} task notes",
-                        "query_metadata": {
-                            "execution_mode": "agentic_with_memory",
-                            "total_tasks": execution_results.get("execution_summary", {}).get("total", 0),
-                            "completed_tasks": execution_results.get("execution_summary", {}).get("completed", 0),
-                            "task_notes": len(task_notes),
-                            "synthesis_stats": synthesis_stats,
-                            "note_taking_enabled": True
-                        }
-                    }
-            
-            # Fallback to traditional synthesis if no notes available
-            logger.info("📝 No task notes available, using traditional synthesis")
-            
-            # Collect all completed task results
-            completed_results = execution_results.get("completed_results", {})
-            execution_summary = execution_results.get("execution_summary", {})
-            
-            # Organize context data for traditional synthesis
-            context_data = self._organize_results_for_compression(completed_results)
-            organized_context = self._organize_context_for_synthesis(context_data)
-            
-            # Apply compression if needed (same as before)
-            import tiktoken
-            compression_result = None
-            try:
-                encoding = tiktoken.encoding_for_model(self.config.llm_model if hasattr(self.config, 'llm_model') else 'gpt-3.5-turbo')
-                token_count = len(encoding.encode(organized_context))
-                
-                if token_count > 30000:
-                    logger.info(f"🗜️ Context too large ({token_count} tokens), applying compression")
-                    # Use context compression as fallback
-                    compressor = ContextCompressor()
-                    combined_context, compression_stats = compressor.compress_context(
-                        [{"context": organized_context}], target_size=25
-                    )
-                    logger.info(f"Context compression: {compression_stats.original_count} -> {compression_stats.compressed_count} results")
-                else:
-                    logger.info(f"✅ Context size acceptable ({token_count} tokens), using full context")
-                    combined_context = organized_context
-                    
-            except Exception as e:
-                logger.warning(f"Token counting failed: {e}, using full context")
-                combined_context = organized_context
-            
-            # Use GenomicAnswerer to synthesize final response
-            if combined_context.strip():
-                answer_result = self._run("final_synthesis", GenomicAnswerer,
-                    question=question,
-                    context=combined_context
-                )
-                
-                confidence = answer_result.confidence
-                answer = answer_result.answer
-                citations = answer_result.citations
-            else:
-                # Fallback if no context available
-                answer = f"I completed a {len(completed_results)}-step analysis for your question about '{question}', but couldn't retrieve specific results to provide a detailed answer."
-                confidence = "low"
-                citations = "Agentic workflow execution"
-            
-            # Add execution metadata
-            total_tasks = execution_summary.get("total", 0)
-            completed_tasks = execution_summary.get("completed", 0)
-            
-            metadata = {
-                "execution_mode": "agentic_traditional_synthesis",
-                "total_tasks": total_tasks,
-                "completed_tasks": completed_tasks,
-                "execution_summary": execution_summary,
-                "note_taking_enabled": self.note_keeper is not None
-            }
-            
-            return {
-                "question": question,
-                "answer": answer,
-                "confidence": confidence,
-                "citations": citations,
-                "query_metadata": metadata
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to synthesize agentic results: {str(e)}")
-            return {
-                "question": question,
-                "answer": f"I completed a multi-step analysis but encountered an error while synthesizing the final answer: {str(e)}",
-                "confidence": "low",
-                "citations": "Agentic workflow with synthesis error",
-                "error": str(e)
-            }
-    
-    def _extract_raw_data_for_multipart(self, completed_results: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        ENHANCED: Extract comprehensive raw data from completed task results.
-        
-        Args:
-            completed_results: Dictionary of task results from execution
-            
-        Returns:
-            List of raw data items for multi-part report synthesis
-        """
-        raw_data = []
-        logger.info(f"🔍 ENHANCED EXTRACTION: Processing {len(completed_results)} task results")
-        
-        for task_id, result in completed_results.items():
-            logger.info(f"📋 Processing task: {task_id}")
-            
-            if isinstance(result, dict):
-                
-                # PRIORITY 1: Extract GenomicContext objects (main data source)
-                if "context" in result and hasattr(result["context"], 'structured_data'):
-                    context_obj = result["context"]
-                    logger.info(f"✅ Found GenomicContext: {len(context_obj.structured_data)} structured items")
-                    
-                    # Add structured data with task metadata
-                    if context_obj.structured_data:
-                        for item in context_obj.structured_data:
-                            enriched_item = dict(item) if isinstance(item, dict) else {"data": item}
-                            enriched_item["_source_task"] = task_id
-                            enriched_item["_data_type"] = "structured_query_result"
-                            raw_data.append(enriched_item)
-                    
-                    # Add semantic data with task metadata  
-                    if context_obj.semantic_data:
-                        for item in context_obj.semantic_data:
-                            enriched_item = dict(item) if isinstance(item, dict) else {"data": item}
-                            enriched_item["_source_task"] = task_id
-                            enriched_item["_data_type"] = "semantic_similarity_result"
-                            raw_data.append(enriched_item)
-                
-                # PRIORITY 2: Extract tool execution results (code interpreter, etc.)
-                elif result.get("tool_name") and result.get("tool_result"):
-                    logger.info(f"🔧 Found tool result: {result['tool_name']}")
-                    
-                    # Parse tool result content
-                    tool_content = result["tool_result"]
-                    
-                    # For code interpreter results, try to extract data analysis
-                    if result["tool_name"] == "code_interpreter":
-                        # Add the full tool result as a rich data item
-                        raw_data.append({
-                            "_source_task": task_id,
-                            "_data_type": "code_interpreter_analysis", 
-                            "tool_name": result["tool_name"],
-                            "analysis_content": tool_content,
-                            "summary": tool_content  # Include full analysis - no truncation
-                        })
-                    else:
-                        # Other tool results
-                        raw_data.append({
-                            "_source_task": task_id,
-                            "_data_type": "external_tool_result",
-                            "tool_name": result["tool_name"], 
-                            "result_content": tool_content
-                        })
-                
-                # PRIORITY 3: Extract direct data fields (legacy support)
-                else:
-                    
-                    # Extract structured data from database queries
-                    if "structured_data" in result and result["structured_data"]:
-                        if isinstance(result["structured_data"], list):
-                            for item in result["structured_data"]:
-                                enriched_item = dict(item) if isinstance(item, dict) else {"data": item}
-                                enriched_item["_source_task"] = task_id
-                                enriched_item["_data_type"] = "direct_structured_data"
-                                raw_data.append(enriched_item)
-                        else:
-                            raw_data.append({
-                                "_source_task": task_id,
-                                "_data_type": "direct_structured_data",
-                                "data": result["structured_data"]
-                            })
-                    
-                    # Extract semantic similarity data
-                    if "semantic_data" in result and result["semantic_data"]:
-                        if isinstance(result["semantic_data"], list):
-                            for item in result["semantic_data"]:
-                                enriched_item = dict(item) if isinstance(item, dict) else {"data": item}
-                                enriched_item["_source_task"] = task_id
-                                enriched_item["_data_type"] = "direct_semantic_data"
-                                raw_data.append(enriched_item)
-                        else:
-                            raw_data.append({
-                                "_source_task": task_id,
-                                "_data_type": "direct_semantic_data",
-                                "data": result["semantic_data"]
-                            })
-                    
-                    # Extract any other results
-                    if "results" in result and result["results"]:
-                        if isinstance(result["results"], list):
-                            for item in result["results"]:
-                                enriched_item = dict(item) if isinstance(item, dict) else {"data": item}
-                                enriched_item["_source_task"] = task_id
-                                enriched_item["_data_type"] = "generic_results"
-                                raw_data.append(enriched_item)
-                        else:
-                            raw_data.append({
-                                "_source_task": task_id,
-                                "_data_type": "generic_results",
-                                "data": result["results"]
-                            })
-                    
-                    # Handle string context (try to parse as JSON)
-                    if "context" in result and isinstance(result["context"], str):
-                        try:
-                            import json
-                            context_data = json.loads(result["context"])
-                            if isinstance(context_data, list):
-                                for item in context_data:
-                                    enriched_item = dict(item) if isinstance(item, dict) else {"data": item}
-                                    enriched_item["_source_task"] = task_id
-                                    enriched_item["_data_type"] = "parsed_context_data"
-                                    raw_data.append(enriched_item)
-                            else:
-                                raw_data.append({
-                                    "_source_task": task_id,
-                                    "_data_type": "parsed_context_data",
-                                    "data": context_data
-                                })
-                        except:
-                            # If not JSON, add as text data
-                            raw_data.append({
-                                "_source_task": task_id,
-                                "_data_type": "text_context",
-                                "text_content": result["context"]
-                            })
-        
-        # Log extraction summary
-        data_types = {}
-        for item in raw_data:
-            dtype = item.get("_data_type", "unknown")
-            data_types[dtype] = data_types.get(dtype, 0) + 1
-        
-        logger.info(f"📊 EXTRACTION SUMMARY: {len(raw_data)} total items")
-        for dtype, count in data_types.items():
-            logger.info(f"  - {dtype}: {count} items")
-        
-        return raw_data
-    
-    def _organize_results_for_compression(self, completed_results: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Organize task execution results into structured format for compression.
-        
-        Args:
-            completed_results: Dictionary of task results from execution
-            
-        Returns:
-            Organized context data dictionary
-        """
-        organized_data = {
-            'structured_data': [],
-            'semantic_data': [],
-            'genomic_context': [],
-            'tool_results': [],
-            'metadata': {}
-        }
-        
-        for task_id, result in completed_results.items():
-            if isinstance(result, dict):
-                # Add structured database results
-                if "structured_data" in result and result["structured_data"]:
-                    if isinstance(result["structured_data"], list):
-                        organized_data['structured_data'].extend(result["structured_data"])
-                    else:
-                        organized_data['structured_data'].append(result["structured_data"])
-                
-                # Add semantic similarity data
-                if "semantic_data" in result and result["semantic_data"]:
-                    if isinstance(result["semantic_data"], list):
-                        organized_data['semantic_data'].extend(result["semantic_data"])
-                    else:
-                        organized_data['semantic_data'].append(result["semantic_data"])
-                
-                # Add genomic context information
-                if "context" in result and hasattr(result["context"], 'structured_data'):
-                    context_obj = result["context"]
-                    if context_obj.structured_data:
-                        organized_data['structured_data'].extend(context_obj.structured_data)
-                    if context_obj.semantic_data:
-                        organized_data['semantic_data'].extend(context_obj.semantic_data)
-                
-                # Add tool execution results
-                if "tool_result" in result:
-                    organized_data['tool_results'].append({
-                        'task_id': task_id,
-                        'tool_name': result.get('tool_name', 'unknown'),
-                        'result': result["tool_result"]
-                    })
-                
-                # Add metadata
-                if "metadata" in result:
-                    organized_data['metadata'][task_id] = result["metadata"]
-        
-        return organized_data
-    
-    def _organize_context_for_synthesis(self, context_data: Dict[str, Any]) -> str:
-        """
-        Organize context data into readable format for synthesis without compression.
-        
-        Args:
-            context_data: Organized context data from task results
-            
-        Returns:
-            Formatted context string for LLM synthesis
-        """
-        context_parts = []
-        
-        # Add structured data results
-        if context_data.get('structured_data'):
-            context_parts.append("=== STRUCTURED DATA RESULTS ===")
-            for i, item in enumerate(context_data['structured_data'], 1):
-                context_parts.append(f"Result {i}: {item}")
-            context_parts.append("")
-        
-        # Add semantic data results
-        if context_data.get('semantic_data'):
-            context_parts.append("=== SEMANTIC SIMILARITY RESULTS ===")
-            for i, item in enumerate(context_data['semantic_data'], 1):
-                context_parts.append(f"Similar {i}: {item}")
-            context_parts.append("")
-        
-        # Add tool execution results
-        if context_data.get('tool_results'):
-            context_parts.append("=== TOOL EXECUTION RESULTS ===")
-            for tool_result in context_data['tool_results']:
-                context_parts.append(f"Task {tool_result['task_id']} ({tool_result['tool_name']}):")
-                context_parts.append(f"  {tool_result['result']}")
-            context_parts.append("")
-        
-        # Add metadata
-        if context_data.get('metadata'):
-            context_parts.append("=== EXECUTION METADATA ===")
-            for task_id, metadata in context_data['metadata'].items():
-                context_parts.append(f"Task {task_id}: {metadata}")
-            context_parts.append("")
-        
-        return "\n".join(context_parts)
-    
-    def _format_context_for_token_check(self, results: List[Dict[str, Any]]) -> str:
-        """Format results into a string for token counting without full formatting."""
-        if not results:
-            return ""
-        
-        # Create a representative sample for token counting
-        formatted_parts = []
-        for i, result in enumerate(results[:10]):  # Sample first 10 for token estimation
-            formatted_parts.append(f"Result {i+1}: {str(result)}")
-        
-        # Estimate total size based on sample
-        sample_size = len("\n".join(formatted_parts))
-        estimated_total = sample_size * (len(results) / min(len(results), 10))
-        
-        # Return either sample or indication of size
-        if len(results) <= 10:
-            return "\n".join(formatted_parts)
-        else:
-            return "\n".join(formatted_parts) + f"\n... (estimated {estimated_total} characters for {len(results)} total results)"
-    
-    def _get_compression_target_size(self, retrieval_plan, results: List[Dict[str, Any]], question: str = "") -> int:
-        """
-        Determine appropriate compression target size based on query type and data characteristics.
-        
-        Args:
-            retrieval_plan: DSPy retrieval plan with query information
-            results: Raw results from database query
-            question: Original user question for context
-            
-        Returns:
-            Target size for compression
-        """
-        # Get query details
-        cypher_query = getattr(retrieval_plan, 'cypher_query', '')
-        search_strategy = getattr(retrieval_plan, 'search_strategy', '')
-        
-        # Check question and query for CAZyme-related queries (need more comprehensive data)
-        cazyme_terms = ['cazyme', 'carbohydrate', 'glycoside', 'hydrolase', 'transferase']
-        if any(cazyme_term in cypher_query.lower() for cazyme_term in cazyme_terms) or \
-           any(cazyme_term in question.lower() for cazyme_term in cazyme_terms):
-            logger.info("🧬 CAZyme query detected - using expanded target size")
-            return min(len(results), 300)  # Allow up to 300 CAZymes for full analysis
-        
-        # Check for comparative queries that need to show distributions
-        comp_terms = ['compare', 'distribution', 'across genomes', 'contrast', 'each genome']
-        if any(comp_term in cypher_query.lower() for comp_term in comp_terms) or \
-           any(comp_term in question.lower() for comp_term in comp_terms):
-            logger.info("📊 Comparative query detected - using expanded target size")
-            return min(len(results), 200)  # Allow up to 200 for comparison
-        
-        # Check for large result sets that might need more space
-        if len(results) > 100:
-            logger.info(f"📈 Large result set detected ({len(results)} results) - using expanded target size")
-            return min(len(results), 100)  # Allow up to 100 for large datasets
-        
-        # Default compression for smaller queries
-        return min(len(results), 50)
     
     async def _retrieve_context_with_fallback(self, question: str, query_type: str, retrieval_plan, 
                                             scoped_query: str, original_query: str) -> GenomicContext:
@@ -1505,130 +1088,92 @@ print("Data available: {data_summary}")
         
         return "\\n".join(formatted_parts)
     
-    def _supplement_synthesis_with_task_results(self, 
-                                              sparse_answer: str, 
-                                              completed_results: Dict[str, Any], 
-                                              question: str) -> str:
-        """
-        Supplement sparse progressive synthesis with rich task execution results.
+    def _format_spatial_context(self, context: GenomicContext) -> str:
+        """Format spatial genomic context for prophage/operon analysis."""
+        formatted_parts = []
         
-        Args:
-            sparse_answer: Initial answer from progressive synthesis
-            completed_results: Dictionary of completed task results
-            question: Original user question
+        # Add header for spatial genomic data
+        if context.structured_data:
+            formatted_parts.append(f"=== SPATIAL GENOMIC DATA ({len(context.structured_data)} genomic regions) ===")
+            formatted_parts.append("Full genomic context with gene coordinates, annotations, and spatial organization:")
+            formatted_parts.append("")
             
-        Returns:
-            Enhanced answer incorporating task results
-        """
-        logger.info("🔧 Supplementing sparse synthesis with detailed task results")
+            # Format each genomic region with spatial information
+            for i, region in enumerate(context.structured_data):
+                formatted_parts.append(f"GENOMIC REGION {i+1}:")
+                formatted_parts.append(str(region))
+                formatted_parts.append("")
+            
+        # Add analysis metadata
+        if context.metadata:
+            formatted_parts.append("=== ANALYSIS METADATA ===")
+            for key, value in context.metadata.items():
+                formatted_parts.append(f"{key}: {value}")
         
-        # Extract the most information-rich task results
-        detailed_sections = []
-        code_interpreter_results = []
-        chunked_analysis_results = []
-        
-        for task_id, result in completed_results.items():
-            if isinstance(result, dict):
-                # Extract code interpreter results (usually very detailed)
-                if result.get("tool_name") == "code_interpreter" and result.get("tool_result"):
-                    code_interpreter_results.append({
-                        "task": task_id,
-                        "result": result["tool_result"]
-                    })
-                
-                # Extract chunked analysis results (rich functional analysis)
-                elif "func_" in task_id or "chunk" in task_id.lower():
-                    if result.get("context") and hasattr(result["context"], "structured_data"):
-                        if len(result["context"].structured_data) > 50:  # Rich dataset
-                            chunked_analysis_results.append({
-                                "task": task_id,
-                                "data_count": len(result["context"].structured_data),
-                                "summary": self._summarize_chunked_data(result["context"].structured_data)
-                            })
-        
-        # Build supplemented answer
-        enhanced_parts = [sparse_answer, ""]
-        
-        # Add code interpreter insights
-        if code_interpreter_results:
-            enhanced_parts.append("## Detailed Analysis Results")
-            for ci_result in code_interpreter_results:
-                enhanced_parts.append(f"**{ci_result['task']} Analysis:**")
-                enhanced_parts.append(ci_result['result'][:2000])  # Include substantial detail
-                enhanced_parts.append("")
-        
-        # Add chunked analysis summaries
-        if chunked_analysis_results:
-            enhanced_parts.append("## Functional Analysis Summary")
-            for chunk_result in chunked_analysis_results:
-                enhanced_parts.append(f"**{chunk_result['task']}** ({chunk_result['data_count']} proteins):")
-                enhanced_parts.append(chunk_result['summary'])
-                enhanced_parts.append("")
-        
-        # Add task execution summary
-        enhanced_parts.append("## Execution Summary")
-        enhanced_parts.append(f"Analysis completed through {len(completed_results)} comprehensive tasks, including:")
-        
-        task_summaries = []
-        for task_id, result in completed_results.items():
-            if isinstance(result, dict):
-                if result.get("tool_name"):
-                    task_summaries.append(f"- {task_id}: {result['tool_name']} analysis")
-                elif "func_" in task_id:
-                    task_summaries.append(f"- {task_id}: Functional classification analysis")
-                else:
-                    task_summaries.append(f"- {task_id}: Database query and analysis")
-        
-        enhanced_parts.extend(task_summaries)
-        
-        supplemented_answer = "\\n".join(enhanced_parts)
-        logger.info(f"✅ Enhanced answer length: {len(sparse_answer)} → {len(supplemented_answer)} characters")
-        
-        return supplemented_answer
+        return "\\n".join(formatted_parts)
     
-    def _summarize_chunked_data(self, structured_data: List[Dict[str, Any]]) -> str:
-        """
-        Create a concise summary of chunked data analysis.
-        
-        Args:
-            structured_data: List of data items from chunked analysis
+    async def _synthesize_answer(self, question: str, formatted_context: str, query_type: str, analysis_type: str) -> Dict[str, Any]:
+        """Synthesize answer from formatted context using appropriate model allocation."""
+        try:
+            # Use model allocation for biological interpretation
+            def answerer_call(module):
+                return module(
+                    question=question,
+                    context=formatted_context,
+                    analysis_type=analysis_type
+                )
             
-        Returns:
-            Concise summary of the data
-        """
-        if not structured_data:
-            return "No data available"
-        
-        # Count different types of functions/categories
-        function_counts = {}
-        protein_counts = 0
-        
-        for item in structured_data:
-            protein_counts += 1
+            from .dspy_signatures import GenomicAnswerer
+            answer_result = self.model_allocator.create_context_managed_call(
+                task_name="biological_interpretation",  # Maps to COMPLEX = o3
+                signature_class=GenomicAnswerer,
+                module_call_func=answerer_call
+            )
             
-            # Count by KO description if available
-            if "ko_description" in item:
-                desc = item["ko_description"]
-                if desc:
-                    # Extract main function type
-                    if "transport" in desc.lower():
-                        function_counts["transport"] = function_counts.get("transport", 0) + 1
-                    elif "metabolism" in desc.lower() or "synthase" in desc.lower():
-                        function_counts["metabolism"] = function_counts.get("metabolism", 0) + 1
-                    elif "regulation" in desc.lower() or "regulatory" in desc.lower():
-                        function_counts["regulation"] = function_counts.get("regulation", 0) + 1
-                    else:
-                        function_counts["other"] = function_counts.get("other", 0) + 1
-        
-        # Build summary
-        summary_parts = [f"{protein_counts} proteins analyzed"]
-        
-        if function_counts:
-            sorted_functions = sorted(function_counts.items(), key=lambda x: x[1], reverse=True)
-            func_summary = ", ".join([f"{count} {func}" for func, count in sorted_functions[:3]])
-            summary_parts.append(f"Functions: {func_summary}")
-        
-        return "; ".join(summary_parts)
+            # Fallback if model allocation fails
+            if answer_result is None:
+                logger.warning("Model allocation failed for answer generation, falling back to default")
+                if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
+                    logger.warning("No default LM configured, setting up fallback")
+                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                    dspy.settings.configure(lm=fallback_lm)
+                
+                answer_result = self._run("biological_interpretation", GenomicAnswerer,
+                    question=question,
+                    context=formatted_context,
+                    analysis_type=analysis_type
+                )
+            
+            # Return structured response
+            return {
+                "question": question,
+                "answer": answer_result.answer,
+                "confidence": answer_result.confidence,
+                "citations": answer_result.citations,
+                "query_metadata": {
+                    "query_type": query_type,
+                    "analysis_type": analysis_type,
+                    "search_strategy": "spatial_genomic_tool",
+                    "context_size": len(formatted_context),
+                    "tool_used": "whole_genome_reader"
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Answer synthesis failed: {e}")
+            return {
+                "question": question,
+                "answer": f"I encountered an error while analyzing the spatial genomic data: {str(e)}",
+                "confidence": "low",
+                "citations": "",
+                "error": str(e),
+                "query_metadata": {
+                    "query_type": query_type,
+                    "analysis_type": analysis_type,
+                    "error": "synthesis_failed"
+                }
+            }
+    
     
     def close(self):
         """Close all processor connections."""

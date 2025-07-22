@@ -12,6 +12,23 @@ from .whole_genome_reader import read_complete_genome_spatial, read_all_genomes_
 
 logger = logging.getLogger(__name__)
 
+# Cache for genome reading results to reduce API calls
+_genome_reading_cache = {}
+_cache_hits = 0
+_cache_misses = 0
+
+def get_genome_reading_stats():
+    """Get caching statistics for genome reading."""
+    total_calls = _cache_hits + _cache_misses
+    cache_hit_rate = (_cache_hits / total_calls * 100) if total_calls > 0 else 0
+    return {
+        "total_calls": total_calls,
+        "cache_hits": _cache_hits,
+        "cache_misses": _cache_misses,
+        "cache_hit_rate_percent": cache_hit_rate,
+        "api_call_reduction": f"{cache_hit_rate:.1f}% fewer API calls"
+    }
+
 async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool = False, rag_system=None, **kwargs) -> str:
     """
     Read genome(s) in spatial order for comprehensive operon and prophage analysis.
@@ -28,6 +45,8 @@ async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool 
     Returns:
         Formatted genome context for LLM analysis or error message
     """
+    global _cache_hits, _cache_misses
+    
     try:
         # Handle parameter variations from task parsing
         if kwargs.get('global', False) or global_analysis:
@@ -38,6 +57,33 @@ async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool 
             if not global_analysis:
                 logger.info("🌐 Empty genome_id provided, defaulting to global analysis")
                 global_analysis = True
+        
+        # Create cache key based on ONLY parameters that affect genome reading result
+        import hashlib
+        
+        # Extract only core parameters that affect the actual genome data
+        core_params = {
+            'genome_id': genome_id or '',  # Normalize empty genome_id
+            'global_analysis': global_analysis,
+            'max_genes_per_contig': kwargs.get('max_genes_per_contig', 1000),  # Default from whole_genome_reader
+            'focus_on_spatial': kwargs.get('focus_on_spatial', False)
+        }
+        
+        # Create deterministic cache key
+        cache_key_str = f"genome_id:{core_params['genome_id']}|global:{core_params['global_analysis']}|max_genes:{core_params['max_genes_per_contig']}|spatial:{core_params['focus_on_spatial']}"
+        cache_key = hashlib.md5(cache_key_str.encode()).hexdigest()
+        
+        # Debug cache key for verification
+        logger.debug(f"🔑 Cache key components: {cache_key_str}")
+        
+        # Check cache first
+        if cache_key in _genome_reading_cache:
+            _cache_hits += 1
+            logger.info(f"📚 Cache hit for genome reading (key: {cache_key[:8]}...) - saved genome read!")
+            return _genome_reading_cache[cache_key]
+        
+        _cache_misses += 1
+        logger.info(f"💾 Cache miss - reading genome data (key: {cache_key[:8]}...) - performing full read")
         
         # Get Neo4j processor from RAG system
         neo4j_processor = rag_system.neo4j_processor
@@ -55,10 +101,15 @@ async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool 
             
             # Note: Hard-coded discovery logic removed - LLM will analyze raw spatial data
             
+            # Cache the successful result
+            _genome_reading_cache[cache_key] = result["tool_output"]
+            
             return result["tool_output"]
         else:
             logger.error(f"❌ Failed to read genome(s): {result['error']}")
-            return f"Genome reading failed: {result['error']}"
+            error_msg = f"Genome reading failed: {result['error']}"
+            # Don't cache errors
+            return error_msg
             
     except Exception as e:
         logger.error(f"Whole genome reader tool failed: {e}")
@@ -339,11 +390,28 @@ AVAILABLE_TOOLS = {
 # Enhanced tool capabilities for agent-based selection
 TOOL_CAPABILITIES = {
     'whole_genome_reader': {
-        'description': 'Read genome(s) in spatial order for comprehensive operon and prophage analysis',
+        'description': 'Read complete genome(s) in spatial coordinate order for discovery-based genomic analysis',
+        'when_to_use': [
+            'Global prophage/phage discovery across ALL genomes',
+            'Operon identification requiring gene neighborhood context',
+            'Spatial analysis of hypothetical protein clusters',
+            'Cross-genome comparative spatial patterns',
+            'Queries asking to "find", "discover", "explore", "look through" genomic regions',
+            'Analysis requiring reading genes in genomic coordinate order',
+            'Any query about spatial organization, gene neighborhoods, or genomic context'
+        ],
+        'when_NOT_to_use': [
+            'Simple functional annotation lookups (use database_query)',
+            'Counting specific protein types (use database_query)',
+            'Direct database searches for known annotations',
+            'Questions with specific protein/gene IDs already identified'
+        ],
+        'biological_scope': 'global_discovery|spatial_analysis|neighborhood_context|prophage_discovery',
+        'query_indicators': ['find', 'discover', 'explore', 'prophage', 'phage', 'operon', 'spatial', 'across all genomes', 'through genomes'],
         'biological_functions': [
             'spatial_genomic_analysis',
-            'operon_detection', 
             'prophage_discovery',
+            'operon_detection',
             'hypothetical_protein_clustering',
             'genomic_coordinate_analysis',
             'gene_neighborhood_analysis',
@@ -351,17 +419,24 @@ TOOL_CAPABILITIES = {
         ],
         'input_types': ['genome_sequences', 'annotation_data', 'spatial_coordinates'],
         'output_types': ['spatial_clusters', 'prophage_candidates', 'operon_predictions', 'genomic_context'],
-        'analysis_types': ['discovery', 'exploration', 'spatial', 'contextual'],
-        'use_cases': [
-            'finding operons containing prophage segments',
-            'reading through genomes directly',
-            'identifying stretches of hypothetical proteins',
-            'spatial genomic analysis',
-            'gene neighborhood analysis'
-        ]
+        'analysis_types': ['discovery', 'exploration', 'spatial', 'contextual']
     },
     'code_interpreter': {
         'description': 'Execute Python code for statistical analysis and data visualization',
+        'when_to_use': [
+            'Statistical analysis of retrieved genomic data',
+            'Creating plots, charts, or visualizations',
+            'Computing metrics, scores, or quantitative assessments',
+            'Data transformation and matrix operations',
+            'Follow-up analysis after data retrieval'
+        ],
+        'when_NOT_to_use': [
+            'Primary data retrieval (use database_query or whole_genome_reader)',
+            'Initial genomic searches or discovery',
+            'Reading raw genome sequences'
+        ],
+        'biological_scope': 'quantitative_analysis|visualization|statistical_processing',
+        'query_indicators': ['analyze', 'calculate', 'compute', 'visualize', 'plot', 'statistics', 'metrics'],
         'biological_functions': [
             'statistical_analysis',
             'data_visualization',
@@ -373,16 +448,23 @@ TOOL_CAPABILITIES = {
         ],
         'input_types': ['structured_data', 'numeric_data', 'datasets', 'analysis_results'],
         'output_types': ['statistics', 'visualizations', 'analysis_reports', 'computed_metrics'],
-        'analysis_types': ['statistical', 'computational', 'quantitative'],
-        'use_cases': [
-            'computing novelty scores',
-            'statistical analysis of protein data',
-            'creating visualizations',
-            'data transformation and aggregation'
-        ]
+        'analysis_types': ['statistical', 'computational', 'quantitative']
     },
     'genome_selector': {
-        'description': 'Intelligent genome selection for targeted analysis',
+        'description': 'Intelligent genome selection for targeted single-genome analysis',
+        'when_to_use': [
+            'User mentions specific organism names or species',
+            'Queries targeting particular taxonomic groups',
+            'Need to identify which genome to analyze from organism description',
+            'Ambiguous organism references requiring clarification'
+        ],
+        'when_NOT_to_use': [
+            'Global analysis across ALL genomes (use whole_genome_reader with global_analysis=True)',
+            'User already specified genome IDs directly',
+            'Comparative analysis across multiple genomes'
+        ],
+        'biological_scope': 'genome_targeting|organism_identification|taxonomic_selection',
+        'query_indicators': ['organism', 'species', 'strain', 'specific genome', 'particular genome'],
         'biological_functions': [
             'genome_targeting',
             'genome_identification',
@@ -391,12 +473,26 @@ TOOL_CAPABILITIES = {
         ],
         'input_types': ['biological_queries', 'organism_names', 'taxonomic_terms'],
         'output_types': ['genome_selections', 'targeting_results', 'genome_matches'],
-        'analysis_types': ['targeting', 'selection', 'filtering'],
-        'use_cases': [
-            'selecting specific genomes for analysis',
-            'targeting particular organisms',
-            'filtering by taxonomic criteria'
-        ]
+        'analysis_types': ['targeting', 'selection', 'filtering']
+    },
+    'database_query': {
+        'description': 'Direct Neo4j database queries for specific annotation lookups',
+        'when_to_use': [
+            'Simple functional annotation lookups',
+            'Counting specific protein types or families',
+            'Direct searches for known functional categories',
+            'Questions with specific protein/gene IDs already identified',
+            'Straightforward database retrieval without spatial context'
+        ],
+        'when_NOT_to_use': [
+            'Discovery queries requiring spatial genome reading',
+            'Global prophage/operon identification',
+            'Cross-genome comparative spatial analysis',
+            'Questions requiring gene neighborhood context'
+        ],
+        'biological_scope': 'annotation_lookup|functional_search|direct_retrieval',
+        'query_indicators': ['count', 'how many', 'show me', 'list', 'what proteins', 'specific annotation'],
+        'note': 'This is selected automatically when no specialized tool is appropriate'
     },
     'literature_search': {
         'description': 'Search PubMed for relevant scientific literature',
