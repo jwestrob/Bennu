@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
 from .task_management import Task, TaskType, TaskStatus
-from .agent_tool_selector import get_tool_selector
+from .agent_tool_selector import get_tool_selector, get_cached_tool_selector
 
 logger = logging.getLogger(__name__)
 
@@ -92,16 +92,18 @@ class TaskPlanParser:
     }
     
     def __init__(self):
-        """Initialize parser with compiled regex patterns and agent tool selector."""
+        """Initialize parser with compiled regex patterns and cached tool selector."""
         self.query_regex = re.compile('|'.join(self.QUERY_PATTERNS), re.IGNORECASE)
         self.tool_regexes = {
             tool: re.compile('|'.join(patterns), re.IGNORECASE)
             for tool, patterns in self.TOOL_PATTERNS.items()
         }
         
-        # Initialize agent-based tool selector
-        self.tool_selector = get_tool_selector()
+        # Initialize cached tool selector for efficient API usage
+        self.cached_tool_selector = get_cached_tool_selector()
+        self.tool_selector = get_tool_selector()  # Initialize base tool selector as fallback
         self.original_user_query = ""  # Will be set during parsing
+        self.main_task_counter = 0  # Track main tasks for hierarchy
     
     def parse_dspy_plan(self, plan_text: str, original_user_query: str = "") -> ParsedPlan:
         """
@@ -253,6 +255,111 @@ class TaskPlanParser:
         
         else:
             raise ValueError(f"Unsupported task type: {task_type}")
+    
+    def _is_main_task(self, step_num: int, description: str) -> bool:
+        """
+        Determine if this is a main task (gets full LLM tool selection).
+        
+        Main tasks are:
+        - Primary numbered steps from DSPy planning
+        - Tasks that don't clearly derive from previous tasks
+        """
+        # For now, consider all tasks from DSPy plan as main tasks
+        # In the future, we could detect sub-tasks and chunks here
+        return True
+    
+    def _get_parent_task_id(self, step_num: int, previous_tasks: List[Task], is_main_task: bool) -> Optional[str]:
+        """
+        Determine parent task ID for tool selection inheritance.
+        
+        Args:
+            step_num: Current step number
+            previous_tasks: List of previous tasks
+            is_main_task: Whether current task is a main task
+            
+        Returns:
+            Parent task ID for inheritance, or None if this is a root task
+        """
+        if is_main_task or not previous_tasks:
+            return None
+        
+        # For sub-tasks, inherit from the most recent main task
+        for task in reversed(previous_tasks):
+            if task.is_main_task:
+                return task.task_id
+        
+        return None
+    
+    def _classify_task_type_with_cached_args(self, 
+                                           description: str, 
+                                           is_main_task: bool, 
+                                           parent_task_id: Optional[str]) -> Tuple[TaskType, Optional[str], Optional[Dict[str, Any]]]:
+        """
+        Classify task type using cached tool selection for efficiency.
+        
+        Args:
+            description: Task description
+            is_main_task: Whether this is a main task
+            parent_task_id: Parent task ID for inheritance
+            
+        Returns:
+            (TaskType, tool_name, tool_args) where tool_name and tool_args are None for ATOMIC_QUERY
+        """
+        logger.debug(f"🎯 cached_task_classify: '{description[:30]}...' (main: {is_main_task})")
+        
+        # Create temporary task object for cached tool selection
+        temp_task = Task(
+            task_id="temp_for_classification",
+            task_type=TaskType.TOOL_CALL,  # Will be updated
+            description=description,
+            is_main_task=is_main_task,
+            parent_task_id=parent_task_id
+        )
+        
+        # Try cached tool selection
+        try:
+            import asyncio
+            import threading
+            
+            def run_tool_selection():
+                logger.debug(f"🔄 thread_started")
+                # Create new event loop in thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    logger.debug(f"📞 calling_cached_tool_selector")
+                    result = loop.run_until_complete(
+                        self.cached_tool_selector.select_tool_for_task_with_caching(
+                            task=temp_task,
+                            original_user_query=self.original_user_query
+                        )
+                    )
+                    logger.debug(f"✅ cached_tool_selector_returned: {type(result)}")
+                    return result
+                finally:
+                    loop.close()
+                    logger.debug(f"🔚 thread_ended")
+            
+            # Run in thread to handle event loop issues
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_tool_selection)
+                tool_result = future.result(timeout=30)
+            
+            logger.debug(f"🎯 cached_tool_result: {tool_result.selected_tool or 'database_query'} (source: {getattr(temp_task, 'tool_selection_source', 'unknown')})")
+            
+            # Convert tool selection result to task type and arguments
+            if tool_result.selected_tool is None:
+                # Database query
+                return TaskType.ATOMIC_QUERY, None, None
+            else:
+                # Tool call
+                return TaskType.TOOL_CALL, tool_result.selected_tool, tool_result.tool_arguments
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Cached tool selection failed: {e}")
+            # Fallback to regex-based classification
+            return self._classify_task_type_regex(description)
     
     def _classify_task_type_with_args(self, description: str) -> Tuple[TaskType, Optional[str], Optional[Dict[str, Any]]]:
         """

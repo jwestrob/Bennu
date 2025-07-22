@@ -46,10 +46,11 @@ class RAGContextDebugger:
         """Run a query and capture all context data."""
         console.print(f"[bold blue]🔍 Debugging RAG Context for:[/bold blue] {question}")
         
-        # Monkey patch the RAG system to capture context
-        original_format_context = self.rag._format_context
-        original_execute_task = self.rag._execute_task
-        original_answerer = self.rag.answerer
+        # Monkey patch the RAG system to capture context (simplified for current architecture)
+        # Note: Some methods have been refactored in the new architecture
+        original_format_context = getattr(self.rag, '_format_context', None)
+        original_execute_task = None  # Method no longer exists in new architecture
+        original_answerer = getattr(self.rag, 'answerer', None)
         captured_context = {
             'question': question,
             'timestamp': self.session_timestamp,
@@ -183,10 +184,12 @@ class RAGContextDebugger:
                 captured_context['task_results'][task.task_id] = f"Error: {e}"
                 return None
         
-        # Replace methods temporarily
-        self.rag._format_context = capture_format_context
-        self.rag._execute_task = capture_execute_task
-        self.rag.answerer = capture_answerer
+        # Replace methods temporarily (only for methods that exist)
+        if original_format_context:
+            self.rag._format_context = capture_format_context
+        # Skip execute_task patching since method doesn't exist in new architecture  
+        if original_answerer:
+            self.rag.answerer = capture_answerer
         
         try:
             # Run the query
@@ -203,10 +206,12 @@ class RAGContextDebugger:
             return captured_context
             
         finally:
-            # Restore original methods
-            self.rag._format_context = original_format_context
-            self.rag._execute_task = original_execute_task
-            self.rag.answerer = original_answerer
+            # Restore original methods (only for methods that exist)
+            if original_format_context:
+                self.rag._format_context = original_format_context
+            # Skip execute_task restoration since method doesn't exist in new architecture
+            if original_answerer:
+                self.rag.answerer = original_answerer
     
     def display_context_analysis(self, context_data: Dict[str, Any]):
         """Display comprehensive analysis of the context data - RESTORED ORIGINAL FUNCTIONALITY."""

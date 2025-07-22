@@ -366,20 +366,20 @@ class ContextCompressor:
             return {
                 "compress": False,
                 "method": "no_compression",
-                "target_size": result_count,
+                "target_size": 30000,
                 "reasoning": "Small result set - no compression needed"
             }
         elif result_count <= 200:
             return {
                 "compress": True,
                 "method": "diverse_sampling",
-                "target_size": 50,
+                "target_size": 30000,
                 "reasoning": "Medium result set - compress with diversity preservation"
             }
         else:
             return {
                 "compress": True,
                 "method": "diverse_sampling",
-                "target_size": 30,
+                "target_size": 30000,
                 "reasoning": "Large result set - aggressive compression with summary statistics"
             }

@@ -412,6 +412,45 @@ class NoteKeeper:
         
         return related_notes
     
+    def get_recent_notes(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Get recent notes for content redundancy checking.
+        
+        Args:
+            limit: Maximum number of recent notes to return
+            
+        Returns:
+            List of recent note dictionaries with basic content
+        """
+        try:
+            all_notes = self.get_all_task_notes()
+            
+            # Sort by timestamp (most recent first)
+            sorted_notes = sorted(all_notes, key=lambda x: x.timestamp, reverse=True)
+            
+            # Convert to simplified format for redundancy checking
+            recent_notes = []
+            for note in sorted_notes[:limit]:
+                # Combine all text content for comparison
+                content_parts = []
+                content_parts.extend(note.observations)
+                content_parts.extend(note.key_findings)
+                content_parts.append(note.description)
+                
+                note_dict = {
+                    'task_id': note.task_id,
+                    'timestamp': note.timestamp,
+                    'content': ' '.join(content_parts),
+                    'task_type': note.task_type
+                }
+                recent_notes.append(note_dict)
+            
+            return recent_notes
+            
+        except Exception as e:
+            logger.error(f"Failed to get recent notes: {e}")
+            return []
+    
     def get_session_statistics(self) -> SessionStats:
         """
         Get comprehensive statistics for the current session.

@@ -177,14 +177,14 @@ class WholeGenomeReader:
         largest_contig = 0
         
         for contig_id, genes in contig_groups.items():
-            
+            """
             # PROPHAGE DISCOVERY FIX: Don't truncate genes - need complete genomic context
             if len(genes) > max_genes_per_contig:
                 logger.info(f"📊 Contig {contig_id} has {len(genes)} genes - processing all for prophage discovery (no truncation)")
                 # genes = genes[:max_genes_per_contig]  # DISABLED: Causes 75% data loss
             else:
                 logger.info(f"📊 Processing all {len(genes)} genes from contig {contig_id}")
-            
+            """
             # Separate by strand and sort by position
             plus_genes = [g for g in genes if g.get('strand') == '+1' or g.get('strand') == '+']
             minus_genes = [g for g in genes if g.get('strand') == '-1' or g.get('strand') == '-']
