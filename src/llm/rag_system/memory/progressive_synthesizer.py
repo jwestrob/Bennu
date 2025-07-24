@@ -15,6 +15,7 @@ from .note_keeper import NoteKeeper
 from .note_schemas import TaskNote, SynthesisNote, ConfidenceLevel
 from .memory_utils import generate_session_id
 from .model_allocation import get_model_allocator
+from .tool_result_cache import ToolResultCache
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,12 @@ class ProgressiveSynthesizer:
         
         # Initialize model allocator for intelligent model selection
         self.model_allocator = get_model_allocator()
+        
+        # Initialize tool result cache for reference loading
+        if hasattr(note_keeper, 'session_path'):
+            self.tool_cache = ToolResultCache(str(note_keeper.session_path))
+        else:
+            self.tool_cache = None
         
         # Caching system to reduce API calls
         self.synthesis_cache = {}  # Cache for synthesis results
@@ -186,11 +193,17 @@ class ProgressiveSynthesizer:
         if not unified_data:
             return "No data available for synthesis."
         
-        # Step 2: Token-based decision making
-        total_tokens = self._count_data_tokens(unified_data)
-        logger.info(f"📊 Total input tokens: {total_tokens}")
+        # Step 2: Smart synthesis mode selection
+        synthesis_strategy = self._choose_optimal_synthesis_strategy(unified_data, question)
         
-        # Step 3: Choose synthesis strategy based on token count
+        if synthesis_strategy == "key_findings_only":
+            logger.info("🎯 Using key-findings-only synthesis (sufficient discoveries detected)")
+            return self._synthesize_from_key_findings_only(unified_data, question)
+        
+        # Step 3: Token-based decision making for full context synthesis
+        total_tokens = self._count_data_tokens(unified_data)
+        logger.info(f"📊 Total input tokens: {total_tokens} (strategy: {synthesis_strategy})")
+        
         if total_tokens <= self.direct_synthesis_limit:
             logger.info("🎯 Using direct synthesis (data fits within model limits)")
             return self._direct_synthesis(unified_data, question)
@@ -221,6 +234,24 @@ class ProgressiveSynthesizer:
         if not raw_data and task_notes:
             logger.info(f"📝 Converting task_notes to unified format ({len(task_notes)} notes)")
             for note in task_notes:
+                # REVOLUTIONARY CHANGE: Expand tool result references
+                quantitative_data = dict(note.quantitative_data) if note.quantitative_data else {}
+                
+                # Check if this note has a tool result reference
+                if 'tool_result_ref' in quantitative_data and self.tool_cache:
+                    result_id = quantitative_data['tool_result_ref']
+                    logger.info(f"🔗 Expanding tool result reference: {result_id}")
+                    
+                    # Load the referenced tool result
+                    tool_result = self.tool_cache.retrieve_tool_result(result_id)
+                    
+                    if tool_result:
+                        # Add expanded tool result to quantitative data
+                        quantitative_data['expanded_tool_result'] = tool_result
+                        logger.info(f"✅ Loaded referenced tool result for {note.task_id}")
+                    else:
+                        logger.warning(f"⚠️ Failed to load tool result reference: {result_id}")
+                
                 unified_data.append({
                     'type': 'task_note',
                     'task_id': note.task_id,
@@ -228,7 +259,7 @@ class ProgressiveSynthesizer:
                     'observations': note.observations,
                     'key_findings': note.key_findings,
                     'confidence_level': note.confidence_level.value,
-                    'quantitative_data': note.quantitative_data,
+                    'quantitative_data': quantitative_data,
                     'cross_task_connections': [
                         {
                             'connected_task': conn.connected_task,
@@ -255,7 +286,127 @@ class ProgressiveSynthesizer:
                 ]
             })
         
+        # DEBUG: Save pre-compression data  
+        self._save_debug_data("pre_compression_data", unified_data, "Unified data before intelligent context management")
+        
+        # CRITICAL OPTIMIZATION: Apply intelligent context management
+        if self.tool_cache:
+            unified_data = self._apply_intelligent_context_management(unified_data)
+        
+        # DEBUG: Save post-compression data
+        self._save_debug_data("post_compression_data", unified_data, "Unified data after intelligent context management")
+        
         return unified_data
+    
+    def _apply_intelligent_context_management(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Apply intelligent context management to avoid token explosion.
+        
+        This method decides whether to include full tool results or just summaries
+        based on available token budget and content importance.
+        
+        Args:
+            data: Unified data with potentially expanded tool results
+            
+        Returns:
+            Optimized data with smart context management
+        """
+        logger.info("🧠 Applying intelligent context management")
+        
+        # Calculate current token usage
+        current_tokens = self._count_data_tokens(data)
+        logger.info(f"📊 Current context size: {current_tokens:,} tokens")
+        
+        # If we're within limits, keep everything
+        if current_tokens <= self.direct_synthesis_limit:
+            logger.info("✅ Context size acceptable, keeping full tool results")
+            return data
+        
+        # Otherwise, apply compression by replacing large tool results with summaries
+        compressed_data = []
+        tokens_saved = 0
+        
+        for item in data:
+            if item.get('type') == 'task_note' and 'quantitative_data' in item:
+                quant_data = item['quantitative_data']
+                
+                if 'expanded_tool_result' in quant_data:
+                    # Calculate size of expanded result
+                    expanded_result = quant_data['expanded_tool_result']
+                    expanded_tokens = self._count_data_tokens([expanded_result])
+                    
+                    # If expanded result is large, replace with summary + key findings
+                    if expanded_tokens > 5000:  # Large result threshold
+                        logger.info(f"🗜️ Compressing large tool result in {item['task_id']} ({expanded_tokens:,} tokens)")
+                        
+                        # Keep the summary and biological discoveries
+                        compressed_quant = dict(quant_data)
+                        del compressed_quant['expanded_tool_result']  # Remove large result
+                        
+                        # Extract and preserve key biological information
+                        if 'tool_result_ref' in compressed_quant:
+                            result_id = compressed_quant['tool_result_ref']
+                            tool_name = result_id.split('_')[0]  # Extract tool name from ID
+                            discoveries = self.tool_cache.extract_key_discoveries(tool_name, expanded_result)
+                            
+                            if discoveries:
+                                # Add discoveries to key_findings for preservation
+                                item['key_findings'] = list(item.get('key_findings', [])) + discoveries
+                                logger.info(f"🔬 Preserved {len(discoveries)} biological discoveries")
+                        
+                        # Update item with compressed data
+                        item = dict(item)
+                        item['quantitative_data'] = compressed_quant
+                        tokens_saved += expanded_tokens
+            
+            compressed_data.append(item)
+        
+        if tokens_saved > 0:
+            final_tokens = self._count_data_tokens(compressed_data)
+            logger.info(f"🎯 Context compression complete: {tokens_saved:,} tokens saved, final size: {final_tokens:,} tokens")
+        
+        return compressed_data
+    
+    def _save_debug_data(self, stage_name: str, data: Any, description: str) -> None:
+        """
+        Save debug data to session notes for data flow analysis.
+        
+        Args:
+            stage_name: Name of the processing stage (e.g., "pre_compression_data")
+            data: Data to save for debugging
+            description: Human-readable description of this data
+        """
+        try:
+            # Create debug directory if it doesn't exist
+            if hasattr(self.note_keeper, 'session_path'):
+                debug_dir = self.note_keeper.session_path / "debug_data_flow"
+                debug_dir.mkdir(exist_ok=True)
+                
+                # Create debug file
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%H%M%S")
+                debug_file = debug_dir / f"{stage_name}_{timestamp}.json"
+                
+                # Prepare debug payload
+                debug_payload = {
+                    "stage_name": stage_name,
+                    "description": description,
+                    "timestamp": datetime.now().isoformat(),
+                    "data_type": type(data).__name__,
+                    "data_size_chars": len(str(data)),
+                    "token_estimate": self._count_data_tokens([data]) if isinstance(data, (dict, list)) else 0,
+                    "data": data
+                }
+                
+                # Write debug file
+                import json
+                with open(debug_file, 'w') as f:
+                    json.dump(debug_payload, f, indent=2, default=str)
+                
+                logger.info(f"🐛 DEBUG: Saved {stage_name} to {debug_file.name} ({debug_payload['data_size_chars']} chars)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to save debug data for {stage_name}: {e}")
     
     def _count_data_tokens(self, data: List[Dict[str, Any]]) -> int:
         """
@@ -295,8 +446,14 @@ class ProgressiveSynthesizer:
         """
         logger.info("🎯 Performing direct synthesis with full context")
         
+        # DEBUG: Save pre-synthesis data for debugging
+        self._save_debug_data("pre_synthesis_data", data, "Raw unified data before formatting")
+        
         # Format data for synthesis
         formatted_data = self._format_data_for_synthesis(data)
+        
+        # DEBUG: Save formatted synthesis input
+        self._save_debug_data("formatted_synthesis_input", formatted_data, "Formatted data sent to LLM")
         
         return self._call_synthesis_model(
             context=formatted_data,
@@ -962,6 +1119,181 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
             # Don't cache errors
             return error_result
     
+    def _choose_optimal_synthesis_strategy(self, unified_data: List[Dict[str, Any]], question: str) -> str:
+        """
+        Choose the optimal synthesis strategy based on data quality and question type.
+        
+        Args:
+            unified_data: Unified data for synthesis
+            question: User's question
+            
+        Returns:
+            Synthesis strategy: "key_findings_only" or "full_context"
+        """
+        logger.info("🧠 Analyzing synthesis strategy requirements")
+        
+        # Assess key findings completeness and quality
+        key_findings_quality = self._assess_key_findings_completeness(unified_data)
+        
+        # Check question complexity requirements
+        requires_detailed_context = self._question_requires_detailed_context(question)
+        
+        # Decision logic
+        if key_findings_quality >= 0.8 and not requires_detailed_context:
+            logger.info(f"✅ High-quality key findings detected ({key_findings_quality:.2f}) + simple question = key_findings_only")
+            return "key_findings_only"
+        elif key_findings_quality >= 0.6 and "quick" in question.lower():
+            logger.info(f"✅ Adequate key findings ({key_findings_quality:.2f}) + quick query = key_findings_only")
+            return "key_findings_only"
+        else:
+            logger.info(f"🔍 Insufficient key findings ({key_findings_quality:.2f}) or complex question = full_context")
+            return "full_context"
+    
+    def _assess_key_findings_completeness(self, unified_data: List[Dict[str, Any]]) -> float:
+        """
+        Assess how complete and useful the key findings are.
+        
+        Args:
+            unified_data: Unified data to assess
+            
+        Returns:
+            Quality score 0.0-1.0 (higher = more complete findings)
+        """
+        total_findings = 0
+        quality_indicators = 0
+        
+        for item in unified_data:
+            if item.get('type') == 'task_note' and 'key_findings' in item:
+                findings = item['key_findings']
+                if findings:
+                    total_findings += len(findings)
+                    
+                    # Check for quality indicators
+                    for finding in findings:
+                        finding_lower = str(finding).lower()
+                        
+                        # High-quality indicators
+                        if any(term in finding_lower for term in [
+                            'identified', 'detected', 'found', 'analyzed', 'discovered',
+                            'protein', 'gene', 'loci', 'coordinates', 'domain', 
+                            'prophage', 'operon', 'pathway', 'annotation'
+                        ]):
+                            quality_indicators += 1
+                        
+                        # Quantitative indicators (numbers suggest real analysis)
+                        if any(char.isdigit() for char in finding):
+                            quality_indicators += 0.5
+        
+        # Calculate quality score
+        if total_findings == 0:
+            return 0.0
+        
+        quality_ratio = quality_indicators / total_findings
+        
+        # Adjust based on total findings count (more findings = higher confidence)
+        findings_bonus = min(total_findings / 20, 0.2)  # Max 20% bonus
+        
+        final_score = min(quality_ratio + findings_bonus, 1.0)
+        logger.info(f"📊 Key findings assessment: {total_findings} findings, {quality_indicators} quality indicators, score: {final_score:.2f}")
+        
+        return final_score
+    
+    def _question_requires_detailed_context(self, question: str) -> bool:
+        """
+        Determine if question requires detailed context beyond key findings.
+        
+        Args:
+            question: User's question
+            
+        Returns:
+            True if detailed context needed, False if key findings sufficient
+        """
+        question_lower = question.lower()
+        
+        # Detailed context required for these patterns
+        detailed_patterns = [
+            'detailed report', 'comprehensive', 'full analysis', 'all details',
+            'coordinates', 'exact', 'precise', 'specific location', 'sequence',
+            'show me everything', 'maximum detail', 'complete analysis'
+        ]
+        
+        # Simple patterns that can use key findings only
+        simple_patterns = [
+            'quick', 'summary', 'overview', 'brief', 'what are', 'how many',
+            'list', 'find', 'identify', 'detect', 'simple'
+        ]
+        
+        requires_detailed = any(pattern in question_lower for pattern in detailed_patterns)
+        is_simple = any(pattern in question_lower for pattern in simple_patterns)
+        
+        # Default to detailed if unclear, but simple patterns override
+        return requires_detailed or (not is_simple and len(question.split()) > 15)
+    
+    def _synthesize_from_key_findings_only(self, unified_data: List[Dict[str, Any]], question: str) -> str:
+        """
+        Lightweight synthesis using only key findings and discoveries.
+        
+        Args:
+            unified_data: Unified data (only key findings will be used)
+            question: User's question
+            
+        Returns:
+            Synthesis result from key findings only
+        """
+        logger.info("🎯 Performing key-findings-only synthesis (lightweight mode)")
+        
+        # Extract all key findings
+        all_findings = []
+        task_summaries = []
+        
+        for item in unified_data:
+            if item.get('type') == 'task_note':
+                task_id = item.get('task_id', 'unknown')
+                description = item.get('description', '')
+                findings = item.get('key_findings', [])
+                
+                if findings:
+                    task_summaries.append(f"Task {task_id}: {description[:100]}...")
+                    all_findings.extend(findings)
+        
+        # Build lightweight context
+        lightweight_context = f"""
+BIOLOGICAL DISCOVERIES FROM ANALYSIS:
+
+Task Overview:
+{chr(10).join(task_summaries)}
+
+Key Findings and Discoveries:
+{chr(10).join(f"• {finding}" for finding in all_findings)}
+
+ANALYSIS COMPLETE - {len(all_findings)} key discoveries identified
+"""
+        
+        # Use direct synthesis with lightweight context
+        from .dspy_signatures import GenomicSynthesizer
+        
+        def synthesis_call(module):
+            return module(
+                question=question,
+                context=lightweight_context,
+                synthesis_mode="discovery_summary"
+            )
+        
+        result = self.model_allocator.create_context_managed_call(
+            task_name="biological_interpretation",
+            signature_class=GenomicSynthesizer,
+            module_call_func=synthesis_call,
+            query=question,
+            task_context="Key findings synthesis"
+        )
+        
+        if result and hasattr(result, 'summary'):
+            logger.info(f"✅ Key-findings-only synthesis complete ({len(lightweight_context)} characters)")
+            return result.summary
+        else:
+            logger.warning("Key-findings synthesis failed, using fallback")
+            return f"Analysis complete. Identified {len(all_findings)} key biological discoveries from the genomic analysis."
+
     def get_synthesis_statistics(self) -> Dict[str, Any]:
         """
         Get statistics about the synthesis process.

@@ -58,6 +58,9 @@ class NoteKeeper:
         self.task_notes_path = self.session_path / "task_notes"
         self.synthesis_notes_path = self.session_path / "synthesis_notes"
         
+        # Add session_data_dir for tool result caching compatibility
+        self.session_data_dir = str(self.session_path)
+        
         # Ensure directory structure exists
         ensure_session_directory(self.session_path)
         
