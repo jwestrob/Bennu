@@ -36,15 +36,21 @@ def parse_prodigal_header(header_line: str) -> Dict[str, Any]:
     if len(parts) < 4:
         # Basic header without coordinates
         protein_id = parts[0].split()[0]
-        return {'gene_id': protein_id}
+        # Extract contig identifier from gene ID (remove last '_'-delimited field)
+        contig_id = '_'.join(protein_id.split('_')[:-1])
+        return {'gene_id': protein_id, 'contig': contig_id}
     
     protein_id = parts[0]
     start_coord = int(parts[1])
     end_coord = int(parts[2])
     strand = int(parts[3])
     
+    # Extract contig identifier from gene ID (remove last '_'-delimited field)
+    contig_id = '_'.join(protein_id.split('_')[:-1])
+    
     gene_data = {
         'gene_id': protein_id,
+        'contig': contig_id,
         'start': start_coord,
         'end': end_coord,
         'strand': strand,
@@ -346,6 +352,10 @@ class GenomeKGBuilder:
             self.graph.add((gene_uri, RDF.type, KG.Gene))
             self.graph.add((gene_uri, KG.belongsToGenome, genome_uri))
             self.graph.add((gene_uri, KG.geneId, Literal(gene_id)))
+            
+            # Add contig identifier
+            if 'contig' in gene:
+                self.graph.add((gene_uri, KG.contig, Literal(gene['contig'])))
             
             # Add genomic coordinates from prodigal
             if 'start' in gene and 'end' in gene:

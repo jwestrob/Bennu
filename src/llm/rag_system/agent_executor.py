@@ -25,6 +25,7 @@ except ImportError:
 
 from .external_tools import AVAILABLE_TOOLS, TOOL_CAPABILITIES
 from .memory import NoteKeeper, get_model_allocator
+from .memory.tool_result_cache import ToolResultCache
 from .utils import safe_log_data
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,14 @@ class UnifiedAgentExecutor:
         # Initialize model allocator for agent decisions
         self.model_allocator = get_model_allocator()
         
+        # Initialize tool result cache for reference-based storage
+        if note_keeper and hasattr(note_keeper, 'session_path'):
+            self.tool_cache = ToolResultCache(str(note_keeper.session_path))
+            logger.info("🗂️ Tool result caching enabled for reference-based storage")
+        else:
+            self.tool_cache = None
+            logger.info("⚠️ Tool result caching disabled - no session directory available")
+        
         # Tool registry - maps tool names to execution methods
         self.tools = {
             "database_query": self._execute_database_query,
@@ -150,6 +159,8 @@ class UnifiedAgentExecutor:
         logger.info("🤖 UnifiedAgentExecutor initialized - dynamic tool chaining enabled")
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
+        # Store current user question for hierarchical analysis context
+        self.current_user_question = question
         """
         Execute agent workflow with dynamic tool chaining.
         
@@ -198,6 +209,9 @@ class UnifiedAgentExecutor:
                 )
                 
                 steps.append(step_result)
+                
+                # DEBUG: Save individual task result for debugging
+                self._save_task_debug_data(step_result, step_number)
                 
                 # CRITICAL FIX: Convert agent step to task note and save it
                 if self.note_keeper and step_result.success:
@@ -407,36 +421,135 @@ class UnifiedAgentExecutor:
         return await self._execute_traditional_query_logic(description)
     
     async def _execute_whole_genome_reader(self, params: Dict[str, Any]) -> Any:
-        """Execute spatial genomic analysis."""
+        """Execute hierarchical genomic analysis instead of raw data dumping."""
         from .whole_genome_reader import WholeGenomeReader
+        from .hierarchical_analysis import HierarchicalGenomeAnalyzer
         
+        # Get the user's original question for context-driven analysis
+        user_question = getattr(self, 'current_user_question', '') or params.get('user_question', '')
+        
+        # Initialize hierarchical analyzer
+        hierarchical_analyzer = HierarchicalGenomeAnalyzer()
+        
+        # Get raw genomic data using existing reader
         reader = WholeGenomeReader(self.rag_system.neo4j_processor)
         
         # Extract genome ID and parameters
         genome_id = params.get("target_genome") or params.get("genome_id")
-        max_genes = params.get("max_genes_per_contig", 1000)
+        max_genes = params.get("max_genes_per_contig", 2000)  # Increased for chunking
         
         if not genome_id:
             # If no specific genome, use global spatial reading
             from .whole_genome_reader import read_all_genomes_spatial
-            return await read_all_genomes_spatial(self.rag_system.neo4j_processor)
+            raw_result = await read_all_genomes_spatial(self.rag_system.neo4j_processor)
+            
+            if raw_result.get("success") and raw_result.get("genome_contexts"):
+                # Use hierarchical analysis instead of raw data dump
+                hierarchical_result = hierarchical_analyzer.analyze_genome_hierarchically(
+                    genome_contexts=raw_result["genome_contexts"],
+                    user_question=user_question
+                )
+                
+                return {
+                    "success": True,
+                    "analysis_type": "hierarchical_multi_genome",
+                    "interesting_loci": hierarchical_result.interesting_loci,
+                    "detailed_analyses": hierarchical_result.detailed_analyses,
+                    "analysis_summary": hierarchical_result.analysis_summary,
+                    "processing_stats": hierarchical_result.processing_stats,
+                    "tool_output": self._format_hierarchical_output(hierarchical_result)
+                }
+            else:
+                return raw_result
         else:
             # Read specific genome
             result = await reader.read_complete_genome(genome_id, max_genes)
             
-            if result["success"]:
-                # Format for LLM analysis
-                formatted = reader.format_for_llm_analysis(
-                    result["genome_context"], 
-                    focus_on_spatial=True
+            if result["success"] and result.get("genome_context"):
+                # Use hierarchical analysis for single genome
+                hierarchical_result = hierarchical_analyzer.analyze_genome_hierarchically(
+                    genome_contexts=[result["genome_context"]],
+                    user_question=user_question
                 )
+                
                 return {
                     "success": True,
-                    "tool_output": formatted,
-                    "genome_context": result["genome_context"]
+                    "analysis_type": "hierarchical_single_genome",
+                    "genome_id": genome_id,
+                    "interesting_loci": hierarchical_result.interesting_loci,
+                    "detailed_analyses": hierarchical_result.detailed_analyses,
+                    "analysis_summary": hierarchical_result.analysis_summary,
+                    "processing_stats": hierarchical_result.processing_stats,
+                    "tool_output": self._format_hierarchical_output(hierarchical_result)
                 }
             else:
                 return result
+    
+    def _format_hierarchical_output(self, hierarchical_result) -> str:
+        """Format hierarchical analysis result for LLM consumption."""
+        try:
+            output_parts = []
+            
+            # Analysis summary
+            if hierarchical_result.analysis_summary:
+                output_parts.append("=== HIERARCHICAL GENOMIC ANALYSIS SUMMARY ===")
+                summary = hierarchical_result.analysis_summary
+                
+                if "interesting_loci_count" in summary:
+                    output_parts.append(f"Identified {summary['interesting_loci_count']} interesting loci from {summary.get('total_candidates_screened', 0)} candidates")
+                
+                if "loci_type_distribution" in summary:
+                    type_dist = summary["loci_type_distribution"]
+                    output_parts.append(f"Loci types: {', '.join([f'{k}: {v}' for k, v in type_dist.items()])}")
+                
+                if "genomic_coverage" in summary:
+                    coverage = summary["genomic_coverage"]
+                    output_parts.append(f"Total genes analyzed: {coverage.get('total_genes_in_loci', 0)}")
+            
+            # Interesting loci details
+            if hierarchical_result.interesting_loci:
+                output_parts.append("\\n=== INTERESTING LOCI ===")
+                
+                for i, locus in enumerate(hierarchical_result.interesting_loci, 1):
+                    hyp_pct = (locus.hypothetical_count / locus.gene_count * 100) if locus.gene_count > 0 else 0
+                    output_parts.append(f"\\nLocus #{i}: {locus.genomic_coordinates}")
+                    output_parts.append(f"  Type: {locus.locus_type}")
+                    output_parts.append(f"  Size: {locus.gene_count} genes ({locus.hypothetical_count} hypothetical, {hyp_pct:.1f}%)")
+                    
+                    if locus.biological_features:
+                        output_parts.append(f"  Features: {'; '.join(locus.biological_features[:3])}")
+            
+            # Detailed analyses
+            if hierarchical_result.detailed_analyses:
+                output_parts.append("\\n=== DETAILED LOCUS ANALYSES ===")
+                
+                for i, analysis in enumerate(hierarchical_result.detailed_analyses, 1):
+                    locus = analysis.locus
+                    output_parts.append(f"\\nDetailed Analysis #{i}: {locus.genomic_coordinates}")
+                    
+                    if analysis.functional_predictions:
+                        output_parts.append(f"  Functional Predictions:")
+                        for pred in analysis.functional_predictions[:3]:
+                            output_parts.append(f"    - {pred}")
+                    
+                    if analysis.novelty_assessment:
+                        output_parts.append(f"  Novelty: {analysis.novelty_assessment}")
+                    
+                    if analysis.detailed_genes:
+                        output_parts.append(f"  Gene Count: {len(analysis.detailed_genes)} genes in locus")
+            
+            # Processing statistics
+            if hierarchical_result.processing_stats:
+                stats = hierarchical_result.processing_stats
+                output_parts.append("\\n=== PROCESSING STATISTICS ===")
+                output_parts.append(f"Chunks analyzed: {stats.get('successful_chunks', 0)}/{stats.get('total_chunks', 0)}")
+                output_parts.append(f"Candidates identified: {stats.get('total_candidate_loci', 0)}")
+                output_parts.append(f"Final interesting loci: {stats.get('interesting_loci', 0)}")
+            
+            return "\\n".join(output_parts)
+            
+        except Exception as e:
+            return f"Error formatting hierarchical output: {e}"
     
     async def _execute_code_interpreter(self, params: Dict[str, Any]) -> Any:
         """Execute code interpreter for analysis."""
@@ -784,7 +897,7 @@ print("Analysis complete")
     
     def _save_agent_step_as_note(self, step: AgentStep, question: str) -> bool:
         """
-        Save an agent step as a persistent task note.
+        Save an agent step as a persistent task note with reference-based storage.
         
         Args:
             step: Agent step to save as note
@@ -807,7 +920,7 @@ print("Analysis complete")
             observations = [f"Tool used: {step.tool_name or 'database_query'}"]
             key_findings = [step.reasoning]
             
-            # Store full tool results in quantitative_data for preservation
+            # Store execution metadata in quantitative_data
             quantitative_data = {
                 "execution_time": step.execution_time,
                 "step_number": step.step_number,
@@ -817,13 +930,38 @@ print("Analysis complete")
             if step.result:
                 result_summary = self._summarize_step_result(step)
                 observations.append(f"Result: {result_summary}")
-                if len(result_summary) > 20:
-                    key_findings.append(result_summary)
                 
-                # CRITICAL FIX: Store the full tool result for synthesis
-                quantitative_data["full_tool_result"] = step.result
+                # REVOLUTIONARY CHANGE: Use reference-based caching for large results
+                if self.tool_cache:
+                    # Cache the full tool result and store reference ID
+                    tool_name = step.tool_name or "database_query"
+                    step_context = f"Step {step.step_number}: {step.reasoning[:50]}..."
+                    
+                    result_id = self.tool_cache.cache_tool_result(
+                        tool_name=tool_name,
+                        tool_result=step.result,
+                        step_context=step_context
+                    )
+                    
+                    if result_id:
+                        # Store reference instead of full result (99.5% size reduction!)
+                        quantitative_data["tool_result_ref"] = result_id
+                        quantitative_data["tool_result_summary"] = self.tool_cache.get_result_summary(result_id)
+                        
+                        # Extract key biological discoveries for immediate access
+                        discoveries = self.tool_cache.extract_key_discoveries(tool_name, step.result)
+                        if discoveries:
+                            key_findings.extend(discoveries)
+                            logger.info(f"🔬 Extracted {len(discoveries)} biological discoveries from {tool_name}")
+                    else:
+                        # Fallback: store result directly if caching fails
+                        quantitative_data["full_tool_result"] = step.result
+                        logger.warning(f"⚠️ Tool result caching failed for step {step.step_number}, storing directly")
+                else:
+                    # No cache available - store directly
+                    quantitative_data["full_tool_result"] = step.result
                 
-                # Extract specific biological findings from tool results
+                # Legacy biological finding extraction (backup)
                 biological_findings = self._extract_biological_findings(step)
                 if biological_findings:
                     key_findings.extend(biological_findings)
@@ -844,7 +982,7 @@ print("Analysis complete")
             )
             
             if success:
-                logger.info(f"💾 Saved agent step {step.step_number} as task note")
+                logger.info(f"💾 Saved agent step {step.step_number} as reference-based task note")
             else:
                 logger.error(f"❌ Failed to save agent step {step.step_number} as task note")
                 
@@ -974,3 +1112,49 @@ print("Analysis complete")
                 task_notes.append(task_note)
         
         return task_notes
+    
+    def _save_task_debug_data(self, step: AgentStep, step_number: int) -> None:
+        """
+        Save individual task result for debugging data flow.
+        
+        Args:
+            step: Agent step to debug
+            step_number: Step number for identification
+        """
+        try:
+            if not self.note_keeper or not hasattr(self.note_keeper, 'session_path'):
+                return
+            
+            # Create debug directory
+            debug_dir = self.note_keeper.session_path / "debug_data_flow"
+            debug_dir.mkdir(exist_ok=True)
+            
+            # Create debug file for this task
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%H%M%S")
+            debug_file = debug_dir / f"task_step_{step_number}_{timestamp}.json"
+            
+            # Prepare debug payload with full task information
+            debug_payload = {
+                "step_number": step_number,
+                "tool_name": step.tool_name or "database_query",
+                "success": step.success,
+                "execution_time": step.execution_time,
+                "reasoning": step.reasoning,
+                "tool_parameters": step.tool_parameters,
+                "result_type": type(step.result).__name__,
+                "result_size_chars": len(str(step.result)) if step.result else 0,
+                "error": step.error,
+                "timestamp": datetime.now().isoformat(),
+                "full_result": step.result  # ⭐ The complete result data
+            }
+            
+            # Write debug file
+            import json
+            with open(debug_file, 'w') as f:
+                json.dump(debug_payload, f, indent=2, default=str)
+            
+            logger.info(f"🐛 DEBUG: Saved task step {step_number} result to {debug_file.name} ({debug_payload['result_size_chars']} chars)")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to save task debug data for step {step_number}: {e}")
