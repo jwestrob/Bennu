@@ -18,7 +18,7 @@ class PolicyConfig:
     """Configuration for user preferences and policies."""
     
     # Performance and cost policies
-    max_tokens_per_query: int = 30000   # Match o3's 30K context limit for proper chunking decisions
+    max_tokens_per_query: int = 30000   # Match OpenAI's 30K TPM rate limit for o3
     max_latency_seconds: int = 600      # 10 minutes for complex o3 reasoning
     allow_expensive_tools: bool = True
     max_refinement_depth: int = 10      # Higher limit to allow proper recursive analysis when needed

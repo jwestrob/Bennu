@@ -86,8 +86,8 @@ class ProgressiveSynthesizer:
             _, final_synthesis_model = self.model_allocator.get_model_for_task("final_synthesis", "")
             _, map_step_model = self.model_allocator.get_model_for_task("genomic_summarization", "")
             
-            # Set direct synthesis limit to 30% of final synthesis model capacity 
-            self.direct_synthesis_limit = int(final_synthesis_model.max_context * 0.3)
+            # Set direct synthesis limit to respect OpenAI's 30K TPM rate limit for o3
+            self.direct_synthesis_limit = min(25000, int(final_synthesis_model.max_context * 0.8))
             
             # Set map chunk limit to 40% of map step model capacity
             self.map_chunk_limit = int(map_step_model.max_context * 0.4)
@@ -164,7 +164,8 @@ class ProgressiveSynthesizer:
                 context=context,
                 question=question,
                 task_name="guidance_synthesis",  # Maps to MEDIUM = gpt-4.1-mini
-                focus="brief guidance for next steps (2-3 sentences max)"
+                focus="brief guidance for next steps (2-3 sentences max)",
+                synthesis_type="summarization"
             )
             
             return guidance
@@ -335,9 +336,12 @@ class ProgressiveSynthesizer:
                     expanded_result = quant_data['expanded_tool_result']
                     expanded_tokens = self._count_data_tokens([expanded_result])
                     
+                    # Model-aware compression threshold
+                    compression_threshold = self._get_compression_threshold()
+                    
                     # If expanded result is large, replace with summary + key findings
-                    if expanded_tokens > 5000:  # Large result threshold
-                        logger.info(f"🗜️ Compressing large tool result in {item['task_id']} ({expanded_tokens:,} tokens)")
+                    if expanded_tokens > compression_threshold:
+                        logger.info(f"🗜️ Compressing large tool result in {item['task_id']} ({expanded_tokens:,} tokens > {compression_threshold:,} threshold)")
                         
                         # Keep the summary and biological discoveries
                         compressed_quant = dict(quant_data)
@@ -347,8 +351,16 @@ class ProgressiveSynthesizer:
                         if 'tool_result_ref' in compressed_quant:
                             result_id = compressed_quant['tool_result_ref']
                             tool_name = result_id.split('_')[0]  # Extract tool name from ID
-                            discoveries = self.tool_cache.extract_key_discoveries(tool_name, expanded_result)
                             
+                            # For WGR results, preserve detailed loci information
+                            if tool_name == 'wgr' and isinstance(expanded_result, dict):
+                                loci_summary = self._extract_detailed_loci_summary(expanded_result)
+                                if loci_summary:
+                                    compressed_quant['detailed_loci_summary'] = loci_summary
+                                    logger.info(f"🧬 Preserved detailed summary of {len(loci_summary)} loci")
+                            
+                            # Also extract general discoveries
+                            discoveries = self.tool_cache.extract_key_discoveries(tool_name, expanded_result)
                             if discoveries:
                                 # Add discoveries to key_findings for preservation
                                 item['key_findings'] = list(item.get('key_findings', [])) + discoveries
@@ -366,6 +378,117 @@ class ProgressiveSynthesizer:
             logger.info(f"🎯 Context compression complete: {tokens_saved:,} tokens saved, final size: {final_tokens:,} tokens")
         
         return compressed_data
+    
+    def _extract_detailed_loci_summary(self, wgr_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract detailed loci summary from WGR results for synthesis.
+        
+        This preserves the essential loci information (coordinates, gene counts, 
+        biological features) while reducing token count significantly.
+        
+        Args:
+            wgr_result: Whole genome reader result with hierarchical analysis
+            
+        Returns:
+            List of detailed loci summaries for synthesis
+        """
+        loci_summaries = []
+        
+        try:
+            if 'interesting_loci' in wgr_result:
+                interesting_loci = wgr_result['interesting_loci']
+                
+                # Handle both string and object representations
+                for locus_data in interesting_loci:
+                    try:
+                        if isinstance(locus_data, str):
+                            # Parse string representation of InterestingLocus
+                            locus_summary = self._parse_locus_string(locus_data)
+                        elif isinstance(locus_data, dict):
+                            # Already structured data
+                            locus_summary = {
+                                'contig_id': locus_data.get('contig_id', 'unknown'),
+                                'coordinates': f"{locus_data.get('start', 0)}-{locus_data.get('end', 0)}",
+                                'gene_count': locus_data.get('gene_count', 0),
+                                'hypothetical_count': locus_data.get('hypothetical_count', 0),
+                                'locus_type': locus_data.get('locus_type', 'unknown'),
+                                'biological_features': locus_data.get('biological_features', [])[:3]  # Top 3 features
+                            }
+                        else:
+                            continue
+                            
+                        if locus_summary:
+                            loci_summaries.append(locus_summary)
+                            
+                    except Exception as e:
+                        logger.warning(f"Error parsing locus data: {e}")
+                        continue
+                        
+        except Exception as e:
+            logger.warning(f"Error extracting detailed loci summary: {e}")
+        
+        # Sort by gene count (largest first) and return top 10 for synthesis
+        loci_summaries.sort(key=lambda x: x.get('gene_count', 0), reverse=True)
+        return loci_summaries[:10]
+    
+    def _parse_locus_string(self, locus_str: str) -> Dict[str, Any]:
+        """Parse InterestingLocus string representation into structured data."""
+        try:
+            # Extract key information using regex
+            import re
+            
+            # Parse contig_id
+            contig_match = re.search(r"contig_id='([^']+)'", locus_str)
+            contig_id = contig_match.group(1) if contig_match else 'unknown'
+            
+            # Parse coordinates
+            start_match = re.search(r"start=(\d+)", locus_str)
+            end_match = re.search(r"end=(\d+)", locus_str)
+            start = int(start_match.group(1)) if start_match else 0
+            end = int(end_match.group(1)) if end_match else 0
+            
+            # Parse gene counts
+            gene_count_match = re.search(r"gene_count=(\d+)", locus_str)
+            hypo_count_match = re.search(r"hypothetical_count=(\d+)", locus_str)
+            gene_count = int(gene_count_match.group(1)) if gene_count_match else 0
+            hypo_count = int(hypo_count_match.group(1)) if hypo_count_match else 0
+            
+            # Parse locus type
+            type_match = re.search(r"locus_type='([^']+)'", locus_str)
+            locus_type = type_match.group(1) if type_match else 'unknown'
+            
+            # Parse biological features
+            features_match = re.search(r"biological_features=\[(.*?)\]", locus_str)
+            features = []
+            if features_match:
+                features_str = features_match.group(1)
+                # Simple extraction of quoted strings
+                feature_matches = re.findall(r"'([^']+)'", features_str)
+                features = feature_matches[:3]  # Top 3 features
+            
+            return {
+                'contig_id': contig_id,
+                'coordinates': f"{start}-{end}",
+                'gene_count': gene_count,
+                'hypothetical_count': hypo_count,
+                'locus_type': locus_type,
+                'biological_features': features
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error parsing locus string: {e}")
+            return None
+    
+    def _get_compression_threshold(self) -> int:
+        """
+        Get compression threshold respecting OpenAI's 30K TPM rate limit.
+        
+        Returns:
+            Token threshold above which tool results should be compressed
+        """
+        # Respect OpenAI's 30K tokens per minute rate limit for o3
+        # Use conservative limit to avoid rate limiting errors
+        return 25000
     
     def _save_debug_data(self, stage_name: str, data: Any, description: str) -> None:
         """
@@ -784,13 +907,17 @@ class ProgressiveSynthesizer:
             # Format chunk for processing
             formatted_chunk = self._format_data_for_synthesis(chunk)
             
-            # Use cheaper model for Map step (summarization task)
+            # Use cheaper model for Map step (data extraction task)
             summary = self._call_synthesis_model(
                 context=formatted_chunk,
                 question=question,
                 task_name="genomic_summarization",  # Use cheaper model for chunk summarization
-                focus=f"key insights and biological patterns from chunk {chunk_id}"
+                focus=f"preserve specific loci details and identifiers from chunk {chunk_id}",
+                synthesis_type="map_extraction"
             )
+            
+            # DEBUG: Save Map step output
+            self._save_debug_data(f"map_step_chunk_{chunk_id}_output", summary, f"Map step summary for chunk {chunk_id}")
             
             return summary
             
@@ -828,13 +955,46 @@ CHUNK SUMMARIES ({len(chunk_summaries)} chunks):
 SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.
 """
         
+        # Extract selection criteria from original question
+        selection_criteria = self._extract_selection_criteria(question)
+        
         # Use high-capability model for final synthesis
-        return self._call_synthesis_model(
+        final_synthesis = self._call_synthesis_model(
             context=synthesis_context,
             question=question,
             task_name="final_synthesis",  # Use o3 for complex integration
-            focus="comprehensive integration of chunk summaries with biological insights"
+            focus=selection_criteria,
+            synthesis_type="reduce_selection"
         )
+        
+        # DEBUG: Save Reduce step output
+        self._save_debug_data("reduce_step_final_output", final_synthesis, f"Final synthesis from {len(chunk_summaries)} chunk summaries")
+        
+        return final_synthesis
+    
+    def _extract_selection_criteria(self, question: str) -> str:
+        """
+        Extract selection criteria from user question for intelligent prioritization.
+        
+        Args:
+            question: Original user question
+            
+        Returns:
+            Selection criteria string for Reduce step
+        """
+        question_lower = question.lower()
+        
+        # Look for explicit selection criteria
+        if "top" in question_lower and ("3" in question_lower or "three" in question_lower):
+            return "select top 3 loci based on novelty and biological significance"
+        elif "most likely" in question_lower:
+            return "prioritize most likely candidates based on biological evidence"
+        elif "best" in question_lower or "highest" in question_lower:
+            return "select highest-confidence candidates with strongest biological evidence"
+        elif "detailed report" in question_lower:
+            return "provide detailed analysis with specific identifiers and coordinates"
+        else:
+            return "comprehensive biological analysis with intelligent prioritization"
     
     def _format_data_for_synthesis(self, data: List[Dict[str, Any]]) -> str:
         """
@@ -1032,7 +1192,7 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         
         return score
     
-    def _call_synthesis_model(self, context: str, question: str, task_name: str, focus: str) -> str:
+    def _call_synthesis_model(self, context: str, question: str, task_name: str, focus: str, synthesis_type: str = "summarization") -> str:
         """
         Call synthesis model using model allocation system with caching.
         
@@ -1041,6 +1201,7 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
             question: Original user question
             task_name: Task name for model allocation
             focus: Focus areas for synthesis
+            synthesis_type: Type of synthesis ("map_extraction", "reduce_selection", "summarization")
             
         Returns:
             Synthesis result
@@ -1062,14 +1223,44 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
             # CRITICAL: Enforce context limits before API call
             safe_context = self._enforce_context_limits(context, task_name, question)
             
-            from ..dspy_signatures import GenomicSummarizer
-            
-            def synthesize_call(module):
-                return module(
-                    genomic_data=safe_context,  # Use context-limit-enforced version
-                    target_length="detailed",
-                    focus_areas=focus
-                )
+            # Select appropriate signature based on synthesis type
+            if synthesis_type == "map_extraction":
+                from ..dspy_signatures import GenomicDataExtractor
+                signature_class = GenomicDataExtractor
+                
+                def synthesize_call(module):
+                    result = module(
+                        genomic_data=safe_context,
+                        focus_areas=focus
+                    )
+                    # Return combined output for compatibility
+                    return f"KEY LOCI:\n{result.key_loci}\n\nBIOLOGICAL CONTEXT:\n{result.biological_context}\n\nQUANTITATIVE METRICS:\n{result.quantitative_metrics}"
+                    
+            elif synthesis_type == "reduce_selection":
+                from ..dspy_signatures import GenomicSelector
+                signature_class = GenomicSelector
+                
+                def synthesize_call(module):
+                    result = module(
+                        question=question,
+                        chunk_extractions=safe_context,
+                        selection_criteria=focus
+                    )
+                    # Return combined output with data validation fields
+                    return f"FINAL REPORT:\n{result.final_report}\n\nSELECTION REASONING:\n{result.selection_reasoning}\n\nBIOLOGICAL SIGNIFICANCE:\n{result.biological_significance}\n\nDATA SOURCES:\n{result.data_sources}\n\nUNSUPPORTED CLAIMS:\n{result.unsupported_claims}"
+                    
+            else:  # Default to summarization
+                from ..dspy_signatures import GenomicSummarizer
+                signature_class = GenomicSummarizer
+                
+                def synthesize_call(module):
+                    result = module(
+                        genomic_data=safe_context,
+                        target_length="detailed",
+                        focus_areas=focus
+                    )
+                    # Return combined output for compatibility
+                    return f"SUMMARY:\n{result.summary}\n\nKEY FINDINGS:\n{result.key_findings}\n\nDATA STATISTICS:\n{result.data_statistics}"
             
             # ENHANCED retry logic with better rate limit detection
             max_retries = 5  # More retries for rate limits
@@ -1079,7 +1270,7 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                 try:
                     result = self.model_allocator.create_context_managed_call(
                         task_name=task_name,
-                        signature_class=GenomicSummarizer,
+                        signature_class=signature_class,
                         module_call_func=synthesize_call,
                         query=question,
                         task_context=f"Progressive synthesis: {focus}"
@@ -1102,16 +1293,22 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                     else:
                         raise  # Not rate limited or max retries reached
             
-            if result and hasattr(result, 'summary'):
+            # Handle different result formats based on synthesis type
+            if isinstance(result, str):
+                # synthesize_call function returned formatted string directly
+                synthesis_result = result
+            elif result and hasattr(result, 'summary'):
+                # Old GenomicSummarizer format
                 synthesis_result = result.summary
-                # Cache the result
-                self.synthesis_cache[cache_key] = synthesis_result
-                return synthesis_result
             else:
-                logger.warning("Model allocation returned unexpected result format")
+                logger.warning(f"Model allocation returned unexpected result format: {type(result)}")
                 fallback_result = f"Synthesis completed but result format unexpected. Context: {context[:500]}..."
                 self.synthesis_cache[cache_key] = fallback_result
                 return fallback_result
+            
+            # Cache and return the result
+            self.synthesis_cache[cache_key] = synthesis_result
+            return synthesis_result
                 
         except Exception as e:
             logger.error(f"Synthesis model call failed: {e}")

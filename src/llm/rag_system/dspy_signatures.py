@@ -447,6 +447,51 @@ class GenomicSummarizer(dspy.Signature):
     key_findings = dspy.OutputField(desc="Most important biological insights from the data")
     data_statistics = dspy.OutputField(desc="Quantitative summary of the dataset")
 
+class GenomicDataExtractor(dspy.Signature):
+    """
+    Extract and preserve essential biological details from genomic data chunks.
+    
+    Focus on retaining specific identifiers, coordinates, and biological features
+    rather than summarizing. This is used in Map-Reduce where the Reduce step
+    will do intelligent selection and synthesis.
+    """
+    
+    genomic_data = dspy.InputField(desc="Genomic dataset chunk to extract key information from")
+    focus_areas = dspy.InputField(desc="Specific biological aspects to emphasize")
+    
+    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers, coordinates, and biological features")
+    biological_context = dspy.OutputField(desc="Essential biological context and methodology used")
+    quantitative_metrics = dspy.OutputField(desc="Counts, sizes, and numerical measurements")
+
+class GenomicSelector(dspy.Signature):
+    """
+    Intelligently select and synthesize findings from multiple genomic data chunks.
+    
+    Performs biological prioritization and selection (e.g., "top 3 loci") based on
+    significance criteria. Uses preserved identifiers and coordinates from Map step
+    to generate accurate, detailed reports.
+    
+    CRITICAL CONSTRAINTS:
+    - Only use information explicitly provided in the chunk_extractions
+    - DO NOT invent analyses, tool runs, or statistics not present in the input data
+    - DO NOT reference BLAST searches, GC content analyses, EMBOSS tools, or other 
+      computational methods unless they appear in the provided data
+    - DO NOT fabricate database hits, similarity scores, or coverage metrics
+    - If detailed analysis is missing, state "insufficient data for detailed analysis"
+      rather than fabricating plausible-sounding scientific details
+    """
+    
+    question = dspy.InputField(desc="Original user question")
+    chunk_extractions = dspy.InputField(desc="Key findings extracted from each data chunk")
+    selection_criteria = dspy.InputField(desc="Criteria for prioritizing results (e.g., novelty, size, biological significance)")
+    
+    final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data")
+    selection_reasoning = dspy.OutputField(desc="Explanation of why specific loci were chosen based solely on provided information")
+    biological_significance = dspy.OutputField(desc="Biological interpretation using only the data available in chunk_extractions")
+    data_sources = dspy.OutputField(desc="Explicit list of data sources and tools actually used (must match what appears in chunk_extractions)")
+    unsupported_claims = dspy.OutputField(desc="Any claims that cannot be directly supported by the provided chunk_extractions data")
+
+
 class NotingDecision(dspy.Signature):
     """
     Decide whether task results warrant note-taking to capture ALL BIOLOGICAL INFORMATION.
