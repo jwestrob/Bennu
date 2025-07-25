@@ -195,9 +195,14 @@ async def _process_question(question: str, config: LLMConfig) -> dict:
     try:
         response = await rag.ask(question)
         
+        # Extract session ID from the RAG system's note_keeper
+        session_id = None
+        if hasattr(rag, 'note_keeper') and rag.note_keeper is not None:
+            session_id = rag.note_keeper.session_id
+        
         # Convert string response to expected dict format
         if isinstance(response, str):
-            return {
+            result = {
                 'answer': response,
                 'confidence': 'medium',
                 'citations': 'Query processed through modular RAG system',
@@ -209,10 +214,10 @@ async def _process_question(question: str, config: LLMConfig) -> dict:
             }
         elif isinstance(response, dict):
             # Already in correct format
-            return response
+            result = response
         else:
             # Fallback for unexpected format
-            return {
+            result = {
                 'answer': str(response),
                 'confidence': 'unknown',
                 'citations': 'Response format conversion applied',
@@ -222,6 +227,12 @@ async def _process_question(question: str, config: LLMConfig) -> dict:
                     'source': 'fallback'
                 }
             }
+        
+        # Add session ID to the result
+        if session_id:
+            result['session_id'] = session_id
+        
+        return result
     finally:
         rag.close()
 

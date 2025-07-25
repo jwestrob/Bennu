@@ -352,6 +352,10 @@ def ask(
                 json.dump(result, f, indent=2, default=str)
             console.print(f"\n[dim]💾 Answer saved to {output_file}[/dim]")
         
+        # Print session ID at the end if available
+        if result.get('session_id'):
+            console.print(f"\n[bold cyan]📝 Session ID:[/bold cyan] {result['session_id']}")
+        
     except Exception as e:
         console.print(f"[red]Error answering question: {e}[/red]")
         if verbose:
