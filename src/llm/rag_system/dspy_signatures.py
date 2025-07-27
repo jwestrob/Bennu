@@ -380,7 +380,7 @@ class ContextRetriever(dspy.Signature):
     query_type = dspy.InputField(desc="Classified query type from QueryClassifier")
 
     search_strategy = dspy.OutputField(desc="Retrieval approach: direct_query, similarity_search, or hybrid_search")
-    cypher_query = dspy.OutputField(desc="EXECUTABLE Cypher query with NO COMMENTS - must start with MATCH/WITH/OPTIONAL")
+    cypher_query = dspy.OutputField(desc="EXECUTABLE Cypher query with NO COMMENTS - must start with MATCH/WITH/OPTIONAL. When using COUNT() with GROUP BY, use descriptive column aliases that clarify the aggregation (e.g., 'proteins_per_family' instead of 'protein_count')")
     reasoning = dspy.OutputField(desc="Explanation of retrieval strategy choice")
     expected_result_size = dspy.OutputField(desc="Estimated result size: small, medium, or large")
 
@@ -465,7 +465,7 @@ class GenomicSynthesizer(dspy.Signature):
     question = dspy.InputField(desc="Original user question being addressed")
     context = dspy.InputField(desc="Integrated context from multiple analysis tasks")
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
-    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. When data shows grouped/aggregated results, briefly explain the relationship between record counts and entity totals to prevent confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
     key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data - no abbreviations or partial names allowed.")
 
