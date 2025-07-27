@@ -921,7 +921,7 @@ print("Data available: {data_summary}")
                 
                 if result.results:
                     # Check if compression is needed based on context size
-                    formatted_context = self._format_context_for_token_check(result.results)
+                    formatted_context = str(result.results)
                     
                     import tiktoken
                     try:

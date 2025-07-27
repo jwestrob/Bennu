@@ -61,12 +61,12 @@ class HierarchicalGenomeAnalyzer:
         self.model_name = model_name
         self.chunk_analyzer = GenomicChunkAnalyzer(model_name)
         
-        # Configuration for chunking strategy
+        # Configuration for token-aware chunking strategy
         self.chunking_config = {
-            "target_chunk_size": 1000,      # genes per chunk
-            "min_chunk_size": 500,          # minimum genes per chunk
-            "max_chunk_size": 1500,         # maximum genes per chunk
-            "overlap_size": 50              # gene overlap between chunks
+            "max_tokens_per_chunk": 8000,   # Token limit per chunk
+            "min_tokens_per_chunk": 2000,   # Minimum viable chunk size
+            "reserve_tokens": 1000,         # Reserve for prompt overhead
+            "contig_priority": True         # Always preserve contig boundaries
         }
         
         logger.info(f"🏗️ HierarchicalGenomeAnalyzer initialized with {model_name}")
@@ -191,59 +191,80 @@ class HierarchicalGenomeAnalyzer:
         return chunks
     
     def _chunk_by_contigs(self, contigs: List[Any], genome_ctx: Any) -> List[Dict[str, Any]]:
-        """Chunk genomic data by contigs to preserve biological boundaries."""
+        """Token-aware chunking that preserves contig boundaries."""
         chunks = []
         
         try:
-            # Group small contigs together, keep large contigs separate
+            max_tokens = self.chunking_config["max_tokens_per_chunk"]
+            min_tokens = self.chunking_config["min_tokens_per_chunk"]
+            
             current_chunk_contigs = []
-            current_gene_count = 0
+            current_estimated_tokens = 0
             
             for contig in contigs:
+                # Estimate tokens for this contig (rough approximation)
                 contig_gene_count = getattr(contig, 'total_genes', 0)
+                # Rough estimate: ~80 tokens per gene on average (including metadata)
+                contig_estimated_tokens = contig_gene_count * 80
                 
-                # If this contig alone exceeds target size, make it its own chunk
-                if contig_gene_count >= self.chunking_config["target_chunk_size"]:
-                    # Finalize current chunk if it exists
+                # If this single contig exceeds max tokens, it gets its own chunk
+                if contig_estimated_tokens >= max_tokens:
+                    # Finalize current chunk if it has content
                     if current_chunk_contigs:
                         chunk = self._create_chunk_dict(current_chunk_contigs, genome_ctx)
                         chunks.append(chunk)
                         current_chunk_contigs = []
-                        current_gene_count = 0
+                        current_estimated_tokens = 0
                     
-                    # Create chunk for large contig
+                    # Create chunk for this large contig alone
                     large_contig_chunk = self._create_chunk_dict([contig], genome_ctx)
                     chunks.append(large_contig_chunk)
+                    logger.info(f"🎯 Large contig {getattr(contig, 'contig_id', 'unknown')} gets dedicated chunk (~{contig_estimated_tokens} tokens)")
                 
-                # If adding this contig would exceed max size, finalize current chunk
-                elif (current_gene_count + contig_gene_count > self.chunking_config["max_chunk_size"] 
-                      and current_chunk_contigs):
-                    chunk = self._create_chunk_dict(current_chunk_contigs, genome_ctx)
-                    chunks.append(chunk)
-                    current_chunk_contigs = [contig]
-                    current_gene_count = contig_gene_count
+                # If adding this contig would exceed token limit, finalize current chunk
+                elif (current_estimated_tokens > 0 and 
+                      current_estimated_tokens + contig_estimated_tokens > max_tokens):
+                    
+                    # Only finalize if current chunk meets minimum size
+                    if current_estimated_tokens >= min_tokens:
+                        chunk = self._create_chunk_dict(current_chunk_contigs, genome_ctx)
+                        chunks.append(chunk)
+                        logger.debug(f"🎯 Finalized chunk: ~{current_estimated_tokens} tokens, {len(current_chunk_contigs)} contigs")
+                        
+                        # Start new chunk with this contig
+                        current_chunk_contigs = [contig]
+                        current_estimated_tokens = contig_estimated_tokens
+                    else:
+                        # Current chunk too small, keep adding
+                        logger.debug(f"🎯 Current chunk too small ({current_estimated_tokens} < {min_tokens}), continuing")
+                        current_chunk_contigs.append(contig)
+                        current_estimated_tokens += contig_estimated_tokens
                 
                 # Add contig to current chunk
                 else:
                     current_chunk_contigs.append(contig)
-                    current_gene_count += contig_gene_count
+                    current_estimated_tokens += contig_estimated_tokens
+                    logger.debug(f"🧱 Added contig {getattr(contig, 'contig_id', 'unknown')}: ~{contig_estimated_tokens} tokens (total: ~{current_estimated_tokens})")
             
             # Don't forget the last chunk
             if current_chunk_contigs:
                 chunk = self._create_chunk_dict(current_chunk_contigs, genome_ctx)
                 chunks.append(chunk)
+                logger.debug(f"🎯 Final chunk: ~{current_estimated_tokens} tokens, {len(current_chunk_contigs)} contigs")
         
         except Exception as e:
-            logger.warning(f"Error chunking by contigs: {e}")
+            logger.warning(f"Error in token-aware contig chunking: {e}")
         
+        logger.info(f"🎯 Token-aware chunking created {len(chunks)} chunks preserving contig boundaries")
         return chunks
     
     def _create_chunk_dict(self, contigs: List[Any], genome_ctx: Any) -> Dict[str, Any]:
-        """Create a chunk dictionary for sub-agent analysis."""
+        """Create a chunk dictionary for sub-agent analysis with token estimates."""
         try:
             # Calculate chunk statistics
             total_genes = sum(getattr(contig, 'total_genes', 0) for contig in contigs)
             total_length = sum(getattr(contig, 'length', 0) for contig in contigs)
+            estimated_tokens = total_genes * 80  # Rough token estimate
             
             # Create simplified genome context for this chunk
             chunk_genome_ctx = type('ChunkGenomeContext', (), {
@@ -258,6 +279,7 @@ class HierarchicalGenomeAnalyzer:
                 "chunk_stats": {
                     "total_genes": total_genes,
                     "total_contigs": len(contigs),
+                    "estimated_tokens": estimated_tokens,
                     "total_length": total_length
                 }
             }

@@ -109,7 +109,7 @@ class WholeGenomeReader:
                    g.endCoordinate AS end_pos,
                    g.strand AS strand,
                    g.lengthAA AS gene_length,
-                   COALESCE(g.contig, g.id, 'unknown_contig') AS contig_id,
+                   g.contig AS contig_id,
                    ko.id AS ko_id,
                    ko.description AS ko_description,
                    pfam_domains

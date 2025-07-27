@@ -422,7 +422,7 @@ class GenomicAnswerer(dspy.Signature):
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data and annotations")
     analysis_type = dspy.InputField(desc="Analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery")
-    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found")
+    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT abbreviated forms like 'scaffold_1705').")
     confidence = dspy.OutputField(desc="Confidence level: high, medium, or low")
     citations = dspy.OutputField(desc="Data sources and references used")
 
@@ -447,6 +447,28 @@ class GenomicSummarizer(dspy.Signature):
     key_findings = dspy.OutputField(desc="Most important biological insights from the data")
     data_statistics = dspy.OutputField(desc="Quantitative summary of the dataset")
 
+class GenomicSynthesizer(dspy.Signature):
+    """
+    Synthesize genomic analysis results into comprehensive biological interpretations.
+
+    Used for final synthesis steps where key findings from multiple analysis tasks
+    need to be integrated into coherent biological narratives. Supports different
+    synthesis modes for various types of genomic investigations.
+
+    Synthesis modes:
+    - discovery_summary: Focus on biological discoveries and novel findings
+    - comparative_analysis: Compare findings across genomes or conditions
+    - functional_interpretation: Emphasize functional annotations and pathways
+    - comprehensive_report: Full detailed analysis with all aspects
+    """
+
+    question = dspy.InputField(desc="Original user question being addressed")
+    context = dspy.InputField(desc="Integrated context from multiple analysis tasks")
+    synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. When data shows grouped/aggregated results, briefly explain the relationship between record counts and entity totals to prevent confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
+    confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
+    key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data - no abbreviations or partial names allowed.")
+
 class GenomicDataExtractor(dspy.Signature):
     """
     Extract and preserve essential biological details from genomic data chunks.
@@ -459,7 +481,7 @@ class GenomicDataExtractor(dspy.Signature):
     genomic_data = dspy.InputField(desc="Genomic dataset chunk to extract key information from")
     focus_areas = dspy.InputField(desc="Specific biological aspects to emphasize")
     
-    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers, coordinates, and biological features")
+    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705') for all reported loci to enable verification.")
     biological_context = dspy.OutputField(desc="Essential biological context and methodology used")
     quantitative_metrics = dspy.OutputField(desc="Counts, sizes, and numerical measurements")
 
@@ -467,9 +489,10 @@ class GenomicSelector(dspy.Signature):
     """
     Intelligently select and synthesize findings from multiple genomic data chunks.
     
-    Performs biological prioritization and selection (e.g., "top 3 loci") based on
-    significance criteria. Uses preserved identifiers and coordinates from Map step
-    to generate accurate, detailed reports.
+    Based on the original question and biological significance of findings, determine which
+    loci are most relevant and how many should be highlighted. Consider functional importance,
+    novelty, gene content, and direct relevance to the user's question. Let biological
+    significance and question context drive selection rather than arbitrary numerical limits.
     
     CRITICAL CONSTRAINTS:
     - Only use information explicitly provided in the chunk_extractions
@@ -481,12 +504,11 @@ class GenomicSelector(dspy.Signature):
       rather than fabricating plausible-sounding scientific details
     """
     
-    question = dspy.InputField(desc="Original user question")
+    question = dspy.InputField(desc="Original user question that should guide selection and prioritization")
     chunk_extractions = dspy.InputField(desc="Key findings extracted from each data chunk")
-    selection_criteria = dspy.InputField(desc="Criteria for prioritizing results (e.g., novelty, size, biological significance)")
     
-    final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data")
-    selection_reasoning = dspy.OutputField(desc="Explanation of why specific loci were chosen based solely on provided information")
+    final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data. VERIFICATION REQUIREMENT: For any genomic loci mentioned, always include the complete scaffold/contig identifier (not abbreviated) to enable independent verification of findings.")
+    selection_reasoning = dspy.OutputField(desc="Explanation of why specific loci were chosen based on biological significance and question relevance")
     biological_significance = dspy.OutputField(desc="Biological interpretation using only the data available in chunk_extractions")
     data_sources = dspy.OutputField(desc="Explicit list of data sources and tools actually used (must match what appears in chunk_extractions)")
     unsupported_claims = dspy.OutputField(desc="Any claims that cannot be directly supported by the provided chunk_extractions data")
@@ -609,7 +631,7 @@ class ReportSynthesisGenerator(dspy.Signature):
     cross_cutting_themes = dspy.InputField(desc="Themes that emerge across multiple parts")
     quantitative_integration = dspy.InputField(desc="Integrated quantitative analysis")
 
-    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings")
+    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705'). NO abbreviations like 'scaffold_1705' are permitted.")
     biological_implications = dspy.OutputField(desc="Broader biological and evolutionary implications")
     recommendations = dspy.OutputField(desc="Recommendations for future research or applications")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in conclusions")

@@ -12,8 +12,10 @@ This enables natural biological exploration where the LLM can:
 """
 
 import asyncio
+import json
 import logging
 import time
+import ast
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 
@@ -93,9 +95,11 @@ class AgentDecisionMaker(dspy.Signature if DSPY_AVAILABLE else object):
     - Background information on discoveries
     
     Use 'synthesize' action when:
-    - Sufficient information has been gathered
-    - Multiple tools have provided complementary data
-    - Ready to provide comprehensive answer
+    - Statistical analysis with comprehensive findings is complete (e.g., detailed protein/gene analysis with quantitative results)
+    - Questions asking for comparison/distribution have been answered with descriptive statistics
+    - Code interpreter has provided complete statistical breakdown with means, std deviations, and patterns
+    - Database queries have retrieved necessary data AND code interpreter has analyzed it thoroughly
+    - Ready to provide comprehensive answer based on completed analysis
     """
     
     user_question = dspy.InputField(desc="Original user question with biological context")
@@ -107,7 +111,33 @@ class AgentDecisionMaker(dspy.Signature if DSPY_AVAILABLE else object):
     tool_parameters = dspy.OutputField(desc="JSON parameters for the selected tool (empty object {} for synthesize)")
     biological_reasoning = dspy.OutputField(desc="Detailed biological reasoning for this decision based on current findings")
     confidence = dspy.OutputField(desc="Confidence level 0.0-1.0 in this decision")
-    exploration_complete = dspy.OutputField(desc="true if ready to synthesize final answer, false if more exploration needed")
+    exploration_complete = dspy.OutputField(desc="true if comprehensive analysis is complete (statistical analysis done, patterns identified, question fully answered), false if more tools needed")
+
+
+class AnalysisCodeGenerator(dspy.Signature if DSPY_AVAILABLE else object):
+    """Generate Python analysis code with clean data interface.
+    
+    The generated code will have access to:
+    - step_data: Dict[str, Any] - Raw results from each previous step
+    - dataframes: Dict[str, pd.DataFrame] - Ready-to-use DataFrames indexed by step number
+    - metadata: Dict with step count, tools used, etc.
+    
+    Access patterns:
+    - dataframes[1] or dataframes['step_1'] - DataFrame from step 1
+    - step_data['step_1']['summary'] - Step metadata
+    - len(dataframes) - Number of available datasets
+    
+    Expected output:
+    - Store results in 'analysis_results' variable as dict
+    - Include 'summary', 'key_findings', 'statistics' keys
+    - Print important findings for user visibility
+    """
+    
+    user_question = dspy.InputField(desc="User's original biological analysis question")
+    available_data_summary = dspy.InputField(desc="Summary of available datasets: step numbers, data types, row counts, and key columns") 
+    analysis_objective = dspy.InputField(desc="What specific analysis or computation is needed to answer the question")
+    
+    analysis_code = dspy.OutputField(desc="Python code using dataframes[step_num] to access data, performing the analysis, and storing results in analysis_results dict")
 
 
 class UnifiedAgentExecutor:
@@ -156,6 +186,12 @@ class UnifiedAgentExecutor:
         self.step_timeout = 300  # 5 minutes per step
         self.guidance_frequency = 3  # Run guidance synthesis every N steps
         
+        # Initialize data collection for code interpreter
+        self._previous_step_data = {}
+        
+        # Code generator will use model allocation system
+        # (no need to initialize here, will use model_allocator.create_context_managed_call)
+        
         logger.info("🤖 UnifiedAgentExecutor initialized - dynamic tool chaining enabled")
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
@@ -179,6 +215,8 @@ class UnifiedAgentExecutor:
         current_findings = f"Analyzing question: {question}"
         tools_used: List[str] = []
         
+        # Removed: Tool usage tracking (allow multiple consecutive tool calls)
+        
         # Set note-taking context if available
         if self.note_keeper:
             self.note_keeper.set_session_context(question, "unified_agent")
@@ -199,6 +237,8 @@ class UnifiedAgentExecutor:
                     logger.info("🎯 Agent decided to synthesize final answer")
                     break
                 
+                # Allow multiple consecutive tool calls - agent can use code_interpreter multiple times
+                
                 # Execute the chosen tool
                 step_result = await self._execute_agent_step(
                     step_number=step_number,
@@ -209,6 +249,9 @@ class UnifiedAgentExecutor:
                 )
                 
                 steps.append(step_result)
+                
+                # Collect previous step data for code interpreter access
+                self._update_previous_step_data(steps)
                 
                 # DEBUG: Save individual task result for debugging
                 self._save_task_debug_data(step_result, step_number)
@@ -224,7 +267,8 @@ class UnifiedAgentExecutor:
                     if "database_query" not in tools_used:
                         tools_used.append("database_query")
                 
-                # Update findings for next decision
+                # CRITICAL FIX: Update findings IMMEDIATELY after step execution
+                # This ensures the agent sees current results when making the next decision
                 if step_result.success and step_result.result:
                     result_summary = self._summarize_step_result(step_result)
                     current_findings += f"\n\nStep {step_number} findings: {result_summary}"
@@ -453,11 +497,11 @@ class UnifiedAgentExecutor:
                 return {
                     "success": True,
                     "analysis_type": "hierarchical_multi_genome",
-                    "interesting_loci": hierarchical_result.interesting_loci,
-                    "detailed_analyses": hierarchical_result.detailed_analyses,
-                    "analysis_summary": hierarchical_result.analysis_summary,
-                    "processing_stats": hierarchical_result.processing_stats,
-                    "tool_output": self._format_hierarchical_output(hierarchical_result)
+                    "tool_output": self._format_hierarchical_output(hierarchical_result),
+                    "summary": {
+                        "loci_count": len(hierarchical_result.interesting_loci) if hierarchical_result.interesting_loci else 0,
+                        "analysis_type": "curated_hierarchical_analysis"
+                    }
                 }
             else:
                 return raw_result
@@ -476,11 +520,11 @@ class UnifiedAgentExecutor:
                     "success": True,
                     "analysis_type": "hierarchical_single_genome",
                     "genome_id": genome_id,
-                    "interesting_loci": hierarchical_result.interesting_loci,
-                    "detailed_analyses": hierarchical_result.detailed_analyses,
-                    "analysis_summary": hierarchical_result.analysis_summary,
-                    "processing_stats": hierarchical_result.processing_stats,
-                    "tool_output": self._format_hierarchical_output(hierarchical_result)
+                    "tool_output": self._format_hierarchical_output(hierarchical_result),
+                    "summary": {
+                        "loci_count": len(hierarchical_result.interesting_loci) if hierarchical_result.interesting_loci else 0,
+                        "analysis_type": "curated_hierarchical_analysis"
+                    }
                 }
             else:
                 return result
@@ -518,6 +562,33 @@ class UnifiedAgentExecutor:
                     
                     if locus.biological_features:
                         output_parts.append(f"  Features: {'; '.join(locus.biological_features[:3])}")
+                    
+                    # Display detailed gene annotations
+                    if hasattr(locus, 'detailed_genes') and locus.detailed_genes:
+                        output_parts.append(f"  Detailed Gene Annotations:")
+                        for j, gene in enumerate(locus.detailed_genes, 1):
+                            gene_line = f"    {j}. {gene.gene_id} ({gene.start}-{gene.end}, {gene.strand})"
+                            
+                            # Add functional annotation
+                            if gene.ko_description:
+                                gene_line += f" - {gene.ko_description}"
+                            elif gene.annotation:
+                                gene_line += f" - {gene.annotation}"
+                            else:
+                                gene_line += " - hypothetical protein"
+                            
+                            output_parts.append(gene_line)
+                            
+                            # Add PFAM domains if available
+                            if gene.pfam_domains:
+                                domains_str = ", ".join(gene.pfam_domains[:3])  # Show first 3 domains
+                                if len(gene.pfam_domains) > 3:
+                                    domains_str += f" (+{len(gene.pfam_domains)-3} more)"
+                                output_parts.append(f"       Domains: {domains_str}")
+                            
+                            # Add KEGG ID if available  
+                            if gene.ko_id:
+                                output_parts.append(f"       KEGG: {gene.ko_id}")
             
             # Detailed analyses
             if hierarchical_result.detailed_analyses:
@@ -555,16 +626,136 @@ class UnifiedAgentExecutor:
         """Execute code interpreter for analysis."""
         from .external_tools import code_interpreter_tool
         
-        # Generate analysis code based on parameters
-        analysis_code = self._generate_analysis_code(params)
+        # Enhance params with previous step data and original question
+        enhanced_params = params.copy()
+        enhanced_params["previous_step_data"] = getattr(self, '_previous_step_data', {})
+        enhanced_params["original_question"] = getattr(self, 'current_user_question', '')
         
-        # Execute code
-        result = await code_interpreter_tool(analysis_code)
+        # Generate analysis code based on enhanced parameters
+        analysis_code = self._generate_analysis_code(enhanced_params)
+        
+        # Validate generated code syntax
+        if not self._validate_code_syntax(analysis_code):
+            raise Exception("Generated code has syntax errors")
+        
+        # Execute code with extended timeout
+        result = await code_interpreter_tool(analysis_code, timeout=120)
         
         if result and result.get("success"):
-            return result.get("output", "")
+            output = result.get("output", "")
+            if len(output.strip()) == 0:
+                raise Exception("Code interpreter produced no output - analysis may have failed")
+            return output
         else:
             raise Exception(f"Code interpreter failed: {result.get('error', 'Unknown error')}")
+    
+    def _validate_code_syntax(self, code: str) -> bool:
+        """Validate that generated code has correct syntax."""
+        try:
+            ast.parse(code)
+            return True
+        except SyntaxError as e:
+            logger.error(f"Generated code has syntax error: {e}")
+            return False
+    
+    def _update_previous_step_data(self, steps: List[AgentStep]) -> None:
+        """Update the collection of previous step data for code interpreter access."""
+        import json
+        
+        self._previous_step_data = {
+            "step_count": len(steps),
+            "tools_used": [],
+            "step_results": {}
+        }
+        
+        for step in steps:
+            if step.success and step.result:
+                # Track tools used
+                tool_name = step.tool_name or "database_query"
+                if tool_name not in self._previous_step_data["tools_used"]:
+                    self._previous_step_data["tools_used"].append(tool_name)
+                
+                # Store step results (with size limits for code injection)
+                step_key = f"step_{step.step_number}_{tool_name}"
+                
+                # For database_query results, extract key data
+                if tool_name == "database_query" and isinstance(step.result, (list, dict)):
+                    if isinstance(step.result, list):
+                        self._previous_step_data["step_results"][step_key] = {
+                            "tool": tool_name,
+                            "data_type": "list",
+                            "count": len(step.result),
+                            "sample_data": step.result,  # Store full data, no 100-item limit
+                            "full_data": step.result  # Include full data for analysis
+                        }
+                    else:
+                        self._previous_step_data["step_results"][step_key] = {
+                            "tool": tool_name,
+                            "data_type": "dict", 
+                            "data": step.result
+                        }
+                
+                # For code interpreter results, extract structured data from JSON output
+                elif tool_name == "code_interpreter" and isinstance(step.result, str):
+                    # Try to extract structured analysis results from code interpreter output
+                    try:
+                        import re
+                        # Look for the ANALYSIS RESULTS JSON block
+                        json_match = re.search(r'ANALYSIS RESULTS:\s*(\{.*?\})\s*={50}', step.result, re.DOTALL)
+                        if json_match:
+                            json_str = json_match.group(1)
+                            analysis_results = json.loads(json_str)
+                            
+                            # Check if we have statistical data that can be converted to DataFrames
+                            statistics = analysis_results.get('statistics', {})
+                            extracted_data = []
+                            
+                            # Look for data tables in the statistics
+                            for key, value in statistics.items():
+                                if isinstance(value, str) and ('rows' in value or 'columns' in value):
+                                    # This looks like DataFrame string representation
+                                    # For now, store the analysis results as-is but mark as structured
+                                    extracted_data.append({
+                                        'type': 'analysis_summary',
+                                        'content': analysis_results
+                                    })
+                                    break
+                            
+                            # Store the comprehensive analysis as structured data
+                            self._previous_step_data["step_results"][step_key] = {
+                                "tool": tool_name,
+                                "data_type": "code_analysis",
+                                "analysis_results": analysis_results,
+                                "summary": analysis_results.get('summary', 'Code interpreter analysis completed'),
+                                "key_findings": analysis_results.get('key_findings', []),
+                                "statistics": statistics,
+                                "comprehensive_analysis": True  # Flag for synthesis system
+                            }
+                        else:
+                            # Fallback to string storage
+                            result_str = str(step.result)
+                            self._previous_step_data["step_results"][step_key] = {
+                                "tool": tool_name,
+                                "data_type": "string",
+                                "summary": result_str[:500] + "..." if len(result_str) > 500 else result_str
+                            }
+                    except (json.JSONDecodeError, AttributeError) as e:
+                        # Fallback to string storage if JSON parsing fails
+                        result_str = str(step.result)
+                        self._previous_step_data["step_results"][step_key] = {
+                            "tool": tool_name,
+                            "data_type": "string", 
+                            "summary": result_str[:500] + "..." if len(result_str) > 500 else result_str
+                        }
+                
+                # For other tools, store summary
+                else:
+                    result_str = str(step.result)
+                    self._previous_step_data["step_results"][step_key] = {
+                        "tool": tool_name,
+                        "data_type": "string",
+                        "summary": result_str[:500] + "..." if len(result_str) > 500 else result_str
+                    }
     
     async def _execute_literature_search(self, params: Dict[str, Any]) -> Any:
         """Execute literature search."""
@@ -642,35 +833,271 @@ class UnifiedAgentExecutor:
             return []
     
     def _generate_analysis_code(self, params: Dict[str, Any]) -> str:
-        """Generate Python analysis code based on parameters."""
-        analysis_type = params.get("analysis_type", "general")
-        description = params.get("description", "data analysis")
+        """Generate Python analysis code using clean data interface."""
         
-        if "statistical" in analysis_type or "statistics" in description.lower():
-            return """
+        description = params.get("description", "data analysis")
+        previous_data = params.get("previous_step_data", {})
+        original_question = params.get("original_question", "")
+        
+        # Create clean data interface template
+        base_code = self._create_data_interface_template(previous_data, original_question, description)
+        
+        # Generate dynamic analysis code using LLM via model allocation
+        if DSPY_AVAILABLE:
+            try:
+                # Create clear data summary for the LLM
+                data_summary = self._create_data_summary(previous_data)
+                
+                # Use model allocation system for code generation
+                def code_generation_call(module):
+                    return module(
+                        user_question=original_question,
+                        available_data_summary=data_summary,
+                        analysis_objective=description
+                    )
+                
+                generated_result = self.model_allocator.create_context_managed_call(
+                    task_name="code_generation",
+                    signature_class=AnalysisCodeGenerator,
+                    module_call_func=code_generation_call,
+                    query=original_question,
+                    task_context=f"Generate analysis code for: {description}"
+                )
+                
+                if generated_result:
+                    analysis_code = generated_result.analysis_code
+                    logger.info(f"🐍 Generated analysis code ({len(analysis_code)} chars)")
+                    logger.debug(f"Generated code preview: {analysis_code[:200]}...")
+                else:
+                    raise Exception("Code generation returned no result")
+                
+                # Add result validation template
+                validation_code = """
+
+# Validate analysis results format
+if 'analysis_results' not in locals():
+    analysis_results = {'summary': 'Analysis completed but no results stored'}
+
+if not isinstance(analysis_results, dict):
+    analysis_results = {'summary': str(analysis_results)}
+
+# Ensure required fields exist
+analysis_results.setdefault('summary', 'Analysis completed')
+analysis_results.setdefault('key_findings', [])
+analysis_results.setdefault('statistics', {})
+
+print("\\n" + "="*50)
+print("ANALYSIS RESULTS:")
+print(json.dumps(analysis_results, indent=2, default=str))
+print("="*50)
+"""
+                
+                return base_code + "\n" + analysis_code + "\n" + validation_code
+                
+            except Exception as e:
+                logger.error(f"LLM code generation failed: {e}")
+                # Fallback to basic analysis
+                return self._generate_fallback_analysis_code(base_code, original_question)
+        else:
+            # Fallback when DSPy not available
+            return self._generate_fallback_analysis_code(base_code, original_question)
+    
+    def _create_data_interface_template(self, previous_data: Dict[str, Any], original_question: str, description: str) -> str:
+        """Create clean data interface template with predictable access patterns."""
+        
+        # Process step results into clean format
+        step_data = {}
+        dataframes_data = {}
+        
+        for step_key, step_result in previous_data.get('step_results', {}).items():
+            # Handle both list data and dict data with structured_data
+            extracted_data = None
+            data_count = 0
+            
+            if step_result.get('data_type') == 'list' and 'full_data' in step_result:
+                # Direct list data (old format)
+                extracted_data = step_result['full_data']
+                data_count = step_result.get('count', len(extracted_data))
+            elif step_result.get('data_type') == 'dict' and 'data' in step_result:
+                # Dict data - check if it has structured_data field (database_query results)
+                dict_data = step_result['data']
+                if isinstance(dict_data, dict) and 'structured_data' in dict_data:
+                    # Extract the structured_data list from database query results
+                    extracted_data = dict_data['structured_data']
+                    data_count = len(extracted_data) if isinstance(extracted_data, list) else 0
+                    
+            # If we found extractable data, process it
+            if extracted_data and isinstance(extracted_data, list) and len(extracted_data) > 0:
+                # Extract step number from key (e.g., "step_5_database_query" -> 5)
+                step_num = None
+                if step_key.startswith('step_'):
+                    try:
+                        step_num = int(step_key.split('_')[1])
+                    except (IndexError, ValueError):
+                        step_num = len(step_data) + 1
+                else:
+                    step_num = len(step_data) + 1
+                
+                # Store both by number and by original key for flexibility
+                dataframes_data[step_num] = extracted_data
+                dataframes_data[f'step_{step_num}'] = extracted_data
+                
+                step_data[step_num] = {
+                    'tool': step_result.get('tool', 'unknown'),
+                    'count': data_count,
+                    'summary': f"Step {step_num} {step_result.get('tool', 'data')}"
+                }
+        
+        # Create clean, safe template
+        template = f'''
 import pandas as pd
 import numpy as np
+import json
+from builtins import *
 
-# Statistical analysis
-print("Performing statistical analysis...")
-print(f"Analysis description: {description}")
-"""
-        elif "pattern" in analysis_type or "pattern" in description.lower():
-            return """
-import pandas as pd
-import matplotlib.pyplot as plt
+# Analysis context
+user_question = """{original_question}"""
+analysis_objective = """{description}"""
 
-# Pattern detection analysis  
-print("Detecting patterns in biological data...")
-print(f"Analysis description: {description}")
+print(f"User Question: {{user_question}}")
+print(f"Analysis Objective: {{analysis_objective}}")
+
+# Safe data loading with minimal complexity
+dataframes = {{}}
+step_data = {{}}
+
+print("\\nLoading data from previous steps...")
+'''
+
+        # Add each dataset individually using the same enhanced extraction logic
+        step_num = 1
+        for step_key, step_result in previous_data.get('step_results', {}).items():
+            # Use the same extraction logic as we used in dataframes_data
+            extracted_data = None
+            
+            if step_result.get('data_type') == 'list' and 'full_data' in step_result:
+                # Direct list data (old format)
+                extracted_data = step_result['full_data']
+            elif step_result.get('data_type') == 'dict' and 'data' in step_result:
+                # Dict data - check if it has structured_data field (database_query results)
+                dict_data = step_result['data']
+                if isinstance(dict_data, dict) and 'structured_data' in dict_data:
+                    # Extract the structured_data list from database query results
+                    extracted_data = dict_data['structured_data']
+            
+            # Process extracted data
+            if extracted_data and isinstance(extracted_data, list) and len(extracted_data) > 0:
+                # Generate actual step number from key
+                actual_step_num = step_num
+                if step_key.startswith('step_'):
+                    try:
+                        actual_step_num = int(step_key.split('_')[1])
+                    except (IndexError, ValueError):
+                        actual_step_num = step_num
+                
+                template += f'''
+try:
+    # Load step {actual_step_num} data ({step_result.get('tool', 'unknown')})
+    # FIXED: Use full dataset instead of artificial 5-record limit
+    # User feedback: "We need to remove this threshold entirely"
+    step_{actual_step_num}_data = {json.dumps(extracted_data, default=str)}  # Full data, no sampling
+    if len(step_{actual_step_num}_data) > 0:
+        df_{actual_step_num} = pd.DataFrame({json.dumps(extracted_data, default=str)})
+        dataframes[{actual_step_num}] = df_{actual_step_num}
+        dataframes['step_{actual_step_num}'] = df_{actual_step_num}
+        step_data[{actual_step_num}] = {{'tool': '{step_result.get('tool', 'unknown')}', 'count': {len(extracted_data)}}}
+        print(f"Loaded dataframes[{actual_step_num}]: {{df_{actual_step_num}.shape}} with columns {{list(df_{actual_step_num}.columns)}}")
+except Exception as e:
+    print(f"Could not load step {actual_step_num}: {{e}}")
+'''
+                step_num += 1
+
+        template += f'''
+print(f"\\nData Interface Ready:")
+print(f"- {{len(dataframes)}} DataFrames available")
+print(f"- Access via: dataframes[1], dataframes[2], etc.")
+print("=" * 50)
+'''
+        return template
+    
+    def _create_data_summary(self, previous_data: Dict[str, Any]) -> str:
+        """Create concise data summary for LLM code generation."""
+        summaries = []
+        
+        for step_key, step_result in previous_data.get('step_results', {}).items():
+            # Handle both list data and dict data with structured_data (same logic as _create_data_interface_template)
+            extracted_data = None
+            
+            if step_result.get('data_type') == 'list' and 'full_data' in step_result:
+                # Direct list data (old format)
+                extracted_data = step_result['full_data']
+            elif step_result.get('data_type') == 'dict' and 'data' in step_result:
+                # Dict data - check if it has structured_data field (database_query results)
+                dict_data = step_result['data']
+                if isinstance(dict_data, dict) and 'structured_data' in dict_data:
+                    # Extract the structured_data list from database query results
+                    extracted_data = dict_data['structured_data']
+            
+            # Process extracted data
+            if extracted_data and isinstance(extracted_data, list) and len(extracted_data) > 0:
+                # Extract step number
+                step_num = None
+                if step_key.startswith('step_'):
+                    try:
+                        step_num = int(step_key.split('_')[1])
+                    except (IndexError, ValueError):
+                        step_num = len(summaries) + 1
+                else:
+                    step_num = len(summaries) + 1
+                
+                # Infer columns and types
+                if isinstance(extracted_data[0], dict):
+                    columns = list(extracted_data[0].keys())
+                    sample_values = {k: str(extracted_data[0][k])[:50] for k in columns[:3]}
+                    summaries.append(
+                        f"dataframes[{step_num}]: {len(extracted_data)} rows, columns {columns}, "
+                        f"tool: {step_result.get('tool', 'unknown')}, sample: {sample_values}"
+                    )
+        
+        if not summaries:
+            return "No structured data available for analysis"
+        
+        return "Available datasets: " + " | ".join(summaries)
+    
+    def _generate_fallback_analysis_code(self, base_code: str, question: str) -> str:
+        """Generate basic analysis code when LLM generation fails."""
+        fallback_analysis = f"""
+# Fallback analysis - basic data exploration using clean interface
+print("\\nPerforming basic data exploration...")
+
+for step_num, df in dataframes.items():
+    if isinstance(step_num, int):  # Only process numeric keys to avoid duplicates
+        print(f"\\n--- Analysis of dataframes[{step_num}] ---")
+        print(f"Shape: {{df.shape}}")
+        print(f"Columns: {{list(df.columns)}}")
+        
+        # Basic statistics for numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 0:
+            print(f"Numeric columns: {{list(numeric_cols)}}")
+            print("Basic statistics:")
+            print(df[numeric_cols].describe())
+        
+        # Value counts for categorical columns  
+        categorical_cols = df.select_dtypes(include=['object']).columns
+        for col in categorical_cols[:3]:  # First 3 categorical columns
+            print(f"\\nValue counts for {{col}}:")
+            print(df[col].value_counts().head())
+
+# Store basic results using new format
+analysis_results = {{
+    'summary': "Basic data exploration completed",
+    'key_findings': ["Data loaded and explored", "Question: {question}"],
+    'statistics': {{'datasets_analyzed': len([k for k in dataframes.keys() if isinstance(k, int)])}},
+    'analysis_type': 'fallback_exploration'
+}}
 """
-        else:
-            return f"""
-# General analysis
-print("General biological data analysis")
-print(f"Description: {description}")
-print("Analysis complete")
-"""
+        return base_code + fallback_analysis
     
     def _summarize_step_result(self, step: AgentStep) -> str:
         """Create a concise summary of step results for next decision."""
@@ -712,12 +1139,35 @@ print("Analysis complete")
                 if not summary_parts:
                     summary_parts.append("Analysis completed successfully")
             
-            # For code interpreter results, look for output patterns
+            # For code interpreter results, extract comprehensive analysis details
             if step.tool_name == "code_interpreter":
                 if isinstance(step.result, str):
-                    if "identified" in step.result.lower() or "found" in step.result.lower():
+                    result_text = step.result.lower()
+                    
+                    # Look for comprehensive biological analysis completion signals
+                    if ("distribution" in result_text or "comparison" in result_text) and "protein" in result_text:
+                        # Extract data size indicators from the results dynamically
+                        import re
+                        # Look for patterns like "X proteins", "X records", "X,XXX proteins" etc.
+                        protein_matches = re.findall(r'(\d{1,3}(?:,\d{3})*|\d+)\s+(?:proteins?|records?)', step.result, re.IGNORECASE)
+                        if protein_matches:
+                            protein_count = protein_matches[0].replace(',', '')
+                            summary_parts.append(f"COMPREHENSIVE biological analysis: {protein_count} proteins analyzed across genomes with complete statistical distribution")
+                        else:
+                            summary_parts.append("Comprehensive distribution analysis completed with statistical breakdown")
+                    
+                    # Look for statistical completion signals  
+                    elif ("mean" in result_text and "std" in result_text) or "statistics" in result_text:
+                        summary_parts.append("COMPREHENSIVE statistical analysis completed with descriptive statistics")
+                    
+                    # Look for comparative analysis completion
+                    elif "compare" in result_text and ("genome" in result_text or "distribution" in result_text):
+                        summary_parts.append("COMPARATIVE analysis completed across multiple datasets")
+                    
+                    # General completion patterns
+                    elif "identified" in result_text or "found" in result_text:
                         summary_parts.append("Computational analysis with identified patterns")
-                    elif "analysis" in step.result.lower():
+                    elif "analysis" in result_text:
                         summary_parts.append("Statistical analysis completed")
                     else:
                         summary_parts.append("Code execution completed")

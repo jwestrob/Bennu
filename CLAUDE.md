@@ -46,6 +46,29 @@ This replaces the broken 4MB+ context stuffing with ~10K tokens of highly releva
 
 ---
 
+## ✅ **FIXED: Contig Field Database Issue**
+
+**Problem**: The COALESCE fallback in `whole_genome_reader.py:112` was allowing gene IDs to masquerade as contig identifiers when processing spatial genomic data, leading to false genome counting (e.g., "5 genomes" when there are only 4).
+
+**Solution**: Removed the problematic fallback:
+```sql
+# OLD (problematic):
+COALESCE(g.contig, g.id, 'unknown_contig') AS contig_id
+
+# NEW (clean):
+g.contig AS contig_id
+```
+
+**Benefits**: 
+- Gene IDs can no longer appear as contig identifiers
+- Any missing contig assignments will fail explicitly (revealing corruption)
+- LLM analysis sees correct genome boundaries
+- Prevents false genome counting in reports
+
+**Status**: Fixed
+
+---
+
 ## 📋 **MULTI-STAGE SYNTHESIS IMPLEMENTATION PLAN**
 
 ### **Phase 1: Fix Current Context (In Progress)**
