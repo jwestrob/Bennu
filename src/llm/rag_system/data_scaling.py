@@ -79,8 +79,9 @@ class MediumDatasetStrategy(DataScalingStrategy):
     
     def create_code_enhancement(self, protein_ids: List[str], total_count: int) -> str:
         """Enhanced code for medium datasets with batch processing."""
-        # For medium datasets, pass first 100 proteins for detailed analysis
-        sample_ids = protein_ids[:100]
+        # FIXED: Use full dataset instead of artificial 100-protein limit
+        # User feedback: "We need to remove this threshold entirely"
+        sample_ids = protein_ids  # Use all proteins, not just first 100
         enhanced_code = f"""
 # Medium Dataset Analysis Setup ({total_count} proteins)
 # Batch processing with representative sampling
@@ -201,29 +202,31 @@ class ScalingRouter:
             "large_dataset": LargeDatasetStrategy()
         }
         
-        # Configurable thresholds
-        self.small_threshold = 100
-        self.medium_threshold = 1000
+        # DISABLED: Remove artificial thresholds that limit data analysis
+        # User feedback: "We need to remove this threshold entirely. If we run out of RAM 
+        # in the code interpreter environment I'll just give the sucker more RAM."
+        self.small_threshold = float('inf')  # No limit - always use full analysis
+        self.medium_threshold = float('inf')  # No limit - always use full analysis
         
-        # Performance limit for code interpreter
-        self.max_proteins_for_code = 500
+        # DISABLED: Remove protein limits for code interpreter
+        # Let the code interpreter handle full datasets without artificial restrictions
+        self.max_proteins_for_code = float('inf')  # No limit
     
     def choose_strategy(self, estimated_count: int) -> DataScalingStrategy:
-        """Choose appropriate strategy based on estimated result count."""
-        if estimated_count <= self.small_threshold:
-            strategy_name = "small_dataset"
-        elif estimated_count <= self.medium_threshold:
-            strategy_name = "medium_dataset"
-        else:
-            strategy_name = "large_dataset"
+        """Always choose small_dataset strategy for full analysis without truncation."""
+        # Always use small_dataset strategy which provides full context analysis
+        # This eliminates artificial data truncation that was limiting analysis to 100 records
+        strategy_name = "small_dataset"
         
         strategy = self.strategies[strategy_name]
-        logger.info(f"📊 Chose {strategy.get_strategy_name()} strategy for {estimated_count} proteins")
+        logger.info(f"📊 Using full dataset analysis strategy for {estimated_count} proteins (no truncation)")
         return strategy
     
     def get_protein_limit_for_code(self, estimated_count: int) -> int:
-        """Get appropriate protein limit for code interpreter based on dataset size."""
-        return min(estimated_count, self.max_proteins_for_code)
+        """Return full dataset size - no artificial limits."""
+        # Return the actual count without artificial limits
+        # User requested removal of all thresholds that truncate data
+        return estimated_count
 
 def convert_to_count_query(cypher_query: str) -> str:
     """Convert a Cypher query to count estimation format."""

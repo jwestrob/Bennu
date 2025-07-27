@@ -89,8 +89,8 @@ class ProgressiveSynthesizer:
             # Set direct synthesis limit to respect OpenAI's 30K TPM rate limit for o3
             self.direct_synthesis_limit = min(25000, int(final_synthesis_model.max_context * 0.8))
             
-            # Set map chunk limit to 40% of map step model capacity
-            self.map_chunk_limit = int(map_step_model.max_context * 0.4)
+            # Set map chunk limit to respect 30K TPM limit (not model context)
+            self.map_chunk_limit = min(25000, int(map_step_model.max_context * 0.4))
             
             logger.info(f"📊 Model-aware limits updated: direct={self.direct_synthesis_limit:,}, chunk={self.map_chunk_limit:,}")
             logger.info(f"📊 Models: final_synthesis={final_synthesis_model.model_name}, map_step={map_step_model.model_name}")
@@ -488,7 +488,7 @@ class ProgressiveSynthesizer:
         """
         # Respect OpenAI's 30K tokens per minute rate limit for o3
         # Use conservative limit to avoid rate limiting errors
-        return 25000
+        return 20000
     
     def _save_debug_data(self, stage_name: str, data: Any, description: str) -> None:
         """
@@ -608,6 +608,26 @@ class ProgressiveSynthesizer:
         chunk_sizes = [self._count_data_tokens(chunk) for chunk in chunks]
         logger.info(f"📦 Created {len(chunks)} chunks for parallel Map step processing")
         logger.info(f"📊 Chunk sizes: {chunk_sizes} tokens (limit: {self.map_chunk_limit})")
+        
+        # SINGLE-CHUNK BYPASS: If only one chunk, skip Map-Reduce and go directly to final synthesis
+        if len(chunks) == 1:
+            logger.info("🎯 Single chunk detected - bypassing Map-Reduce and proceeding directly to final synthesis")
+            single_chunk_data = chunks[0]
+            formatted_context = self._format_data_for_synthesis(single_chunk_data)
+            
+            # Use high-capability model for direct synthesis
+            final_result = self._call_synthesis_model(
+                context=formatted_context,
+                question=question,
+                task_name="final_synthesis",  # Use o3 for complex synthesis
+                focus="comprehensive biological analysis with full data context",
+                synthesis_type="summarization"  # Use regular synthesis, not Map-Reduce
+            )
+            
+            # DEBUG: Save single-chunk bypass output
+            self._save_debug_data("single_chunk_bypass_output", final_result, "Direct synthesis from single chunk")
+            
+            return final_result
         
         # MAP STEP: Parallelize chunk processing
         logger.info(f"🚀 Starting parallel chunk processing with {self.max_concurrent_calls} workers")
@@ -955,15 +975,14 @@ CHUNK SUMMARIES ({len(chunk_summaries)} chunks):
 SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.
 """
         
-        # Extract selection criteria from original question
-        selection_criteria = self._extract_selection_criteria(question)
+        # Use original question directly for intelligent selection
         
         # Use high-capability model for final synthesis
         final_synthesis = self._call_synthesis_model(
             context=synthesis_context,
             question=question,
             task_name="final_synthesis",  # Use o3 for complex integration
-            focus=selection_criteria,
+            focus="intelligent biological prioritization",
             synthesis_type="reduce_selection"
         )
         
@@ -972,29 +991,6 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         
         return final_synthesis
     
-    def _extract_selection_criteria(self, question: str) -> str:
-        """
-        Extract selection criteria from user question for intelligent prioritization.
-        
-        Args:
-            question: Original user question
-            
-        Returns:
-            Selection criteria string for Reduce step
-        """
-        question_lower = question.lower()
-        
-        # Look for explicit selection criteria
-        if "top" in question_lower and ("3" in question_lower or "three" in question_lower):
-            return "select top 3 loci based on novelty and biological significance"
-        elif "most likely" in question_lower:
-            return "prioritize most likely candidates based on biological evidence"
-        elif "best" in question_lower or "highest" in question_lower:
-            return "select highest-confidence candidates with strongest biological evidence"
-        elif "detailed report" in question_lower:
-            return "provide detailed analysis with specific identifiers and coordinates"
-        else:
-            return "comprehensive biological analysis with intelligent prioritization"
     
     def _format_data_for_synthesis(self, data: List[Dict[str, Any]]) -> str:
         """
@@ -1243,8 +1239,7 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                 def synthesize_call(module):
                     result = module(
                         question=question,
-                        chunk_extractions=safe_context,
-                        selection_criteria=focus
+                        chunk_extractions=safe_context
                     )
                     # Return combined output with data validation fields
                     return f"FINAL REPORT:\n{result.final_report}\n\nSELECTION REASONING:\n{result.selection_reasoning}\n\nBIOLOGICAL SIGNIFICANCE:\n{result.biological_significance}\n\nDATA SOURCES:\n{result.data_sources}\n\nUNSUPPORTED CLAIMS:\n{result.unsupported_claims}"
@@ -1335,16 +1330,10 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         # Check question complexity requirements
         requires_detailed_context = self._question_requires_detailed_context(question)
         
-        # Decision logic
-        if key_findings_quality >= 0.8 and not requires_detailed_context:
-            logger.info(f"✅ High-quality key findings detected ({key_findings_quality:.2f}) + simple question = key_findings_only")
-            return "key_findings_only"
-        elif key_findings_quality >= 0.6 and "quick" in question.lower():
-            logger.info(f"✅ Adequate key findings ({key_findings_quality:.2f}) + quick query = key_findings_only")
-            return "key_findings_only"
-        else:
-            logger.info(f"🔍 Insufficient key findings ({key_findings_quality:.2f}) or complex question = full_context")
-            return "full_context"
+        # FORCE MAP-REDUCE: Always use full_context to ensure anti-hallucination constraints
+        # and detailed Map-Reduce analysis instead of lightweight key-findings-only mode
+        logger.info(f"🎯 Forcing Map-Reduce synthesis (key_findings_quality: {key_findings_quality:.2f}, detailed_context: {requires_detailed_context})")
+        return "full_context"
     
     def _assess_key_findings_completeness(self, unified_data: List[Dict[str, Any]]) -> float:
         """
@@ -1467,7 +1456,7 @@ ANALYSIS COMPLETE - {len(all_findings)} key discoveries identified
 """
         
         # Use direct synthesis with lightweight context
-        from .dspy_signatures import GenomicSynthesizer
+        from ..dspy_signatures import GenomicSynthesizer
         
         def synthesis_call(module):
             return module(

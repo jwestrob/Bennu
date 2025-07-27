@@ -312,7 +312,19 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ Code execution completed successfully")
+                
+                # Check actual execution success, not just HTTP success
+                if result.get('success', False):
+                    logger.info(f"✅ Code execution completed successfully")
+                    # Map stdout to output field for consistency
+                    if 'stdout' in result and result.get('output') is None:
+                        result['output'] = result['stdout']
+                else:
+                    logger.error(f"❌ Code execution failed: {result.get('error', 'Unknown error')}")
+                    # Still map stdout to output in case there was partial output
+                    if 'stdout' in result:
+                        result['output'] = result['stdout']
+                
                 return result
             else:
                 error_msg = f"Code interpreter service error: {response.status_code}"

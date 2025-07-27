@@ -20,6 +20,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class DetailedGeneInfo:
+    """Detailed gene information with full annotations preserved."""
+    gene_id: str
+    protein_id: Optional[str]
+    start: int
+    end: int
+    strand: str
+    length: int
+    annotation: str
+    ko_id: Optional[str]
+    ko_description: Optional[str]
+    pfam_domains: List[str]
+    is_hypothetical: bool
+
+
+@dataclass
 class InterestingLocus:
     """Represents a genomically interesting region identified by analysis."""
     contig_id: str
@@ -30,6 +46,7 @@ class InterestingLocus:
     biological_features: List[str]
     flanking_genes: List[str]
     locus_type: str  # "gene_cluster", "single_protein", or LLM-determined type
+    detailed_genes: List[DetailedGeneInfo]  # Full gene annotations preserved
     
     @property
     def genomic_coordinates(self) -> str:
@@ -45,12 +62,22 @@ class InterestingLocus:
 
 
 class GenomicRegionIdentifier(dspy.Signature):
-    """Identify interesting genomic regions from chunk analysis."""
+    """
+    Identify interesting genomic regions from chunk analysis.
+    
+    CRITICAL ANTI-HALLUCINATION CONSTRAINTS:
+    - ONLY use gene IDs that appear EXACTLY in the input genomic_chunk_data
+    - DO NOT fabricate, assume, or invent gene IDs that are not explicitly provided
+    - DO NOT create sequential gene numbering (e.g., if you see genes 1,2,3 do NOT assume 4,5,6 exist)
+    - DO NOT extrapolate missing genes or fill in gaps in gene numbering
+    - If unsure whether a gene ID exists, DO NOT include it
+    - VIOLATION OF THESE CONSTRAINTS WILL RESULT IN ANALYSIS REJECTION
+    """
     
     genomic_chunk_data = dspy.InputField(desc="Structured genomic data for a chunk of genes with coordinates, annotations, and hypothetical status")
     analysis_criteria = dspy.InputField(desc="User question and criteria for identifying interesting regions")
     
-    interesting_regions = dspy.OutputField(desc="JSON list of interesting loci, each with: contig_id, start_coordinate, end_coordinate, gene_ids (array of individual gene_id strings from input data), locus_type, biological_significance_reasoning. CRITICAL: gene_ids must be an array of individual gene_id values EXACTLY as they appear in the input data. Do NOT append coordinates or create composite identifiers. Each gene_id should be a separate string in the array.")
+    interesting_regions = dspy.OutputField(desc="JSON list of interesting loci, each with: contig_id (COMPLETE scaffold/contig identifier as it appears in the data), start_coordinate, end_coordinate, gene_ids (array of individual gene_id strings from input data), locus_type, biological_significance_reasoning. VERIFICATION CRITICAL: Use the complete, unabbreviated contig_id for traceability (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' not 'scaffold_1705'). Gene_ids must contain ONLY values that appear EXACTLY in the genomic_chunk_data input - DO NOT fabricate or assume any gene IDs not explicitly provided. HALLUCINATED GENE IDS WILL BE REJECTED.")
 
 
 class GenomicChunkAnalyzer:
@@ -137,17 +164,32 @@ class GenomicChunkAnalyzer:
             # Prepare structured genomic data for LLM analysis
             genomic_data = self._prepare_structured_genomic_data(contigs)
             
+            # Extract available gene IDs for explicit instruction
+            available_gene_ids = self._extract_all_gene_ids_from_chunk_data(contigs)
+            gene_id_sample = list(available_gene_ids)[:20]  # Show first 20 as examples
+            
             # Create analysis criteria based on user question
             analysis_criteria = f"""
             User question: {user_question}
             
+            AVAILABLE GENE IDs IN THIS CHUNK (ONLY these can be used):
+            {gene_id_sample}
+            
+            CRITICAL: You can ONLY reference gene IDs that appear in the genomic_chunk_data. DO NOT create or assume additional gene IDs.
+            
             Please identify genomically interesting regions. For each region, provide:
-            - contig_id: The contig name where the region is located (NOT a gene ID - just the bare contig identifier)
-            - start_coordinate: genomic start position of the region
-            - end_coordinate: genomic end position of the region  
+            - contig_id: COMPLETE scaffold/contig identifier as it appears in the input data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' - DO NOT abbreviate to just 'scaffold_1705')
+            - start_coordinate: genomic nucleotide position where the region begins (use the START coordinate of the first gene in your selection)
+            - end_coordinate: genomic nucleotide position where the region ends (use the END coordinate of the last gene in your selection)
             - gene_ids: array of individual gene_id strings from the input data
             - locus_type: description of what makes this region interesting
             - biological_significance_reasoning: why this region is relevant to the user's question
+            
+            COORDINATE CALCULATION GUIDELINES:
+            - start_coordinate should be the genomic START position of the earliest gene you selected (e.g., if gene at position 15234-16890 is your first gene, use 15234)
+            - end_coordinate should be the genomic END position of the latest gene you selected (e.g., if gene at position 28456-29123 is your last gene, use 29123)
+            - These should be actual nucleotide positions on the contig, NOT gene numbers or indices
+            - Coordinates should make biological sense (start < end, and span the actual genomic region)
             
             CRITICAL INSTRUCTIONS FOR gene_ids:
             1. gene_ids should be an array like ["gene:ABC_001", "gene:ABC_002", "gene:ABC_003"]
@@ -159,14 +201,16 @@ class GenomicChunkAnalyzer:
             EXAMPLE of CORRECT output format:
             [
               {{
-                "contig_id": "scaffold_1",
-                "start_coordinate": 1000,
-                "end_coordinate": 5000,
+                "contig_id": "RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705",
+                "start_coordinate": 15234,
+                "end_coordinate": 29123,
                 "gene_ids": ["gene:scaffold_1_001", "gene:scaffold_1_002", "gene:scaffold_1_003"],
                 "locus_type": "prophage candidate",
-                "biological_significance_reasoning": "Contains multiple hypothetical proteins"
+                "biological_significance_reasoning": "Contains multiple hypothetical proteins spanning 13.9kb region"
               }}
             ]
+            
+            NOTE: In this example, the first gene (scaffold_1_001) starts at position 15234, the last gene (scaffold_1_003) ends at position 29123, so the locus spans 15234-29123.
             
             EXAMPLE of INCORRECT format (DO NOT DO THIS):
             [
@@ -196,11 +240,21 @@ class GenomicChunkAnalyzer:
             return []
     
     def _prepare_structured_genomic_data(self, contigs: List[Any]) -> str:
-        """Prepare structured genomic data with contig-based chunking for biological integrity."""
+        """Prepare structured genomic data with token-aware contig-based chunking."""
         try:
+            # Token limits for different models (conservative estimates)
+            model_token_limits = {
+                "gpt-4o-mini": 8000,  # Conservative limit for input context
+                "gpt-4o": 8000,
+                "gpt-4": 6000
+            }
+            
+            max_tokens = model_token_limits.get(self.model_name, 8000)
+            logger.info(f"🎯 Token-aware chunking: max {max_tokens} tokens for {self.model_name}")
+            
             structured_data = []
+            current_tokens = 0
             total_genes_processed = 0
-            max_genes_per_chunk = 200  # Conservative limit to avoid token overflow
             
             for contig in contigs:
                 contig_id = getattr(contig, 'contig_id', 'unknown')
@@ -210,13 +264,10 @@ class GenomicChunkAnalyzer:
                 minus_genes = getattr(contig, 'minus_strand_genes', [])
                 all_genes = plus_genes + minus_genes
                 
-                # Check if adding this entire contig would exceed limit
-                contig_gene_count = len(all_genes)
-                if total_genes_processed > 0 and (total_genes_processed + contig_gene_count) > max_genes_per_chunk:
-                    logger.info(f"📊 Stopping at {total_genes_processed} genes to preserve contig boundaries")
-                    break
+                if not all_genes:
+                    continue
                 
-                # Process entire contig to maintain biological integrity
+                # Build contig data structure
                 contig_info = {
                     "contig_id": contig_id,
                     "length": getattr(contig, 'length', 0),
@@ -240,13 +291,22 @@ class GenomicChunkAnalyzer:
                     }
                     contig_info["genes"].append(gene_info)
                 
-                # Add complete contig
-                structured_data.append(contig_info)
-                total_genes_processed += contig_gene_count
+                # Estimate tokens for this contig (improved approximation)
+                contig_tokens = self._estimate_contig_tokens(contig_info)
                 
-                logger.debug(f"🧱 Added contig {contig_id} with {contig_gene_count} genes")
+                # Check if adding this contig would exceed token limit
+                if current_tokens > 0 and (current_tokens + contig_tokens) > max_tokens:
+                    logger.info(f"🎯 Token limit reached: {current_tokens} tokens, stopping at {total_genes_processed} genes to preserve contig boundaries")
+                    break
+                
+                # Add complete contig (preserve biological integrity)
+                structured_data.append(contig_info)
+                current_tokens += contig_tokens
+                total_genes_processed += len(all_genes)
+                
+                logger.debug(f"🧱 Added contig {contig_id}: {len(all_genes)} genes, ~{contig_tokens} tokens (total: {current_tokens})")
             
-            logger.info(f"📊 Prepared {total_genes_processed} genes across {len(structured_data)} contigs (contig-boundary preserved)")
+            logger.info(f"📊 Token-aware chunking complete: {total_genes_processed} genes across {len(structured_data)} contigs (~{current_tokens} tokens)")
             return str(structured_data)  # LLM can parse this structure
             
         except Exception as e:
@@ -297,6 +357,7 @@ class GenomicChunkAnalyzer:
             
             # DEBUG: Log what the LLM actually returned
             logger.warning(f"🐛 DEBUG: Raw LLM response: {llm_response[:500]}...")
+            logger.warning(f"🐛 DEBUG: Extracted JSON: {json_match.group()[:300]}...")
             
             try:
                 loci_data = json.loads(json_match.group())
@@ -314,17 +375,26 @@ class GenomicChunkAnalyzer:
                     end_coord = int(locus_data.get('end_coordinate', 0))
                     gene_ids = locus_data.get('gene_ids', [])
                     
-                    # VALIDATE: Reject synthetic gene IDs with coordinate ranges
+                    # VALIDATE: Strict hallucination prevention
                     valid_gene_ids = []
+                    available_gene_ids = self._extract_all_gene_ids_from_chunk_data(contigs)
+                    
                     for gene_id in gene_ids:
+                        # Check 1: Reject synthetic gene IDs with coordinate ranges
                         if isinstance(gene_id, str) and ':' in gene_id and '-' in gene_id.split(':')[-1]:
-                            # This looks like a synthetic ID with coordinates (e.g. "gene:ABC:0-5000")
                             logger.warning(f"🚫 Rejecting synthetic gene ID with coordinates: {gene_id}")
                             continue
+                        
+                        # Check 2: STRICT - Gene ID must exist in input data
+                        if gene_id not in available_gene_ids:
+                            logger.error(f"🚨 HALLUCINATION DETECTED: Gene ID '{gene_id}' not found in input data!")
+                            logger.error(f"   Available gene IDs sample: {list(available_gene_ids)[:10]}")
+                            continue
+                        
                         valid_gene_ids.append(gene_id)
                     
                     if not valid_gene_ids:
-                        logger.warning(f"🚫 Skipping locus - all gene IDs were synthetic with coordinates")
+                        logger.warning(f"🚫 Skipping locus - all gene IDs were hallucinated or synthetic")
                         continue
                         
                     gene_ids = valid_gene_ids
@@ -336,6 +406,29 @@ class GenomicChunkAnalyzer:
                     
                     if not genes_in_locus:
                         logger.warning(f"No genes found for locus {contig_id}:{start_coord}-{end_coord}")
+                        continue
+                    
+                    # CRITICAL FIX: Recalculate coordinates from actual gene positions
+                    # The LLM often returns gene indices or nonsensical coordinates
+                    # We need to use the actual genomic start/end positions of the found genes
+                    actual_starts = [getattr(gene, 'start', 0) for gene in genes_in_locus]
+                    actual_ends = [getattr(gene, 'end', 0) for gene in genes_in_locus]
+                    
+                    if actual_starts and actual_ends:
+                        # Calculate the span of the genomic region
+                        recalculated_start = min(actual_starts)
+                        recalculated_end = max(actual_ends)
+                        
+                        # Log the fix for debugging
+                        if start_coord != recalculated_start or end_coord != recalculated_end:
+                            logger.warning(f"🔧 COORDINATE FIX: LLM returned {start_coord}-{end_coord}, "
+                                         f"using actual gene coordinates {recalculated_start}-{recalculated_end}")
+                        
+                        # Use the corrected coordinates
+                        start_coord = recalculated_start
+                        end_coord = recalculated_end
+                    else:
+                        logger.warning(f"Could not extract gene coordinates for locus {contig_id}")
                         continue
                     
                     # Count hypothetical proteins
@@ -360,7 +453,10 @@ class GenomicChunkAnalyzer:
                         flanking_genes = [f"Single gene: {gene_desc}"]
                     
 
-                    # Create InterestingLocus object
+                    # Create detailed gene info objects preserving all annotations
+                    detailed_genes = self._create_detailed_gene_info(genes_in_locus)
+                    
+                    # Create InterestingLocus object with full gene details
                     locus = InterestingLocus(
                         contig_id=contig_id,
                         start=start_coord,
@@ -369,7 +465,8 @@ class GenomicChunkAnalyzer:
                         hypothetical_count=hypothetical_count,
                         biological_features=biological_features,
                         flanking_genes=flanking_genes,
-                        locus_type=locus_type
+                        locus_type=locus_type,
+                        detailed_genes=detailed_genes
                     )
                     
                     interesting_loci.append(locus)
@@ -401,12 +498,14 @@ class GenomicChunkAnalyzer:
                 # Strategy 1: Exact gene ID match
                 exact_match = self._find_by_exact_gene_id(gene_id, contigs)
                 if exact_match:
+                    logger.debug(f"✅ Found by exact gene ID match: {len(exact_match)} genes")
                     found_genes.extend(exact_match)
                     continue
                     
                 # Strategy 2: Exact protein ID match  
                 protein_match = self._find_by_exact_protein_id(gene_id, contigs)
                 if protein_match:
+                    logger.debug(f"✅ Found by exact protein ID match: {len(protein_match)} genes")
                     found_genes.extend(protein_match)
                     continue
                     
@@ -417,7 +516,14 @@ class GenomicChunkAnalyzer:
                     found_genes.extend(partial_match)
                     continue
                     
-                logger.warning(f"❌ No match found for gene ID: {gene_id}")
+                # Debug: Show what gene IDs are actually available in the first contig
+                if contigs:
+                    first_contig = contigs[0]
+                    sample_genes = (getattr(first_contig, 'plus_strand_genes', [])[:3] + 
+                                  getattr(first_contig, 'minus_strand_genes', [])[:3])
+                    sample_ids = [getattr(g, 'gene_id', 'no_id') for g in sample_genes]
+                    logger.warning(f"❌ No match found for gene ID: {gene_id}")
+                    logger.debug(f"   Sample gene IDs in data: {sample_ids[:5]}")
             
             # Remove duplicates while preserving order
             unique_genes = []
@@ -438,41 +544,176 @@ class GenomicChunkAnalyzer:
             return []
     
     def _find_by_exact_gene_id(self, gene_id: str, contigs: List[Any]) -> List[Any]:
-        """Find genes by exact gene ID match."""
+        """Find genes by exact gene ID match, handling prefix variations."""
+        # Try exact match first
         for contig in contigs:
             all_genes = getattr(contig, 'plus_strand_genes', []) + getattr(contig, 'minus_strand_genes', [])
             for gene in all_genes:
-                if getattr(gene, 'gene_id', '') == gene_id:
+                actual_gene_id = getattr(gene, 'gene_id', '')
+                if actual_gene_id == gene_id:
                     return [gene]
+        
+        # Try without gene: prefix on both sides
+        clean_search_id = gene_id.replace('gene:', '') if gene_id.startswith('gene:') else gene_id
+        for contig in contigs:
+            all_genes = getattr(contig, 'plus_strand_genes', []) + getattr(contig, 'minus_strand_genes', [])
+            for gene in all_genes:
+                actual_gene_id = getattr(gene, 'gene_id', '')
+                clean_actual_id = actual_gene_id.replace('gene:', '') if actual_gene_id.startswith('gene:') else actual_gene_id
+                if clean_actual_id == clean_search_id:
+                    return [gene]
+        
         return []
     
     def _find_by_exact_protein_id(self, gene_id: str, contigs: List[Any]) -> List[Any]:
-        """Find genes by exact protein ID match."""
+        """Find genes by exact protein ID match, handling prefix variations."""
+        # Try exact match first
         for contig in contigs:
             all_genes = getattr(contig, 'plus_strand_genes', []) + getattr(contig, 'minus_strand_genes', [])
             for gene in all_genes:
-                if getattr(gene, 'protein_id', '') == gene_id:
+                actual_protein_id = getattr(gene, 'protein_id', '')
+                if actual_protein_id == gene_id:
                     return [gene]
+        
+        # Try without protein: prefix on both sides
+        clean_search_id = gene_id.replace('protein:', '').replace('gene:', '') 
+        for contig in contigs:
+            all_genes = getattr(contig, 'plus_strand_genes', []) + getattr(contig, 'minus_strand_genes', [])
+            for gene in all_genes:
+                actual_protein_id = getattr(gene, 'protein_id', '')
+                clean_actual_id = actual_protein_id.replace('protein:', '').replace('gene:', '') if actual_protein_id else ''
+                if clean_actual_id and clean_actual_id == clean_search_id:
+                    return [gene]
+        
         return []
     
     
     def _find_by_partial_id(self, gene_id: str, contigs: List[Any]) -> List[Any]:
         """Find genes by partial ID matching (last resort)."""
-        # Extract meaningful parts from the gene ID
-        parts = gene_id.replace('gene:', '').replace('protein:', '').split('_')
-        if len(parts) < 2:
+        # Clean the search ID
+        clean_search_id = gene_id.replace('gene:', '').replace('protein:', '')
+        
+        if not clean_search_id:
             return []
         
-        # Look for genes with similar scaffold/contig patterns
+        # Look for genes with matching cleaned IDs
         candidates = []
         for contig in contigs:
             all_genes = getattr(contig, 'plus_strand_genes', []) + getattr(contig, 'minus_strand_genes', [])
             for gene in all_genes:
                 gene_id_actual = getattr(gene, 'gene_id', '')
+                protein_id_actual = getattr(gene, 'protein_id', '')
                 
-                # Use whole string matching instead of partial
-                if gene_id.replace('gene:', '').replace('protein:', '') == gene_id_actual.replace('gene:', '').replace('protein:', ''):
+                # Clean actual IDs and compare
+                clean_gene_id = gene_id_actual.replace('gene:', '').replace('protein:', '') if gene_id_actual else ''
+                clean_protein_id = protein_id_actual.replace('gene:', '').replace('protein:', '') if protein_id_actual else ''
+                
+                # Exact match on cleaned IDs
+                if clean_search_id == clean_gene_id or clean_search_id == clean_protein_id:
+                    candidates.append(gene)
+                    continue
+                
+                # Substring matching as last resort (if the search ID is contained in the actual ID)
+                if clean_search_id in clean_gene_id or clean_search_id in clean_protein_id:
                     candidates.append(gene)
         
         return candidates
+    
+    def _create_detailed_gene_info(self, genes_in_locus: List[Any]) -> List[DetailedGeneInfo]:
+        """Convert GeneContext objects to DetailedGeneInfo objects preserving all annotations."""
+        detailed_genes = []
+        
+        try:
+            for gene in genes_in_locus:
+                detailed_gene = DetailedGeneInfo(
+                    gene_id=getattr(gene, 'gene_id', ''),
+                    protein_id=getattr(gene, 'protein_id', None),
+                    start=getattr(gene, 'start', 0),
+                    end=getattr(gene, 'end', 0),
+                    strand=getattr(gene, 'strand', ''),
+                    length=getattr(gene, 'length', 0),
+                    annotation=getattr(gene, 'annotation', ''),
+                    ko_id=getattr(gene, 'ko_id', None),
+                    ko_description=getattr(gene, 'ko_description', None),
+                    pfam_domains=getattr(gene, 'pfam_domains', []),
+                    is_hypothetical=getattr(gene, 'is_hypothetical', False)
+                )
+                detailed_genes.append(detailed_gene)
+                
+        except Exception as e:
+            logger.warning(f"Error creating detailed gene info: {e}")
+        
+        return detailed_genes
+    
+    def _estimate_contig_tokens(self, contig_info: Dict[str, Any]) -> int:
+        """Estimate token count for a contig data structure."""
+        try:
+            # Base tokens for contig structure
+            base_tokens = 50  # contig_id, length, metadata
+            
+            # Tokens per gene (empirically estimated)
+            genes = contig_info.get("genes", [])
+            gene_tokens = 0
+            
+            for gene in genes:
+                # Base gene structure: ~30 tokens
+                gene_base = 30
+                
+                # Gene ID and protein ID: ~10 tokens each
+                gene_ids = 20
+                
+                # Coordinates and strand: ~10 tokens
+                coordinates = 10
+                
+                # Functional annotations
+                ko_desc = gene.get("ko_description", "")
+                ko_tokens = len(ko_desc.split()) * 1.3 if ko_desc else 5  # "hypothetical protein"
+                
+                # PFAM domains
+                pfam_domains = gene.get("pfam_domains", [])
+                pfam_tokens = len(pfam_domains) * 3  # domain names
+                
+                gene_total = gene_base + gene_ids + coordinates + ko_tokens + pfam_tokens
+                gene_tokens += gene_total
+            
+            total_estimated = base_tokens + gene_tokens
+            
+            # Add 10% buffer for JSON formatting
+            return int(total_estimated * 1.1)
+            
+        except Exception as e:
+            logger.debug(f"Error estimating tokens, using fallback: {e}")
+            # Fallback to character-based estimation
+            contig_str = str(contig_info)
+            return len(contig_str) // 4
+    
+    def _extract_all_gene_ids_from_chunk_data(self, contigs: List[Any]) -> set:
+        """Extract all gene IDs that are actually present in the input data."""
+        available_gene_ids = set()
+        
+        try:
+            for contig in contigs:
+                plus_genes = getattr(contig, 'plus_strand_genes', [])
+                minus_genes = getattr(contig, 'minus_strand_genes', [])
+                
+                for gene in plus_genes + minus_genes:
+                    gene_id = getattr(gene, 'gene_id', '')
+                    protein_id = getattr(gene, 'protein_id', '')
+                    
+                    if gene_id:
+                        available_gene_ids.add(gene_id)
+                        # Also add cleaned version without prefix
+                        if gene_id.startswith('gene:'):
+                            available_gene_ids.add(gene_id.replace('gene:', ''))
+                    
+                    if protein_id:
+                        available_gene_ids.add(protein_id)
+                        # Also add cleaned version without prefix
+                        if protein_id.startswith('protein:'):
+                            available_gene_ids.add(protein_id.replace('protein:', ''))
+        
+        except Exception as e:
+            logger.warning(f"Error extracting gene IDs from chunk data: {e}")
+        
+        return available_gene_ids
     

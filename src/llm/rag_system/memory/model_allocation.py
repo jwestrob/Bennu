@@ -82,7 +82,7 @@ class ModelAllocation:
                 model_name="o3",
                 provider="openai",
                 cost_per_million=15.00,
-                max_context=200000,
+                max_context=30000,
                 specialties=["deep_reasoning", "scientific_analysis", "synthesis"]
             )
         }
@@ -122,13 +122,20 @@ class ModelAllocation:
             "comprehensive_analysis": TaskComplexity.COMPLEX,
             "cross_database_integration": TaskComplexity.COMPLEX,
             "tool_selection": TaskComplexity.COMPLEX,           # Agent-based tool selection needs biological reasoning
+            "code_generation": TaskComplexity.MEDIUM,           # Generate analysis code based on user questions
         }
         
-        # Define model allocation based on complexity
+        # Define model allocation based on complexity (COST OPTIMIZED)
         self.complexity_to_tier = {
             TaskComplexity.SIMPLE: ModelTier.MINI,      # Use mini for simple tasks
             TaskComplexity.MEDIUM: ModelTier.MINI,      # Use mini for medium tasks  
-            TaskComplexity.COMPLEX: ModelTier.PREMIUM   # Use o3 for complex synthesis tasks
+            TaskComplexity.COMPLEX: ModelTier.MINI      # Use mini for most complex tasks (cost optimization)
+        }
+        
+        # Only use o3 for specific high-value tasks
+        self.premium_tasks = {
+            "agentic_planning",      # Agent planning decisions
+            "final_synthesis"        # Final report generation
         }
         
         logger.info(f"🎯 Model allocation initialized (premium_everywhere={use_premium_everywhere})")
@@ -137,35 +144,16 @@ class ModelAllocation:
         """
         Determine if query requires premium model for detailed genome analysis.
         
+        DISABLED FOR COST REDUCTION - Returns False to use gpt-4.1-mini for synthesis.
+        
         Args:
             query: The query or task description
             task_context: Additional context about the task
             
         Returns:
-            True if premium model should be used regardless of normal allocation
+            Always False to allow normal model allocation (cost optimization)
         """
-        combined_text = f"{query} {task_context}".lower()
-        
-        # Patterns indicating detailed analysis requests
-        analysis_patterns = [
-            "novelty", "unusual", "stands out", "thoroughly", "loci", 
-            "detailed analysis", "comprehensive", "in-depth", "deep dive",
-            "unique", "distinctive", "remarkable", "interesting"
-        ]
-        
-        # Patterns indicating specific genome targeting
-        genome_patterns = [
-            "nomurabacteria", "for genome", "in the", "for the", 
-            "within the", "specific genome", "target genome"
-        ]
-        
-        has_analysis_request = any(pattern in combined_text for pattern in analysis_patterns)
-        has_genome_targeting = any(pattern in combined_text for pattern in genome_patterns)
-        
-        if has_analysis_request and has_genome_targeting:
-            logger.info(f"🔥 FORCING PREMIUM MODEL: Detected detailed genome analysis request")
-            return True
-            
+        # TEMPORARILY DISABLED: Always return False to reduce costs and use gpt-4.1-mini
         return False
     
     def get_task_complexity(self, task_name: str, query: str = "", task_context: str = "") -> TaskComplexity:
@@ -239,8 +227,14 @@ class ModelAllocation:
         # Get context-aware task complexity
         complexity = self.get_task_complexity(task_name, query, task_context)
         
-        # Get appropriate model tier
-        tier = self.complexity_to_tier[complexity]
+        # Check if this is a premium task that requires o3
+        if task_name in self.premium_tasks:
+            tier = ModelTier.PREMIUM
+            logger.info(f"🔥 PREMIUM TASK: Using o3 for {task_name}")
+        else:
+            # Use default complexity-based allocation (all use mini now)
+            tier = self.complexity_to_tier[complexity]
+        
         model_config = self.models[tier]
         
         # Enhanced logging for synthesis tasks

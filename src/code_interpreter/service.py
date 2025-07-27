@@ -82,9 +82,11 @@ class SessionManager:
             'filter', 'float', 'format', 'hex', 'int', 'len', 'list', 'map',
             'max', 'min', 'oct', 'ord', 'print', 'range', 'reversed', 'round',
             'set', 'sorted', 'str', 'sum', 'tuple', 'type', 'zip', '__import__',
+            # Essential type checking and object introspection
+            'isinstance', 'issubclass', 'callable', 'iter', 'next',
             # Exception handling
             'Exception', 'BaseException', 'ValueError', 'TypeError', 'ImportError',
-            'KeyError', 'IndexError', 'AttributeError',
+            'KeyError', 'IndexError', 'AttributeError', 'NameError', 'RuntimeError',
             # Introspection
             'globals', 'locals', 'vars', 'dir', 'hasattr', 'getattr', 'setattr'
         ]
