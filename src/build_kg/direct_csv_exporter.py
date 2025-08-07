@@ -19,14 +19,15 @@ from rich.progress import Progress, TaskID
 console = Console()
 logger = logging.getLogger(__name__)
 
-# Define namespaces (matching rdf_builder.py)
-KG = Namespace("http://genome-kg.org/")
-PROTEIN_NS = Namespace("http://genome-kg.org/protein/")
-PFAM_NS = Namespace("http://genome-kg.org/pfam/")
-KEGG_NS = Namespace("http://genome-kg.org/kegg/")
-PATHWAY_NS = Namespace("http://genome-kg.org/pathway/")
-BGC_NS = Namespace("http://genome-kg.org/bgc/")
-GENOME_NS = Namespace("http://genome-kg.org/genome/")
+# Define namespaces (matching rdf_builder.py exactly)
+KG = Namespace("http://genome-kg.org/ontology/")
+GENOME = Namespace("http://genome-kg.org/genomes/")
+GENE = Namespace("http://genome-kg.org/genes/")
+PROTEIN = Namespace("http://genome-kg.org/proteins/")
+PFAM = Namespace("http://pfam.xfam.org/family/")
+KO = Namespace("http://www.genome.jp/kegg/ko/")
+CAZYME = Namespace("http://genome-kg.org/cazyme/")
+PROV = Namespace("http://www.w3.org/ns/prov#")
 
 
 class DirectCSVExporter:
@@ -206,8 +207,8 @@ class DirectCSVExporter:
         
         query = """
         SELECT DISTINCT ?pfam_id ?name ?description WHERE {
-            ?domain rdf:type kg:PFAMDomain .
-            ?domain kg:pfamId ?pfam_id .
+            ?domain rdf:type kg:Domain .
+            ?domain kg:pfamAccession ?pfam_id .
             OPTIONAL { ?domain kg:name ?name }
             OPTIONAL { ?domain kg:description ?description }
         }
@@ -239,8 +240,8 @@ class DirectCSVExporter:
         
         query = """
         SELECT DISTINCT ?kegg_id ?name ?definition WHERE {
-            ?function rdf:type kg:KEGGFunction .
-            ?function kg:keggId ?kegg_id .
+            ?function rdf:type kg:Function .
+            ?function kg:koAccession ?kegg_id .
             OPTIONAL { ?function kg:name ?name }
             OPTIONAL { ?function kg:definition ?definition }
         }
@@ -342,12 +343,12 @@ class DirectCSVExporter:
         
         query = """
         SELECT ?protein_id ?pfam_id ?evalue ?score WHERE {
-            ?protein kg:hasPFAMDomain ?annotation .
+            ?protein kg:hasDomain ?annotation .
             ?protein kg:proteinId ?protein_id .
-            ?annotation kg:domain ?domain .
-            ?domain kg:pfamId ?pfam_id .
+            ?annotation kg:domainFamily ?domain .
+            ?domain kg:pfamAccession ?pfam_id .
             OPTIONAL { ?annotation kg:evalue ?evalue }
-            OPTIONAL { ?annotation kg:score ?score }
+            OPTIONAL { ?annotation kg:bitscore ?score }
         }
         """
         
@@ -378,12 +379,12 @@ class DirectCSVExporter:
         
         query = """
         SELECT ?protein_id ?kegg_id ?evalue ?score WHERE {
-            ?protein kg:hasKEGGFunction ?annotation .
+            ?protein kg:hasFunction ?annotation .
             ?protein kg:proteinId ?protein_id .
-            ?annotation kg:function ?function .
-            ?function kg:keggId ?kegg_id .
+            ?annotation kg:assignedFunction ?function .
+            ?function kg:koAccession ?kegg_id .
             OPTIONAL { ?annotation kg:evalue ?evalue }
-            OPTIONAL { ?annotation kg:score ?score }
+            OPTIONAL { ?annotation kg:bitscore ?score }
         }
         """
         

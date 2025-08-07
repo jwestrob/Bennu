@@ -1008,7 +1008,8 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
             "csv_export_time": csv_stats.get("export_time_seconds", 0),
             "files_generated": csv_stats.get("files_generated", []),
             "total_nodes": csv_stats.get("total_nodes", 0),
-            "total_relationships": csv_stats.get("total_relationships", 0)
+            "total_relationships": csv_stats.get("total_relationships", 0),
+            "triple_count": len(builder.graph)  # Add this for compatibility
         }
         
         # Optionally preserve RDF files for debugging
@@ -1290,7 +1291,8 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
             "csv_export_time": csv_stats.get("export_time_seconds", 0),
             "files_generated": csv_stats.get("files_generated", []),
             "total_nodes": csv_stats.get("total_nodes", 0),
-            "total_relationships": csv_stats.get("total_relationships", 0)
+            "total_relationships": csv_stats.get("total_relationships", 0),
+            "triple_count": len(builder.graph)  # Add this for compatibility
         }
         
         # Optionally preserve RDF files for debugging
