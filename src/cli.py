@@ -36,9 +36,7 @@ build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
 build_knowledge_graph_with_extended_annotations = build_kg_module.build_knowledge_graph_with_extended_annotations
 run_esm2_embeddings = esm2_embeddings_module.run_esm2_embeddings
 
-# Import LLM components
-from .llm.cli import ask_question
-from .llm.config import LLMConfig
+# LLM components imported conditionally to avoid initialization overhead
 
 app = typer.Typer(
     name="genome-kg",
@@ -89,10 +87,20 @@ def build(
         "--skip-tax",
         help="Skip taxonomic classification with DFAST_QC"
     ),
+    meta: bool = typer.Option(
+        False,
+        "--meta",
+        help="Use metagenomic mode for gene prediction (prodigal -p meta)"
+    ),
     force: bool = typer.Option(
         False,
         "--force",
         help="Overwrite existing outputs"
+    ),
+    direct_csv: bool = typer.Option(
+        False,
+        "--direct-csv",
+        help="Skip RDF serialization, export directly to CSV for massive speedup"
     )
 ) -> None:
     """
@@ -129,7 +137,11 @@ def build(
             "name": "Input Preparation",
             "function": lambda: prepare_inputs(
                 input_dir=input_dir,
-                output_dir=output_dir / "stage00_prepared"
+                output_dir=output_dir / "stage00_prepared",
+                file_extensions=[".fasta", ".fa", ".fna"],
+                validate_format=True,
+                copy_files=False,
+                force=force
             )
         },
         1: {
@@ -137,8 +149,10 @@ def build(
             "function": lambda: run_quast(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage01_quast",
-                max_workers=min(threads, 4),  # Limit parallel workers
+                min_contig_length=500,
                 threads_per_genome=1,
+                max_workers=min(threads, 4),  # Limit parallel workers
+                reference_genome=None,
                 force=force
             )
         },
@@ -148,6 +162,7 @@ def build(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage02_dfast_qc",
                 threads=threads,
+                max_workers=min(threads, 4),
                 enable_cc=False,
                 force=force
             )
@@ -157,7 +172,11 @@ def build(
             "function": lambda: run_prodigal(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage03_prodigal",
+                mode="meta" if meta else "single",
+                genetic_code=11,
+                min_gene_length=90,
                 max_workers=threads,
+                include_nucleotides=True,
                 force=force
             )
         },
@@ -168,6 +187,7 @@ def build(
                 output_dir=output_dir / "stage04_astra",
                 threads=threads,
                 databases=["PFAM", "KOFAM"],
+                use_cutoffs=True,
                 force=force
             )
         },
@@ -198,7 +218,9 @@ def build(
                 stage05a_dir=output_dir / "stage05_gecco",
                 stage05b_dir=output_dir / "stage06_dbcan",
                 output_dir=output_dir / "stage07_kg",
-                stage01_dir=output_dir / "stage01_quast"
+                stage01_dir=output_dir / "stage01_quast",
+                direct_csv_export=direct_csv,
+                preserve_rdf_files=False  # Can be made configurable later
             )
         },
         8: {
@@ -222,11 +244,24 @@ def build(
             stage = stages[stage_num]
             console.print(f"\n[bold green]Stage {stage_num}: {stage['name']}[/bold green]")
             
-            # TODO: Add stage output checking and skip logic
-            stage_output_dir = output_dir / f"stage{stage_num:02d}_{stage['name'].lower().replace(' ', '_').replace('/', '_')}"
-            if not force and stage_output_dir.exists():
-                console.print(f"[yellow]Stage {stage_num} output exists, skipping (use --force to overwrite)[/yellow]")
-                continue
+            # Stage output directory mapping (actual directories created by functions)
+            stage_output_dirs = {
+                0: "stage00_prepared",
+                1: "stage01_quast", 
+                2: "stage02_dfast_qc",
+                3: "stage03_prodigal",
+                4: "stage04_astra",
+                5: "stage05_gecco",
+                6: "stage06_dbcan",
+                7: "stage07_kg",
+                8: "stage08_esm2"
+            }
+            
+            if stage_num in stage_output_dirs:
+                stage_output_dir = output_dir / stage_output_dirs[stage_num]
+                if not force and stage_output_dir.exists():
+                    console.print(f"[yellow]Stage {stage_num} output exists, skipping (use --force to overwrite)[/yellow]")
+                    continue
             
             # Execute stage
             try:

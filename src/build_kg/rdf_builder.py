@@ -837,12 +837,21 @@ class GenomeKGBuilder:
     def save_graph(self, output_file: Path, format: str = 'turtle'):
         """Save the knowledge graph to file."""
         try:
-            # Serialize to string first, then write to file
-            serialized = self.graph.serialize(format=format)
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(serialized)
-            
             triple_count = len(self.graph)
+            logger.info(f"Serializing knowledge graph with {triple_count:,} triples to {format.upper()} format...")
+            logger.info(f"Estimated time: {triple_count // 50000:.1f}-{triple_count // 25000:.1f} minutes for {format} serialization")
+            
+            import time
+            start_time = time.time()
+            
+            # Use direct file serialization (faster than serialize to string)
+            self.graph.serialize(destination=str(output_file), format=format)
+            
+            end_time = time.time()
+            serialization_time = end_time - start_time
+            rate = triple_count / serialization_time if serialization_time > 0 else 0
+            
+            logger.info(f"Serialization completed in {serialization_time:.1f} seconds ({rate:.0f} triples/sec)")
             logger.info(f"Saved knowledge graph with {triple_count:,} triples to {output_file}")
             
             return {
@@ -854,6 +863,22 @@ class GenomeKGBuilder:
         except Exception as e:
             logger.error(f"Failed to save graph: {e}")
             raise
+    
+    def export_to_csv_direct(self, output_dir: Path) -> Dict[str, Any]:
+        """Export RDF graph directly to CSV files without serialization."""
+        from .direct_csv_exporter import DirectCSVExporter
+        
+        triple_count = len(self.graph)
+        logger.info(f"Exporting {triple_count:,} triples directly to CSV files...")
+        
+        csv_output_dir = output_dir / "csv"
+        csv_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        exporter = DirectCSVExporter(self.graph, csv_output_dir)
+        export_stats = exporter.export_all()
+        
+        logger.info(f"Direct CSV export completed - bypassed RDF serialization!")
+        return export_stats
 
 
 def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path, 
@@ -971,9 +996,30 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     else:
         logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
     
-    # Save knowledge graph
-    kg_file = output_dir / "knowledge_graph.ttl"
-    save_stats = builder.save_graph(kg_file, format='turtle')
+    # Export knowledge graph: Choose between direct CSV or RDF serialization
+    kg_file = output_dir / "knowledge_graph.ttl" 
+    
+    if direct_csv_export:
+        # Fast path: Export directly to CSV files
+        logger.info("Using direct CSV export - bypassing RDF serialization for massive speedup!")
+        csv_stats = builder.export_to_csv_direct(output_dir)
+        save_stats = {
+            "output_method": "direct_csv",
+            "csv_export_time": csv_stats.get("export_time_seconds", 0),
+            "files_generated": csv_stats.get("files_generated", []),
+            "total_nodes": csv_stats.get("total_nodes", 0),
+            "total_relationships": csv_stats.get("total_relationships", 0)
+        }
+        
+        # Optionally preserve RDF files for debugging
+        if preserve_rdf_files:
+            logger.info("Preserving RDF files for debugging...")
+            rdf_stats = builder.save_graph(kg_file, format='nt')
+            save_stats["rdf_file"] = rdf_stats.get("output_file")
+    else:
+        # Legacy path: RDF serialization
+        logger.info("Using traditional RDF serialization (slower for large graphs)")
+        save_stats = builder.save_graph(kg_file, format='nt')  # N-Triples: much faster for large graphs
     
     # Generate summary statistics
     stats = {
@@ -1003,7 +1049,9 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
                                                    stage05a_dir: Optional[Path], 
                                                    stage05b_dir: Optional[Path],
                                                    output_dir: Path,
-                                                   stage01_dir: Optional[Path] = None) -> Dict[str, Any]:
+                                                   stage01_dir: Optional[Path] = None,
+                                                   direct_csv_export: bool = False,
+                                                   preserve_rdf_files: bool = False) -> Dict[str, Any]:
     """
     Build complete knowledge graph from pipeline results including BGC and CAZyme annotations.
     
@@ -1014,6 +1062,8 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         stage05b_dir: dbCAN CAZyme output directory (optional)
         output_dir: Output directory for knowledge graph
         stage01_dir: QUAST output directory (optional)
+        direct_csv_export: Skip RDF serialization, export directly to CSV (faster)
+        preserve_rdf_files: Generate RDF files even with direct CSV export (for debugging)
         
     Returns:
         Dict containing build statistics and output files
@@ -1228,9 +1278,30 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     else:
         logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
     
-    # Save knowledge graph
-    kg_file = output_dir / "knowledge_graph.ttl"
-    save_stats = builder.save_graph(kg_file, format='turtle')
+    # Export knowledge graph: Choose between direct CSV or RDF serialization
+    kg_file = output_dir / "knowledge_graph.ttl" 
+    
+    if direct_csv_export:
+        # Fast path: Export directly to CSV files
+        logger.info("Using direct CSV export - bypassing RDF serialization for massive speedup!")
+        csv_stats = builder.export_to_csv_direct(output_dir)
+        save_stats = {
+            "output_method": "direct_csv",
+            "csv_export_time": csv_stats.get("export_time_seconds", 0),
+            "files_generated": csv_stats.get("files_generated", []),
+            "total_nodes": csv_stats.get("total_nodes", 0),
+            "total_relationships": csv_stats.get("total_relationships", 0)
+        }
+        
+        # Optionally preserve RDF files for debugging
+        if preserve_rdf_files:
+            logger.info("Preserving RDF files for debugging...")
+            rdf_stats = builder.save_graph(kg_file, format='nt')
+            save_stats["rdf_file"] = rdf_stats.get("output_file")
+    else:
+        # Legacy path: RDF serialization
+        logger.info("Using traditional RDF serialization (slower for large graphs)")
+        save_stats = builder.save_graph(kg_file, format='nt')  # N-Triples: much faster for large graphs
     
     # Generate summary statistics
     stats = {
