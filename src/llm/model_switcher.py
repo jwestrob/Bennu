@@ -46,10 +46,13 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             current_model = config.get_current_model()
             model_string = f"openai/{current_model}"
             
-            # Special handling for OpenAI reasoning models (o1, o3)
+            # Special handling for OpenAI reasoning models (o1, o3) and GPT-5
             if current_model.startswith(('o1', 'o3')):
                 lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
                 logger.info(f"🎯 DSPy reconfigured with reasoning model: {model_string}")
+            elif current_model.startswith('gpt-5'):
+                lm = dspy.LM(model=model_string, temperature=0.0)
+                logger.info(f"🎯 DSPy reconfigured with GPT-5 model: {model_string}")
             else:
                 lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
                 logger.info(f"🎯 DSPy reconfigured with standard model: {model_string}")
@@ -62,7 +65,7 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             
             current_model = config.get_current_model()
             # Map to Anthropic models if needed
-            if current_model.startswith(('gpt', 'o1', 'o3')):
+            if current_model.startswith(('gpt-4', 'o1', 'o3', 'gpt-5')):
                 anthropic_model = "claude-3-haiku-20240307" if config.model_mode == "cost_effective" else "claude-3-opus-20240229"
             else:
                 anthropic_model = current_model
@@ -79,7 +82,7 @@ def switch_to_cost_effective() -> None:
     """
     Switch to cost-effective model globally.
     
-    Uses gpt-4.1-mini (or configured cost-effective model) for all tasks.
+    Uses gpt-5-mini-2025-08-07 (or configured cost-effective model) for all tasks.
     Great for development, testing, and bulk processing.
     """
     config = get_config()

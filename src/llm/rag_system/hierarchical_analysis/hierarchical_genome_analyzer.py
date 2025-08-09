@@ -51,7 +51,7 @@ class HierarchicalGenomeAnalyzer:
     Replaces brute-force context stuffing with intelligent hierarchical workflow.
     """
     
-    def __init__(self, model_name: str = "gpt-4o-mini"):
+    def __init__(self, model_name: str = "gpt-4.1-mini"):
         """
         Initialize the hierarchical genome analyzer.
         
@@ -63,7 +63,7 @@ class HierarchicalGenomeAnalyzer:
         
         # Configuration for token-aware chunking strategy
         self.chunking_config = {
-            "max_tokens_per_chunk": 8000,   # Token limit per chunk
+            "max_tokens_per_chunk": 30000,   # Token limit per chunk
             "min_tokens_per_chunk": 2000,   # Minimum viable chunk size
             "reserve_tokens": 1000,         # Reserve for prompt overhead
             "contig_priority": True         # Always preserve contig boundaries

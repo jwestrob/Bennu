@@ -272,13 +272,13 @@ class TaskExecutor:
             logger.debug("🌐 Task does not require genome-specific targeting - using global execution")
         
         # Use DSPy to classify the query and generate appropriate strategy
-        # Use model allocation for classification (now maps to MEDIUM = gpt-4.1-mini)
+        # Use model allocation for classification (now maps to MEDIUM = gpt-5-mini-2025-08-07)
         def classification_call(module):
             return module(question=transformed_description)
         
         from .dspy_signatures import QueryClassifier
         classification = self.rag_system.model_allocator.create_context_managed_call(
-            task_name="query_classification",  # Maps to MEDIUM = gpt-4.1-mini
+            task_name="query_classification",  # Maps to MEDIUM = gpt-5-mini-2025-08-07
             signature_class=QueryClassifier,
             module_call_func=classification_call,
             query=transformed_description,
@@ -305,7 +305,7 @@ class TaskExecutor:
         
         from .dspy_signatures import ContextRetriever
         retrieval_plan = self.rag_system.model_allocator.create_context_managed_call(
-            task_name="query_generation",  # Maps to MEDIUM = gpt-4.1-mini (reduces token usage)
+            task_name="query_generation",  # Maps to MEDIUM = gpt-5-mini-2025-08-07 (reduces token usage)
             signature_class=ContextRetriever,
             module_call_func=retrieval_call,
             query=transformed_description,

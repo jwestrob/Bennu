@@ -301,6 +301,32 @@ class PlannerAgent(dspy.Signature):
     reasoning = dspy.OutputField(desc="Explanation of why agentic planning is or isn't needed")
     task_plan = dspy.OutputField(desc="If agentic: high-level task breakdown. If traditional: 'N/A'")
 
+class EnhancedPlannerAgent(dspy.Signature):
+    """
+    Enhanced planning agent with preprocessing bundle integration.
+    
+    Generate a comprehensive task plan that utilizes preprocessing bundle data:
+    - Detector identifiers (functions and domains) from preprocessing
+    - Parameterized Cypher plans ready for execution
+    - Schema summary for constrained graph traversal
+    
+    The plan must produce a task graph with explicit nodes that:
+    1. Execute preprocessing cypher_plans 
+    2. Constrain neighborhood/context exploration using schema_summary
+    3. Record detector provenance in evidence ledger
+    4. Generate comprehensive narrative reports
+    
+    Never allow early exit from preprocessing - always proceed to full synthesis.
+    """
+    
+    user_query = dspy.InputField(desc="User's natural language question")
+    preprocess_bundle = dspy.InputField(desc="Optional preprocessing bundle with detectors, cypher_plans, and schema_summary")
+    
+    requires_planning = dspy.OutputField(desc="Boolean: Always true when preprocessing bundle provided")
+    reasoning = dspy.OutputField(desc="Explanation of how preprocessing data informs the execution plan")
+    task_plan = dspy.OutputField(desc="Detailed task breakdown that consumes preprocessing bundle data")
+    plan_context = dspy.OutputField(desc="JSON context for plan execution including preprocessing references")
+
 class QueryClassifier(dspy.Signature):
     """
     Classify genomic queries into categories for appropriate retrieval strategy.
@@ -729,3 +755,110 @@ class GenomeSelectionSignature(dspy.Signature):
     target_genomes = dspy.OutputField(desc="Comma-separated exact genome IDs if intent='specific', otherwise empty")
     reasoning = dspy.OutputField(desc="1-2 sentence explanation of the classification decision")
     confidence = dspy.OutputField(desc="Confidence score from 0.0 to 1.0 for the analysis")
+
+
+# NEW: Schema-Locked Detector Pipeline Signatures
+
+class DetectorResolution(dspy.Signature):
+    """
+    Resolve plain biological phrase to concrete detector identifiers.
+    
+    This signature maps biological concepts to specific database identifiers
+    (KEGGOrtholog IDs and PFAM Domain IDs) that exist in the knowledge graph.
+    
+    CRITICAL: Only work with actual biological concepts, not numerals or pronouns.
+    Extract meaningful biological terms for KG lookup.
+    """
+    
+    target_phrase = dspy.InputField(desc="Plain biological phrase or concept (e.g., 'rubisco enzyme', 'transport protein')")
+    
+    ko_ids = dspy.OutputField(desc="List of KEGGOrtholog IDs found in database matching the phrase")
+    pfam_ids = dspy.OutputField(desc="List of PFAM Domain IDs found in database matching the phrase") 
+    notes = dspy.OutputField(desc="Resolution notes explaining what was found or why nothing matched")
+
+
+class QueryAssembly(dspy.Signature):
+    """
+    Assemble parameterized Cypher queries from resolved detector identifiers.
+    
+    Takes concrete KO and PFAM IDs and produces schema-validated Cypher queries
+    that start from Protein nodes and expand outward via allowed relationships.
+    
+    CRITICAL: All queries must be parameterized and use only schema-validated
+    labels, properties, and relationship directions.
+    """
+    
+    ko_ids = dspy.InputField(desc="List of KEGGOrtholog IDs to query")
+    pfam_ids = dspy.InputField(desc="List of PFAM Domain IDs to query")
+    
+    cypher_blocks = dspy.OutputField(desc="List of parameterized Cypher query strings")
+    params = dspy.OutputField(desc="Dictionary of parameters for the Cypher queries")
+
+
+class BiologicalPlanner(dspy.Signature):
+    """
+    Generate structured playbook for biological query execution.
+    
+    Outputs ONLY valid Playbook JSON with mode, k (limit), and biological concepts.
+    No Cypher, no detector IDs, no prose - just the execution plan.
+    
+    MODES:
+    - presence: Check if biological entities exist
+    - summary: Provide overview of biological entities  
+    - neighborhood: Spatial/contextual analysis around entities
+    
+    CONCEPTS: Plain biological phrases only (e.g., "rubisco", "transport protein")
+    """
+    
+    user_query = dspy.InputField(desc="User's natural language query about genomic data")
+    
+    playbook_json = dspy.OutputField(desc="Valid JSON playbook with mode, k (≤50), and concepts list")
+
+
+# Pydantic Models for Schema-Locked Pipeline
+
+from pydantic import BaseModel, Field
+from typing import List, Literal, Dict, Any
+
+class PreprocessBundle(BaseModel):
+    """Preprocessing bundle for schema-locked detector pipeline integration."""
+    detectors: Dict[str, List[str]] = Field(description="Detector identifiers - functions: KO IDs, domains: PFAM IDs")
+    cypher_plans: List['CypherPlan'] = Field(description="Parameterized Cypher execution plans")
+    schema_summary: 'SchemaSummary' = Field(description="Schema information for task execution")
+    notes: Optional[List[str]] = Field(default=None, description="Preprocessing notes and warnings")
+
+class CypherPlan(BaseModel):
+    """Individual parameterized Cypher execution plan."""
+    name: str = Field(description="Plan identifier (e.g., 'kegg_driven', 'pfam_driven')")
+    statement: str = Field(description="Parameterized Cypher statement")
+    params: Dict[str, Any] = Field(description="Parameters for the Cypher statement")
+
+class SchemaSummary(BaseModel):
+    """Summary of database schema for task execution."""
+    labels: List[str] = Field(description="Available node labels")
+    relationships: List[str] = Field(description="Available relationship types")
+    properties_by_label: Dict[str, List[str]] = Field(description="Properties available for each label")
+    warnings: Optional[List[str]] = Field(default=None, description="Schema drift warnings")
+
+class Playbook(BaseModel):
+    """Structured playbook for biological query execution."""
+    mode: Literal["presence", "summary", "neighborhood"] = Field(description="Query execution mode")
+    k: int = Field(ge=1, le=50, description="Result limit")
+    concepts: List[str] = Field(description="List of plain biological phrases")
+
+class ProteinHit(BaseModel):
+    """Individual protein match from detector queries."""
+    protein_id: str
+    ko_ids: List[str] = []
+    pfams: List[str] = []
+    start: Optional[int] = None
+    end: Optional[int] = None
+    strand: Optional[str] = None
+    genome_id: Optional[str] = None
+    confidence: float = 0.0
+
+class AnswerBundle(BaseModel):
+    """Complete answer bundle from schema-locked pipeline."""
+    hits: List[ProteinHit]
+    resolution_notes: str
+    queries_issued: List[str]

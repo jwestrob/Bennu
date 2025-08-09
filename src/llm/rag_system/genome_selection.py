@@ -67,13 +67,13 @@ class UnifiedGenomeSelector:
     - Unified caching system
     """
     
-    def __init__(self, neo4j_processor, model="gpt-4.1-mini"):
+    def __init__(self, neo4j_processor, model="gpt-5-mini-2025-08-07"):
         """
         Initialize unified genome selector.
         
         Args:
             neo4j_processor: Neo4j processor for database queries
-            model: LLM model for analysis (default: gpt-4.1-mini)
+            model: LLM model for analysis (default: gpt-5-mini-2025-08-07)
         """
         self.neo4j_processor = neo4j_processor
         self.model = model

@@ -91,8 +91,7 @@ def run_gecco(fasta: Path, out_dir: Path, threads: int = 0, is_metagenome: bool 
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
-                timeout=1800  # 30 minute timeout
+                text=True
             )
             
             if result.returncode != 0:
@@ -107,7 +106,7 @@ def run_gecco(fasta: Path, out_dir: Path, threads: int = 0, is_metagenome: bool 
             return True
         
     except subprocess.TimeoutExpired:
-        logger.error(f"GECCO timed out after 30 minutes for {fasta.name}")
+        logger.error(f"GECCO timed out for {fasta.name}")
         create_empty_gecco_output(out_dir, fasta)
         return True  # Return True to continue pipeline
     except Exception as e:

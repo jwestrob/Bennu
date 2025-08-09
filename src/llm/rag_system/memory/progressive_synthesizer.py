@@ -133,6 +133,150 @@ class ProgressiveSynthesizer:
             logger.info(f"📊 Report synthesis: {len(task_notes)} notes, {len(raw_data) if raw_data else 0} raw items")
             return self._report_synthesis(task_notes, question, raw_data)
     
+    def synthesize_with_evidence_mapping(self, 
+                                       task_notes: List[TaskNote],
+                                       question: str,
+                                       preprocess_bundle: Optional['PreprocessBundle'] = None,
+                                       evidence_ledger: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Enhanced synthesis with evidence mapping and narrative structure.
+        
+        Args:
+            task_notes: Task notes from execution
+            question: Original user question
+            preprocess_bundle: Preprocessing bundle with detector provenance
+            evidence_ledger: Evidence ledger with tool provenance
+            
+        Returns:
+            Comprehensive narrative report with evidence mapping
+        """
+        logger.info("📊 Running enhanced synthesis with evidence mapping")
+        
+        # Build comprehensive data for narrative synthesis
+        unified_data = self._prepare_unified_data(None, task_notes)
+        
+        # Add preprocessing and evidence context
+        enhanced_context = self._enhance_with_evidence_mapping(
+            unified_data=unified_data,
+            question=question,
+            preprocess_bundle=preprocess_bundle,
+            evidence_ledger=evidence_ledger
+        )
+        
+        # Use enhanced synthesis with narrative structure
+        return self._enhanced_narrative_synthesis(enhanced_context, question)
+    
+    def _enhance_with_evidence_mapping(self, 
+                                     unified_data: List[Dict[str, Any]],
+                                     question: str,
+                                     preprocess_bundle: Optional['PreprocessBundle'],
+                                     evidence_ledger: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Enhance data with evidence mapping and provenance."""
+        enhanced_context = {
+            "question": question,
+            "unified_data": unified_data,
+            "methods": {},
+            "evidence_mapping": {},
+            "limitations": []
+        }
+        
+        # Add preprocessing methods
+        if preprocess_bundle:
+            enhanced_context["methods"]["preprocessing"] = {
+                "function_detectors": preprocess_bundle.detectors.get("functions", []),
+                "domain_detectors": preprocess_bundle.detectors.get("domains", []),
+                "cypher_plans": [{"name": p.name, "params": p.params} for p in preprocess_bundle.cypher_plans],
+                "schema_labels": preprocess_bundle.schema_summary.labels,
+                "schema_relationships": preprocess_bundle.schema_summary.relationships
+            }
+        
+        # Add evidence ledger
+        if evidence_ledger:
+            enhanced_context["evidence_mapping"] = evidence_ledger
+            enhanced_context["methods"]["execution"] = {
+                "total_steps": evidence_ledger.get("total_steps", 0),
+                "tools_used": evidence_ledger.get("tools_used", [])
+            }
+        
+        # Add standard limitations
+        enhanced_context["limitations"] = [
+            "Analysis limited to available database annotations",
+            "Computational predictions may require experimental validation",
+            "Results dependent on quality of input genome assemblies"
+        ]
+        
+        return enhanced_context
+    
+    def _enhanced_narrative_synthesis(self, enhanced_context: Dict[str, Any], question: str) -> str:
+        """Generate narrative report with structured sections."""
+        narrative_parts = []
+        
+        # Title
+        narrative_parts.append(f"# Genomic Analysis Report: {question}")
+        narrative_parts.append("")
+        
+        # Methods
+        narrative_parts.append("## Methods")
+        methods = enhanced_context.get("methods", {})
+        
+        if "preprocessing" in methods:
+            prep = methods["preprocessing"]
+            narrative_parts.append(f"**Biological Target Resolution:** Identified {len(prep.get('function_detectors', []))} function detectors and {len(prep.get('domain_detectors', []))} domain detectors through schema-locked preprocessing.")
+            narrative_parts.append(f"**Query Execution:** {len(prep.get('cypher_plans', []))} parameterized Cypher queries executed against knowledge graph.")
+        
+        if "execution" in methods:
+            exec_info = methods["execution"]
+            narrative_parts.append(f"**Analysis Pipeline:** {exec_info.get('total_steps', 0)} computational steps using tools: {', '.join(exec_info.get('tools_used', []))}.")
+        
+        narrative_parts.append("")
+        
+        # Findings
+        narrative_parts.append("## Findings")
+        unified_data = enhanced_context.get("unified_data", [])
+        if unified_data:
+            narrative_parts.append(f"Analysis identified {len(unified_data)} data points across the genomic dataset.")
+            
+            # Summarize key findings from unified data
+            for i, data_point in enumerate(unified_data[:5]):  # Limit to top 5 for narrative
+                if isinstance(data_point, dict) and "key_findings" in data_point:
+                    narrative_parts.extend(data_point["key_findings"])
+                elif isinstance(data_point, dict) and "summary" in data_point:
+                    narrative_parts.append(f"- {data_point['summary']}")
+        else:
+            narrative_parts.append("No significant findings identified in the current analysis.")
+        
+        narrative_parts.append("")
+        
+        # Evidence Mapping
+        narrative_parts.append("## Evidence → Detector → Source Mapping")
+        evidence_mapping = enhanced_context.get("evidence_mapping", {})
+        
+        if evidence_mapping.get("detector_provenance"):
+            provenance = evidence_mapping["detector_provenance"]
+            narrative_parts.append(f"**Function Detectors:** {', '.join(provenance.get('functions', []))}")
+            narrative_parts.append(f"**Domain Detectors:** {', '.join(provenance.get('domains', []))}")
+        
+        if evidence_mapping.get("evidence_to_detector_mapping"):
+            narrative_parts.append("**Step-wise Evidence Mapping:**")
+            for step_id, detector_info in evidence_mapping["evidence_to_detector_mapping"].items():
+                narrative_parts.append(f"- {step_id}: {detector_info}")
+        
+        narrative_parts.append("")
+        
+        # Quality & Limitations
+        narrative_parts.append("## Quality Control & Limitations")
+        limitations = enhanced_context.get("limitations", [])
+        for limitation in limitations:
+            narrative_parts.append(f"- {limitation}")
+        
+        narrative_parts.append("")
+        
+        # Contextual Neighbors (placeholder for spatial analysis)
+        narrative_parts.append("## Contextual Analysis")
+        narrative_parts.append("Genomic neighborhood analysis conducted where applicable, examining gene organization and functional clustering patterns.")
+        
+        return "\n".join(narrative_parts)
+    
     def _guidance_synthesis(self, task_notes: List[TaskNote], question: str) -> str:
         """
         Lightweight guidance synthesis for agent situational awareness.
@@ -163,7 +307,7 @@ class ProgressiveSynthesizer:
             guidance = self._call_synthesis_model(
                 context=context,
                 question=question,
-                task_name="guidance_synthesis",  # Maps to MEDIUM = gpt-4.1-mini
+                task_name="guidance_synthesis",  # Maps to MEDIUM = gpt-5-mini-2025-08-07
                 focus="brief guidance for next steps (2-3 sentences max)",
                 synthesis_type="summarization"
             )
@@ -229,7 +373,23 @@ class ProgressiveSynthesizer:
         # Priority 1: Use raw_data if available
         if raw_data:
             logger.info(f"✅ Using raw_data as primary source ({len(raw_data)} items)")
-            unified_data.extend(raw_data)
+            
+            # CRITICAL: Check if this is gene record data that needs structural preservation
+            if self._looks_like_gene_records(raw_data):
+                logger.info("🔬 Detected gene records - preserving structured loci data")
+                grouped_loci = self._group_genes_into_loci(raw_data)
+                
+                # Add structured loci data to unified format
+                unified_data.append({
+                    'type': 'structured_loci',
+                    'loci_count': len(grouped_loci),
+                    'structured_loci': grouped_loci,
+                    'formatted_preview': self._format_loci_for_synthesis(grouped_loci)[:500] + "..."
+                })
+                # Also preserve original gene records for compatibility
+                unified_data.extend(raw_data)
+            else:
+                unified_data.extend(raw_data)
         
         # Priority 2: Convert task_notes to unified format if no raw_data
         if not raw_data and task_notes:
@@ -410,7 +570,6 @@ class ProgressiveSynthesizer:
                                 'contig_id': locus_data.get('contig_id', 'unknown'),
                                 'coordinates': f"{locus_data.get('start', 0)}-{locus_data.get('end', 0)}",
                                 'gene_count': locus_data.get('gene_count', 0),
-                                'hypothetical_count': locus_data.get('hypothetical_count', 0),
                                 'locus_type': locus_data.get('locus_type', 'unknown'),
                                 'biological_features': locus_data.get('biological_features', [])[:3]  # Top 3 features
                             }
@@ -427,9 +586,18 @@ class ProgressiveSynthesizer:
         except Exception as e:
             logger.warning(f"Error extracting detailed loci summary: {e}")
         
-        # Sort by gene count (largest first) and return top 10 for synthesis
-        loci_summaries.sort(key=lambda x: x.get('gene_count', 0), reverse=True)
-        return loci_summaries[:10]
+        # Sort by genomic position (contig + coordinate) to preserve synteny and positional relationships
+        def genomic_position_key(locus):
+            contig_id = locus.get('contig_id', 'zzz_unknown')  # Sort unknowns last
+            coordinates = locus.get('coordinates', '0-0')
+            try:
+                start_pos = int(coordinates.split('-')[0])
+                return (contig_id, start_pos)
+            except:
+                return (contig_id, 0)
+        
+        loci_summaries.sort(key=genomic_position_key)
+        return loci_summaries[:15]  # Return more loci to preserve complete genomic context
     
     def _parse_locus_string(self, locus_str: str) -> Dict[str, Any]:
         """Parse InterestingLocus string representation into structured data."""
@@ -449,9 +617,7 @@ class ProgressiveSynthesizer:
             
             # Parse gene counts
             gene_count_match = re.search(r"gene_count=(\d+)", locus_str)
-            hypo_count_match = re.search(r"hypothetical_count=(\d+)", locus_str)
             gene_count = int(gene_count_match.group(1)) if gene_count_match else 0
-            hypo_count = int(hypo_count_match.group(1)) if hypo_count_match else 0
             
             # Parse locus type
             type_match = re.search(r"locus_type='([^']+)'", locus_str)
@@ -470,7 +636,6 @@ class ProgressiveSynthesizer:
                 'contig_id': contig_id,
                 'coordinates': f"{start}-{end}",
                 'gene_count': gene_count,
-                'hypothetical_count': hypo_count,
                 'locus_type': locus_type,
                 'biological_features': features
             }
@@ -855,7 +1020,7 @@ class ProgressiveSynthesizer:
         min_chunk_size = len(content) // max_subchunks  # Ensure we don't exceed max chunks
         
         # Calculate safe sub-chunk size based on model limits
-        # Get model that will be used for summarization (genomic_summarization task uses gpt-4.1-mini)
+        # Get model that will be used for summarization (genomic_summarization task uses gpt-5-mini-2025-08-07)
         model_name, model_config = self.model_allocator.get_model_for_task("genomic_summarization", "")
         
         # Use 40% of model context for sub-chunks (leaving room for system messages, response, etc.)
@@ -924,15 +1089,35 @@ class ProgressiveSynthesizer:
             Chunk summary or None if failed
         """
         try:
-            # Format chunk for processing
-            formatted_chunk = self._format_data_for_synthesis(chunk)
+            # Check if chunk contains structured loci data
+            structured_loci_item = next((item for item in chunk if item.get('type') == 'structured_loci'), None)
+            
+            if structured_loci_item:
+                # Special handling for structured loci - pass structured data to Map step
+                logger.info(f"📍 Chunk {chunk_id} contains structured loci data - preserving structure")
+                structured_loci = structured_loci_item['structured_loci']
+                
+                # Format loci data as detailed text for Map step while preserving structure
+                formatted_chunk = f"STRUCTURED GENOMIC LOCI DATA ({len(structured_loci)} loci):\n\n"
+                for i, locus in enumerate(structured_loci, 1):
+                    formatted_chunk += f"Locus {i}: {locus.get('contig_id', 'unknown')} "
+                    formatted_chunk += f"({locus.get('start_pos', 0)}-{locus.get('end_pos', 0)}, "
+                    formatted_chunk += f"{len(locus.get('genes', []))} genes)\n"
+                    for gene in locus.get('genes', []):
+                        formatted_chunk += f"  Gene: {gene.get('gene_id', 'unknown')} "
+                        formatted_chunk += f"({gene.get('start', 0)}-{gene.get('end', 0)}) "
+                        formatted_chunk += f"Function: {gene.get('function', 'unknown')}\n"
+                    formatted_chunk += "\n"
+            else:
+                # Standard formatting for non-loci data
+                formatted_chunk = self._format_data_for_synthesis(chunk)
             
             # Use cheaper model for Map step (data extraction task)
             summary = self._call_synthesis_model(
                 context=formatted_chunk,
                 question=question,
                 task_name="genomic_summarization",  # Use cheaper model for chunk summarization
-                focus=f"preserve specific loci details and identifiers from chunk {chunk_id}",
+                focus=f"extract detailed loci with coordinates, gene counts, biological features from chunk {chunk_id}",
                 synthesis_type="map_extraction"
             )
             
@@ -982,7 +1167,7 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
             context=synthesis_context,
             question=question,
             task_name="final_synthesis",  # Use o3 for complex integration
-            focus="intelligent biological prioritization",
+            focus="prioritize detailed locus reports with genomic coordinates and biological context",
             synthesis_type="reduce_selection"
         )
         
@@ -1005,6 +1190,11 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         if not data:
             return "No data available"
         
+        # EARLY DETECTION: Check if this is gene record data that should be grouped
+        if self._looks_like_gene_records(data):
+            loci = self._group_genes_into_loci(data)
+            return self._format_loci_for_synthesis(loci)
+        
         formatted_items = []
         for i, item in enumerate(data):
             # Format based on item type
@@ -1026,12 +1216,232 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                                  for conn in item['cross_connections'][:3]]
                     formatted_item += f"Cross-connections: {'; '.join(connections)}\n"
             else:
-                # Raw data item
+                # Generic raw data item
                 formatted_item = f"Data Item {i+1}: {str(item)}\n"
-            
-            formatted_items.append(formatted_item)
         
         return "\n".join(formatted_items)
+    
+    def _format_as_genomic_loci(self, data: List[Dict[str, Any]]) -> str:
+        """
+        Format protein data as genomic loci grouped by contig and sorted by position.
+        
+        Args:
+            data: List of protein data items
+            
+        Returns:
+            Formatted string with proteins organized by genomic loci
+        """
+        # Group proteins by contig
+        loci = {}
+        for item in data:
+            if 'protein_id' in item and 'start_coordinate' in item:
+                # Extract contig from protein_id (e.g., NODE_405_length_15990_cov_15.881707_14 -> NODE_405)
+                protein_id = item['protein_id']
+                if 'NODE_' in protein_id:
+                    contig_parts = protein_id.split('_')
+                    if len(contig_parts) >= 2:
+                        contig_id = f"{contig_parts[0]}_{contig_parts[1]}"  # NODE_405
+                    else:
+                        contig_id = "unknown_contig"
+                else:
+                    contig_id = "unknown_contig"
+                
+                if contig_id not in loci:
+                    loci[contig_id] = []
+                loci[contig_id].append(item)
+        
+        # Format each locus
+        formatted_loci = []
+        for locus_num, (contig_id, proteins) in enumerate(loci.items(), 1):
+            # Sort proteins by genomic position
+            proteins.sort(key=lambda p: int(p.get('start_coordinate', 0)))
+            
+            # Get locus boundaries
+            start_pos = min(int(p.get('start_coordinate', 0)) for p in proteins)
+            end_pos = max(int(p.get('end_coordinate', 0)) for p in proteins)
+            
+            # Count integrase genes (anchor points)
+            # Count anchor genes (removed hardcoded integrase reference - already calculated above)
+            
+            # Format locus header
+            locus_header = f"**Locus {locus_num} ({contig_id})**: {start_pos:,}-{end_pos:,} bp, {len(proteins)} genes, {anchor_count} anchor gene(s)"
+            
+            # Format genes in genomic order
+            gene_details = []
+            for i, protein in enumerate(proteins):
+                gene_pos = f"{protein.get('start_coordinate', 'unknown')}-{protein.get('end_coordinate', 'unknown')}"
+                function = protein.get('ko_description', 'unknown function')
+                gene_details.append(f"  Gene {i+1}: {gene_pos} bp - {function}")
+            
+            formatted_locus = f"{locus_header}\n" + "\n".join(gene_details)
+            formatted_loci.append(formatted_locus)
+        
+        # Summary header
+        total_proteins = sum(len(proteins) for proteins in loci.values())
+        header = f"GENOMIC LOCI ANALYSIS: {len(loci)} loci containing {total_proteins} genes\n\n"
+        
+        return header + "\n\n".join(formatted_loci)
+    
+    def _looks_like_gene_records(self, data: List[Dict[str, Any]]) -> bool:
+        """Check if data looks like gene records that should be grouped into loci."""
+        if not data or not isinstance(data, list):
+            return False
+        
+        # Check first few items for gene record structure
+        sample_size = min(3, len(data))
+        gene_indicators = 0
+        
+        for item in data[:sample_size]:
+            if isinstance(item, dict):
+                # Check for canonical gene record marker
+                if item.get('record_type') == 'gene_record':
+                    gene_indicators += 1
+                    continue
+                
+                # Look for key indicators of gene/protein records (multiple schema variations)
+                has_protein_id = 'protein_id' in item
+                has_coordinates = (('start_coordinate' in item and 'end_coordinate' in item) or
+                                 ('start' in item and 'end' in item) or
+                                 ('begin' in item and 'stop' in item))
+                has_function = ('ko_id' in item or 'ko_description' in item or 
+                               'ko_hits' in item or 'pfam_hits' in item)
+                
+                if has_protein_id and has_coordinates and has_function:
+                    gene_indicators += 1
+        
+        # Require majority of samples to look like gene records
+        return gene_indicators >= (sample_size * 0.7)
+    
+    def _group_genes_into_loci(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Group gene records into genomic loci by contig and position.
+        
+        Args:
+            records: List of gene/protein records
+            
+        Returns:
+            List of locus dictionaries
+        """
+        # Group by contig
+        contigs = {}
+        for record in records:
+            # Use canonical contig_id if available, otherwise extract from protein_id
+            contig_id = record.get('contig_id')
+            if not contig_id:
+                protein_id = record.get('protein_id', '')
+                if 'NODE_' in protein_id:
+                    parts = protein_id.split('_')
+                    if len(parts) >= 2:
+                        contig_id = f"{parts[0]}_{parts[1]}"
+                    else:
+                        contig_id = "unknown_contig"
+                else:
+                    contig_id = "unknown_contig"
+            
+            if contig_id not in contigs:
+                contigs[contig_id] = []
+            contigs[contig_id].append(record)
+        
+        # Build loci
+        loci = []
+        for locus_idx, (contig_id, genes) in enumerate(contigs.items(), 1):
+            # Sort genes by position (handle multiple coordinate field names)
+            def get_start_pos(g):
+                return (g.get('start') or g.get('start_coordinate') or 
+                       g.get('begin') or g.get('startCoordinate') or 0)
+            
+            def get_end_pos(g):
+                return (g.get('end') or g.get('end_coordinate') or 
+                       g.get('stop') or g.get('endCoordinate') or 0)
+            
+            genes.sort(key=lambda g: int(get_start_pos(g)))
+            
+            # Get locus boundaries
+            start_pos = min(int(get_start_pos(g)) for g in genes)
+            end_pos = max(int(get_end_pos(g)) for g in genes)
+            
+            # Count anchor genes (genes with specific functional criteria that triggered selection)
+            anchor_count = sum(1 for g in genes if g.get('ko_hits') or g.get('pfam_hits'))
+            
+            # Build gene summaries
+            gene_summaries = []
+            for gene in genes:
+                gene_summaries.append({
+                    'gene_id': gene.get('protein_id', 'unknown'),
+                    'start': int(get_start_pos(gene)),
+                    'end': int(get_end_pos(gene)),
+                    'strand': gene.get('strand', None),
+                    'function': gene.get('ko_description', 'unknown function'),
+                    'ko_id': gene.get('ko_id', None)
+                })
+            
+            # Create locus
+            locus = {
+                'locus_id': f"Locus_{locus_idx}",
+                'contig_id': contig_id,
+                'start': start_pos,
+                'end': end_pos,
+                'gene_count': len(genes),
+                'anchor_count': anchor_count,
+                'genes': gene_summaries,
+                'confidence': 'high' if anchor_count > 0 else 'medium',
+                'rationale': f"Contains {anchor_count} anchor gene(s)" if anchor_count > 0 else "Gene cluster"
+            }
+            
+            loci.append(locus)
+        
+        return loci
+    
+    def _format_loci_for_synthesis(self, loci: List[Dict[str, Any]]) -> str:
+        """
+        Format loci for synthesis with region-first organization.
+        
+        Args:
+            loci: List of locus dictionaries
+            
+        Returns:
+            Formatted string for synthesis
+        """
+        if not loci:
+            return "No genomic loci identified"
+        
+        total_genes = sum(locus['gene_count'] for locus in loci)
+        
+        # Sort loci by gene count (largest first) to prioritize interesting loci
+        loci.sort(key=lambda l: l['gene_count'], reverse=True)
+        
+        # Header
+        header = f"GENOMIC LOCI ANALYSIS: {len(loci)} loci containing {total_genes} genes\n"
+        
+        # Format each locus
+        formatted_loci = []
+        for locus in loci:
+            # Locus header with key stats
+            locus_header = (f"**{locus['locus_id']} ({locus['contig_id']})**: "
+                          f"{locus['start']:,}-{locus['end']:,} bp, "
+                          f"{locus['gene_count']} genes, "
+                          f"{locus['anchor_count']} anchor gene(s)")
+            
+            # Add confidence and rationale
+            locus_header += f" [Confidence: {locus['confidence']}]"
+            if locus.get('rationale'):
+                locus_header += f"\n  Rationale: {locus['rationale']}"
+            
+            # Gene table
+            gene_lines = []
+            for i, gene in enumerate(locus['genes'], 1):
+                gene_line = (f"  Gene {i}: {gene['start']:,}-{gene['end']:,} bp "
+                           f"({'→' if gene['strand'] == '1' else '←' if gene['strand'] == '-1' else '?'}) "
+                           f"- {gene['function']}")
+                if gene['ko_id']:
+                    gene_line += f" ({gene['ko_id']})"
+                gene_lines.append(gene_line)
+            
+            # Combine locus info
+            locus_text = locus_header + "\n" + "\n".join(gene_lines)
+            formatted_loci.append(locus_text)
+        
+        return header + "\n\n" + "\n\n".join(formatted_loci)
     
     def _enforce_context_limits(self, context: str, task_name: str, question: str = "") -> str:
         """
@@ -1323,6 +1733,13 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
             Synthesis strategy: "key_findings_only" or "full_context"
         """
         logger.info("🧠 Analyzing synthesis strategy requirements")
+        
+        # PRIORITY CHECK: Structured loci data always needs Map-Reduce
+        has_structured_loci = any(item.get('type') == 'structured_loci' for item in unified_data)
+        
+        if has_structured_loci:
+            logger.info("🔬 Structured loci detected - forcing Map-Reduce for GenomicSelector pathway")
+            return "full_context"
         
         # Assess key findings completeness and quality
         key_findings_quality = self._assess_key_findings_completeness(unified_data)

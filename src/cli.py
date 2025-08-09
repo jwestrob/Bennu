@@ -36,7 +36,8 @@ build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
 build_knowledge_graph_with_extended_annotations = build_kg_module.build_knowledge_graph_with_extended_annotations
 run_esm2_embeddings = esm2_embeddings_module.run_esm2_embeddings
 
-# LLM components imported conditionally to avoid initialization overhead
+# LLM components  
+from src.llm import LLMConfig, ask_question
 
 app = typer.Typer(
     name="genome-kg",
@@ -228,7 +229,7 @@ def build(
             "function": lambda: run_esm2_embeddings(
                 stage03_dir=output_dir / "stage03_prodigal",
                 output_dir=output_dir / "stage08_esm2",
-                batch_size=max(1, threads // 2),  # Adjust batch size based on available threads
+                batch_size=None,  # Let ESM2 auto-optimize based on device (16 for M4 Max)
                 force=force
             )
         }

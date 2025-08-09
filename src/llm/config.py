@@ -2,9 +2,13 @@
 """
 Configuration management for LLM integration.
 Designed for containerized deployment with environment-based configuration.
+
+DEPRECATED: LLMConfig is being replaced by unified Settings in rag_system.models.
+Use get_unified_settings() for new code.
 """
 
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -17,7 +21,7 @@ class DatabaseConfig(BaseModel):
     neo4j_uri: str = Field(default="bolt://localhost:7687", description="Neo4j connection URI")
     neo4j_user: str = Field(default="neo4j", description="Neo4j username")
     neo4j_password: str = Field(default="your_new_password", description="Neo4j password")
-    lancedb_path: str = Field(default="data/stage06_esm2/lancedb", description="LanceDB database path")
+    lancedb_path: str = Field(default="data/stage08_esm2/lancedb", description="LanceDB database path")
 
 
 class LLMConfig(BaseModel):
@@ -28,13 +32,13 @@ class LLMConfig(BaseModel):
     
     # LLM provider settings
     llm_provider: str = Field(default="openai", description="LLM provider (openai, anthropic, local)")
-    llm_model: str = Field(default="o3", description="LLM model name")
+    llm_model: str = Field(default="gpt-5-2025-08-07", description="LLM model name")
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
     
     # Model selection configuration
     cost_effective_model: str = Field(default="gpt-4.1-mini", description="Cost-effective model for development and testing")
-    premium_model: str = Field(default="o3", description="Premium model for production and final synthesis")
+    premium_model: str = Field(default="gpt-5-2025-08-07", description="Premium model for production and final synthesis")
     model_mode: str = Field(default="cost_effective", description="Current model mode: 'cost_effective' or 'premium'")
     
     # Embedding settings
@@ -177,3 +181,32 @@ DEFAULT_CONTAINER_CONFIG = LLMConfig(
     similarity_threshold=0.7,
     timeout_seconds=30
 )
+
+
+def get_unified_settings(session_id: Optional[str] = None, **overrides):
+    """
+    Unified configuration - replaces LLMConfig usage.
+    
+    BRIDGE FUNCTION: Provides transition to new Settings system.
+    
+    Args:
+        session_id: Session ID for evidence ledger templating
+        **overrides: Additional settings overrides
+        
+    Returns:
+        Settings instance from rag_system.models
+    """
+    warnings.warn(
+        "LLMConfig is deprecated. Use Settings from src.llm.rag_system.models directly.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    # Import here to avoid circular dependencies during transition
+    from .rag_system.models import Settings
+    
+    # Create LLMConfig from environment
+    llm_config = LLMConfig.from_env()
+    
+    # Bridge to unified Settings
+    return Settings.from_llm_config(llm_config, session_id=session_id, **overrides)

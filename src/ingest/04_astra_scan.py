@@ -67,9 +67,12 @@ def run_single_astra_scan(database: str, protein_symlink_dir: Path, output_dir: 
             "--threads", str(threads)
         ]
         
-        # Add cutoffs for databases that support them
-        if use_cutoffs and database.upper() in ["PFAM", "KOFAM"]:
-            cmd.append("--cut_ga")
+        # Add database-specific search strategies
+        if use_cutoffs:
+            if database.upper() == "PFAM":
+                cmd.append("--cut_ga")  # Use gathering cutoffs for PFAM
+            elif database.upper() == "KOFAM":
+                cmd.append("--cascade")  # Use cascade search for KOFAM
         
         console.print(f"Running astra search for {database}...")
         console.print(f"Command: {' '.join(cmd)}")
@@ -78,8 +81,7 @@ def run_single_astra_scan(database: str, protein_symlink_dir: Path, output_dir: 
         process_result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
-            timeout=3600  # 1 hour timeout
+            text=True
         )
         
         if process_result.returncode != 0:
@@ -105,7 +107,7 @@ def run_single_astra_scan(database: str, protein_symlink_dir: Path, output_dir: 
         result["execution_status"] = "success"
         
     except subprocess.TimeoutExpired:
-        result["error_message"] = f"Astra search for {database} timed out (>1 hour)"
+        result["error_message"] = f"Astra search for {database} timed out"
     except Exception as e:
         result["error_message"] = f"Unexpected error: {str(e)}"
     
@@ -210,35 +212,40 @@ def run_astra_scan(
     start_time = time.time()
     results = []
     
-    for database in databases:
-        console.print(f"\n[cyan]Processing {database}...[/cyan]")
+    with Progress(console=console) as progress:
+        overall_task = progress.add_task("Processing databases...", total=len(databases))
         
-        try:
-            result = run_single_astra_scan(
-                database=database,
-                protein_symlink_dir=protein_symlink_dir,
-                output_dir=output_dir,
-                threads=threads,
-                use_cutoffs=use_cutoffs
-            )
-            results.append(result)
+        for i, database in enumerate(databases):
+            progress.update(overall_task, description=f"Processing {database} ({i+1}/{len(databases)})...")
             
-            # Show result
-            status = "✓" if result["execution_status"] == "success" else "✗"
-            console.print(f"{status} {database}: {result.get('total_hits', 0):,} hits in {result['execution_time_seconds']:.1f}s")
-            
-            if result["execution_status"] == "failed":
-                console.print(f"[red]  Error: {result.get('error_message', 'Unknown error')}[/red]")
+            try:
+                result = run_single_astra_scan(
+                    database=database,
+                    protein_symlink_dir=protein_symlink_dir,
+                    output_dir=output_dir,
+                    threads=threads,
+                    use_cutoffs=use_cutoffs
+                )
+                results.append(result)
                 
-        except Exception as e:
-            error_result = {
-                "database": database,
-                "execution_status": "failed",
-                "error_message": f"Execution error: {str(e)}",
-                "execution_time_seconds": 0.0
-            }
-            results.append(error_result)
-            console.print(f"✗ {database}: Execution failed - {str(e)}")
+                # Show result
+                status = "✓" if result["execution_status"] == "success" else "✗"
+                progress.console.print(f"{status} {database}: {result.get('total_hits', 0):,} hits in {result['execution_time_seconds']:.1f}s")
+                
+                if result["execution_status"] == "failed":
+                    progress.console.print(f"[red]  Error: {result.get('error_message', 'Unknown error')}[/red]")
+                    
+            except Exception as e:
+                error_result = {
+                    "database": database,
+                    "execution_status": "failed",
+                    "error_message": f"Execution error: {str(e)}",
+                    "execution_time_seconds": 0.0
+                }
+                results.append(error_result)
+                progress.console.print(f"✗ {database}: Execution failed - {str(e)}")
+            
+            progress.advance(overall_task)
     
     total_time = time.time() - start_time
     

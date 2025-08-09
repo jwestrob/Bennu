@@ -214,7 +214,7 @@ class FunctionalEnrichment:
     
     def enrich_rdf_graph(self, graph: rdflib.Graph) -> Tuple[rdflib.Graph, Dict[str, int]]:
         """Enrich RDF graph with functional annotations."""
-        console.print("[bold blue]Enriching knowledge graph with functional annotations...[/bold blue]")
+        console.print("[bold blue]Adding reference metadata to PFAM/KEGG/CAZy annotations...[/bold blue]")
         
         if not self.pfam_data and not self.ko_data and not self.cazy_data:
             self.load_reference_data()
@@ -238,16 +238,16 @@ class FunctionalEnrichment:
         if self.cazy_data:
             stats.update(self._enrich_cazy_families(graph, kg, cazy_ns))
         
-        console.print(f"✓ Enriched {stats['pfam_enriched']} PFAM families")
-        console.print(f"✓ Enriched {stats['ko_enriched']} KEGG orthologs")
+        console.print(f"✓ Added metadata to {stats['pfam_enriched']} PFAM families")
+        console.print(f"✓ Added metadata to {stats['ko_enriched']} KEGG orthologs")
         if self.cazy_data:
-            console.print(f"✓ Enriched {stats['cazy_enriched']} CAZy families")
+            console.print(f"✓ Added metadata to {stats['cazy_enriched']} CAZy families")
         if stats['missing_pfam'] > 0:
-            console.print(f"⚠️  {stats['missing_pfam']} PFAM families without reference data")
+            console.print(f"⚠️  {stats['missing_pfam']} PFAM families missing reference metadata")
         if stats['missing_ko'] > 0:
-            console.print(f"⚠️  {stats['missing_ko']} KEGG orthologs without reference data")
+            console.print(f"⚠️  {stats['missing_ko']} KEGG orthologs missing reference metadata")
         if stats['missing_cazy'] > 0:
-            console.print(f"⚠️  {stats['missing_cazy']} CAZy families without reference data")
+            console.print(f"⚠️  {stats['missing_cazy']} CAZy families missing reference metadata")
         
         return graph, stats
     
@@ -373,21 +373,28 @@ class FunctionalEnrichment:
         return stats
 
 
-def add_functional_enrichment_to_pipeline(graph: rdflib.Graph, 
-                                        pfam_file: Path = Path("data/reference/Pfam-A.hmm.dat.stockholm"),
-                                        ko_file: Path = Path("data/reference/ko_list"),
-                                        cazy_file: Optional[Path] = None) -> Tuple[rdflib.Graph, Dict[str, int]]:
+def add_reference_metadata_to_pipeline(graph: rdflib.Graph, 
+                                      pfam_file: Path = Path("data/reference/Pfam-A.hmm.dat.stockholm"),
+                                      ko_file: Path = Path("data/reference/ko_list"),
+                                      cazy_file: Optional[Path] = None) -> Tuple[rdflib.Graph, Dict[str, int]]:
     """
-    Main function to add functional enrichment to the knowledge graph pipeline.
+    Add reference metadata (descriptions, labels, thresholds) to PFAM/KEGG/CAZy nodes.
+    
+    This function enhances the knowledge graph by adding authoritative descriptions
+    and metadata from reference databases to domain families and functional annotations,
+    making the data more interpretable for LLM analysis.
     
     Args:
-        graph: RDF graph to enrich
+        graph: RDF graph to enhance with metadata
         pfam_file: Path to PFAM reference file
-        ko_file: Path to KEGG Ortholog reference file
+        ko_file: Path to KEGG Ortholog reference file  
         cazy_file: Path to CAZy reference file (optional)
         
     Returns:
-        Tuple of enriched graph and enrichment statistics
+        Tuple of enhanced graph and metadata integration statistics
     """
-    enricher = FunctionalEnrichment(pfam_file, ko_file, cazy_file)
-    return enricher.enrich_rdf_graph(graph)
+    enhancer = FunctionalEnrichment(pfam_file, ko_file, cazy_file)
+    return enhancer.enrich_rdf_graph(graph)
+
+# Keep legacy function name for backward compatibility
+add_functional_enrichment_to_pipeline = add_reference_metadata_to_pipeline

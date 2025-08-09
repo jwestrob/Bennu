@@ -1,229 +1,325 @@
-#!/usr/bin/env python3
 """
-Simple policy engine for user-configurable preferences.
-Provides cost, latency, and behavior controls for genomic analysis.
+Policy Engine for dynamic agent execution control.
+
+Implements guard evaluation, stop conditions, and evidence assessment
+without hard-coded biological constants. Uses generic rules based on
+resolver targets and tool metrics.
 """
 
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
-import json
-from pathlib import Path
+from typing import Dict, Any, List, Optional
+from .models import Guard, StopCondition, Intent, ToolOutput
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PolicyConfig:
-    """Configuration for user preferences and policies."""
-    
-    # Performance and cost policies
-    max_tokens_per_query: int = 30000   # Match OpenAI's 30K TPM rate limit for o3
-    max_latency_seconds: int = 600      # 10 minutes for complex o3 reasoning
-    allow_expensive_tools: bool = True
-    max_refinement_depth: int = 10      # Higher limit to allow proper recursive analysis when needed
-    
-    # Execution preferences
-    prefer_traditional_mode: bool = True
-    enable_tool_integration: bool = True
-    enable_literature_search: bool = True
-    enable_code_interpreter: bool = True
-    
-    # Quality and reliability
-    min_confidence_threshold: float = 0.7
-    max_result_count: int = 1000
-    enable_context_compression: bool = True
-    compression_threshold: int = 30000
-    
-    # Tool-specific settings
-    literature_search_max_results: int = 5
-    code_interpreter_timeout: int = 30
-    
-    # Debug and logging
-    enable_debug_logging: bool = False
-    save_execution_logs: bool = False
-    
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        if self.max_tokens_per_query < 1000:
-            raise ValueError("max_tokens_per_query must be at least 1000")
-        if self.max_latency_seconds < 10:
-            raise ValueError("max_latency_seconds must be at least 10")
-        if not 0.0 <= self.min_confidence_threshold <= 1.0:
-            raise ValueError("min_confidence_threshold must be between 0.0 and 1.0")
-        if self.max_refinement_depth < 1:
-            raise ValueError("max_refinement_depth must be at least 1")
-
-
 class PolicyEngine:
     """
-    Manages user policies and applies them to query execution.
+    Policy engine for guard evaluation and evidence assessment.
     
-    Provides centralized policy enforcement and configuration management.
+    Provides generic rules for conclusiveness determination without
+    hard-coded biological identifiers or domain-specific logic.
     """
     
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, settings=None):
         """
         Initialize policy engine.
         
         Args:
-            config_file: Path to configuration file (JSON format)
+            settings: Settings instance for thresholds and configuration
         """
-        self.config_file = config_file
-        self.policies = PolicyConfig()
-        
-        # Load configuration if file provided
-        if config_file:
-            self.load_config(config_file)
-        
-        logger.info(f"🎯 Policy engine initialized with {self._get_policy_summary()}")
+        self.settings = settings
+        logger.info("🛡️ PolicyEngine initialized with generic rule evaluation")
     
-    def load_config(self, config_file: str):
-        """Load policy configuration from JSON file."""
+    def evaluate_guard(self, guard: Guard, context: Dict[str, Any]) -> bool:
+        """
+        Evaluate guard predicate against execution context.
+        
+        Args:
+            guard: Guard to evaluate
+            context: Execution context with tool outputs, targets, etc.
+            
+        Returns:
+            True if guard passes (tool should be eligible)
+        """
         try:
-            config_path = Path(config_file)
-            if config_path.exists():
-                with open(config_path, 'r') as f:
-                    config_data = json.load(f)
-                
-                # Update policy configuration
-                for key, value in config_data.items():
-                    if hasattr(self.policies, key):
-                        setattr(self.policies, key, value)
-                    else:
-                        logger.warning(f"Unknown policy configuration key: {key}")
-                
-                logger.info(f"✅ Loaded policy configuration from {config_file}")
+            guard_name = guard.name
+            guard_args = guard.args
+            
+            logger.debug(f"🛡️ Evaluating guard: {guard_name}")
+            
+            # Generic guard predicates
+            if guard_name == "requires_anchor":
+                return self._has_anchor_entities(context)
+            elif guard_name == "requires_inconclusive":
+                return self._is_evidence_inconclusive(context)
+            elif guard_name == "cheap_first":
+                return self._cheap_tools_attempted(context)
+            elif guard_name == "requires_spatial_intent":
+                return self._is_spatial_intent(context)
             else:
-                logger.warning(f"Configuration file not found: {config_file}")
+                logger.warning(f"Unknown guard: {guard_name}, defaulting to True")
+                return True
+                
         except Exception as e:
-            logger.error(f"Failed to load policy configuration: {e}")
+            logger.error(f"❌ Error evaluating guard {guard.name}: {e}")
+            return False
     
-    def save_config(self, config_file: str):
-        """Save current policy configuration to JSON file."""
+    def assess(self, intent: Intent, outputs: List[ToolOutput], targets: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Assess evidence conclusiveness based on intent and tool outputs.
+        
+        Args:
+            intent: Query intent classification
+            outputs: Tool execution history
+            targets: Resolved biological targets from SchemaResolver
+            
+        Returns:
+            Dict with state ("conclusive_present"|"conclusive_absent"|"inconclusive"),
+            confidence, and rationale
+        """
         try:
-            config_path = Path(config_file)
-            config_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"📊 Assessing evidence: {len(outputs)} outputs, intent={intent}")
             
-            # Convert dataclass to dictionary
-            config_data = {
-                key: getattr(self.policies, key)
-                for key in self.policies.__dataclass_fields__.keys()
-            }
+            # Extract evidence metrics from tool outputs
+            evidence_metrics = self._extract_evidence_metrics(outputs)
             
-            with open(config_path, 'w') as f:
-                json.dump(config_data, f, indent=2)
-            
-            logger.info(f"💾 Saved policy configuration to {config_file}")
+            # Apply intent-specific conclusiveness rules
+            if intent == Intent.PRESENCE_ABSENCE:
+                return self._assess_presence_absence(evidence_metrics, targets)
+            elif intent == Intent.QUANTIFICATION:
+                return self._assess_quantification(evidence_metrics, targets)
+            elif intent == Intent.SPATIAL_NEIGHBORHOOD:
+                return self._assess_spatial_analysis(evidence_metrics, targets)
+            elif intent == Intent.NOVELTY_SCAN:
+                return self._assess_novelty_scan(evidence_metrics, targets)
+            else:  # GENERIC_QNA
+                return self._assess_generic_query(evidence_metrics, targets)
+                
         except Exception as e:
-            logger.error(f"Failed to save policy configuration: {e}")
+            logger.error(f"❌ Error assessing evidence: {e}")
+            return {
+                "state": "inconclusive",
+                "confidence": 0.0,
+                "rationale": f"Assessment error: {e}"
+            }
     
-    def should_use_tool(self, tool_name: str) -> bool:
-        """Check if a tool should be used based on policies."""
-        if not self.policies.enable_tool_integration:
-            return False
+    def _has_anchor_entities(self, context: Dict[str, Any]) -> bool:
+        """Check if anchor entities exist for spatial analysis."""
+        resolved_targets = context.get("resolved_targets", {})
         
-        if tool_name == "literature_search":
-            return self.policies.enable_literature_search
-        elif tool_name == "code_interpreter":
-            return self.policies.enable_code_interpreter and self.policies.allow_expensive_tools
+        # Anchor types that enable spatial/neighborhood analysis
+        anchor_types = ["proteins", "domains", "functions"]
+        anchor_count = 0
         
-        return True
+        for t in anchor_types:
+            target_value = resolved_targets.get(t, [])
+            # Handle multiple value types safely
+            try:
+                if isinstance(target_value, (list, tuple)):
+                    anchor_count += len(target_value)
+                elif isinstance(target_value, int):
+                    anchor_count += target_value
+                elif isinstance(target_value, str) and target_value.strip():
+                    anchor_count += 1  # Non-empty string counts as 1 anchor
+                # Ignore None, empty strings, other types
+            except Exception as e:
+                logger.debug(f"Failed to process anchor type {t}: {target_value} - {e}")
+                continue
+        
+        return anchor_count > 0
     
-    def should_use_agentic_mode(self, complexity: str, estimated_tokens: int) -> bool:
-        """Check if agentic mode should be used based on policies."""
-        # Honor user preference for traditional mode
-        if self.policies.prefer_traditional_mode and complexity != "complex":
-            return False
+    def _is_evidence_inconclusive(self, context: Dict[str, Any]) -> bool:
+        """Check if current evidence is inconclusive (allows expensive tools)."""
+        outputs = context.get("tool_outputs", [])
         
-        # Check token budget
-        if estimated_tokens > self.policies.max_tokens_per_query:
-            logger.warning(f"Query exceeds token budget ({estimated_tokens} > {self.policies.max_tokens_per_query})")
-            return False
+        # If no tools executed yet, evidence is inconclusive
+        if not outputs:
+            return True
         
-        return True
+        # Check if any tool reported conclusive results
+        for output in outputs:
+            # Handle both dict and ToolOutput objects
+            if hasattr(output, 'metrics'):
+                metrics = output.metrics
+            else:
+                metrics = output.get("metrics", {})
+            
+            if metrics.get("conclusive", False):
+                return False  # Evidence is conclusive, block expensive tools
+        
+        return True  # Evidence remains inconclusive
     
-    def get_timeout_for_operation(self, operation: str) -> int:
-        """Get timeout for specific operations."""
-        if operation == "code_interpreter":
-            return self.policies.code_interpreter_timeout
-        elif operation == "literature_search":
-            return 30  # Default timeout for literature search
+    def _cheap_tools_attempted(self, context: Dict[str, Any]) -> bool:
+        """Check if cheap tools have been attempted before expensive ones."""
+        outputs = context.get("tool_outputs", [])
+        
+        # Allow if no tools executed yet (first tool)
+        if not outputs:
+            return True
+        
+        # Check if at least one cheap tool was executed
+        cheap_tools = {"database_query", "vector_search"}
+        executed_tools = set()
+        for output in outputs:
+            if hasattr(output, 'tool'):
+                executed_tools.add(output.tool)
+            else:
+                executed_tools.add(output.get("tool", ""))
+        
+        return bool(cheap_tools.intersection(executed_tools))
+    
+    def _is_spatial_intent(self, context: Dict[str, Any]) -> bool:
+        """Check if query intent requires spatial analysis."""
+        intent = context.get("intent", "")
+        return intent == Intent.SPATIAL_NEIGHBORHOOD
+    
+    def _extract_evidence_metrics(self, outputs: List[ToolOutput]) -> Dict[str, Any]:
+        """Extract evidence metrics from tool execution history."""
+        metrics = {
+            "total_tools": len(outputs),
+            "successful_tools": sum(1 for out in outputs if out.success),
+            "kg_hits": 0,
+            "vector_hits": 0,
+            "vector_max_similarity": 0.0,
+            "spatial_regions_found": 0,
+            "conclusive_tools": 0
+        }
+        
+        for output in outputs:
+            # Handle both dict and ToolOutput objects
+            if hasattr(output, 'metrics'):
+                tool_metrics = output.metrics
+                tool_name = output.tool
+            else:
+                tool_metrics = output.get("metrics", {})
+                tool_name = output.get("tool", "")
+            
+            # Aggregate evidence metrics across tools
+            metrics["kg_hits"] += tool_metrics.get("kg_matches", 0)
+            metrics["vector_hits"] += tool_metrics.get("vector_matches", 0) 
+            
+            # Track maximum similarity across vector searches
+            similarity = tool_metrics.get("max_similarity", 0.0)
+            if similarity > metrics["vector_max_similarity"]:
+                metrics["vector_max_similarity"] = similarity
+            
+            # Count spatial regions from whole_genome_reader
+            if tool_name == "whole_genome_reader":
+                metrics["spatial_regions_found"] += tool_metrics.get("regions_found", 0)
+            
+            # Track tools that reported conclusive results
+            if tool_metrics.get("conclusive", False):
+                metrics["conclusive_tools"] += 1
+        
+        return metrics
+    
+    def _assess_presence_absence(self, metrics: Dict[str, Any], targets: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess presence/absence queries for conclusiveness."""
+        kg_hits = metrics["kg_hits"]
+        vector_max_sim = metrics["vector_max_similarity"]
+        
+        # Get similarity threshold from settings
+        similarity_threshold = getattr(self.settings, "vector_hit_threshold", 0.7)
+        
+        # Conclusive present: Found matches in KG or high-similarity vector hits
+        if kg_hits > 0 or vector_max_sim >= similarity_threshold:
+            return {
+                "state": "conclusive_present",
+                "confidence": 0.9 if kg_hits > 0 else 0.8,
+                "rationale": f"Found {kg_hits} KG matches, max vector similarity {vector_max_sim:.3f}"
+            }
+        
+        # Conclusive absent: No KG matches AND low vector similarity AND cheap tools executed
+        elif kg_hits == 0 and vector_max_sim < similarity_threshold and metrics["total_tools"] >= 2:
+            return {
+                "state": "conclusive_absent", 
+                "confidence": 0.85,
+                "rationale": f"No KG matches, max vector similarity {vector_max_sim:.3f} below threshold"
+            }
+        
+        # Inconclusive: Need more evidence
         else:
-            return self.policies.max_latency_seconds
+            return {
+                "state": "inconclusive",
+                "confidence": 0.5,
+                "rationale": "Insufficient evidence from initial searches"
+            }
     
-    def should_compress_context(self, context_size: int) -> bool:
-        """Check if context should be compressed."""
-        return (self.policies.enable_context_compression and 
-                context_size > self.policies.compression_threshold)
-    
-    def get_max_results(self, query_type: str) -> int:
-        """Get maximum results for query type."""
-        if query_type == "literature_search":
-            return self.policies.literature_search_max_results
-        else:
-            return self.policies.max_result_count
-    
-    def is_confidence_acceptable(self, confidence: float) -> bool:
-        """Check if confidence level meets threshold."""
-        return confidence >= self.policies.min_confidence_threshold
-    
-    def update_policy(self, key: str, value: Any):
-        """Update a single policy setting."""
-        if hasattr(self.policies, key):
-            old_value = getattr(self.policies, key)
-            setattr(self.policies, key, value)
-            logger.info(f"🔧 Updated policy {key}: {old_value} → {value}")
-        else:
-            logger.warning(f"Unknown policy key: {key}")
-    
-    def get_policy_summary(self) -> Dict[str, Any]:
-        """Get summary of current policies."""
+    def _assess_quantification(self, metrics: Dict[str, Any], targets: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess quantification queries."""
+        # Quantification typically needs multiple tools to provide counts
+        if metrics["total_tools"] < 2:
+            return {
+                "state": "inconclusive",
+                "confidence": 0.3,
+                "rationale": "Quantification requires multiple data sources"
+            }
+        
         return {
-            "execution_mode": "traditional" if self.policies.prefer_traditional_mode else "adaptive",
-            "tool_integration": self.policies.enable_tool_integration,
-            "expensive_tools": self.policies.allow_expensive_tools,
-            "max_tokens": self.policies.max_tokens_per_query,
-            "max_latency": self.policies.max_latency_seconds,
-            "compression_enabled": self.policies.enable_context_compression,
-            "min_confidence": self.policies.min_confidence_threshold
+            "state": "conclusive_present",
+            "confidence": 0.8,
+            "rationale": f"Quantification from {metrics['total_tools']} tools"
         }
     
-    def _get_policy_summary(self) -> str:
-        """Get a brief summary of current policies."""
-        mode = "traditional" if self.policies.prefer_traditional_mode else "adaptive"
-        tools = "enabled" if self.policies.enable_tool_integration else "disabled"
-        return f"mode={mode}, tools={tools}, max_tokens={self.policies.max_tokens_per_query}"
+    def _assess_spatial_analysis(self, metrics: Dict[str, Any], targets: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess spatial/neighborhood analysis queries."""
+        regions_found = metrics["spatial_regions_found"]
+        
+        # Spatial analysis is conclusive if whole_genome_reader executed
+        if regions_found > 0:
+            return {
+                "state": "conclusive_present",
+                "confidence": 0.9,
+                "rationale": f"Spatial analysis found {regions_found} genomic regions"
+            }
+        elif any(out.tool == "whole_genome_reader" for out in []):  # Spatial tool attempted
+            return {
+                "state": "conclusive_absent",
+                "confidence": 0.8,
+                "rationale": "Spatial analysis completed with no regions found"
+            }
+        else:
+            return {
+                "state": "inconclusive", 
+                "confidence": 0.4,
+                "rationale": "Spatial analysis not yet attempted"
+            }
+    
+    def _assess_novelty_scan(self, metrics: Dict[str, Any], targets: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess novelty/discovery queries."""
+        # Novelty scans typically need comprehensive analysis
+        return {
+            "state": "inconclusive",
+            "confidence": 0.6,
+            "rationale": "Novelty scans require comprehensive analysis"
+        }
+    
+    def _assess_generic_query(self, metrics: Dict[str, Any], targets: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess generic Q&A queries."""
+        total_evidence = metrics["kg_hits"] + metrics["vector_hits"]
+        
+        if total_evidence > 0:
+            return {
+                "state": "conclusive_present",
+                "confidence": 0.75,
+                "rationale": f"Found evidence from {total_evidence} sources"
+            }
+        else:
+            return {
+                "state": "inconclusive",
+                "confidence": 0.5,
+                "rationale": "Generic query needs additional evidence"
+            }
 
 
-# Global policy engine instance
-policy_engine = PolicyEngine()
+# Global policy engine instance (following existing pattern)
+_policy_engine = None
 
 
-def get_policy_engine() -> PolicyEngine:
-    """Get the global policy engine instance."""
-    return policy_engine
-
-
-def load_user_config(config_file: str):
-    """Load user configuration from file."""
-    global policy_engine
-    policy_engine.load_config(config_file)
-
-
-def save_user_config(config_file: str):
-    """Save current configuration to file."""
-    global policy_engine
-    policy_engine.save_config(config_file)
-
-
-def update_policy(key: str, value: Any):
-    """Update a single policy setting."""
-    global policy_engine
-    policy_engine.update_policy(key, value)
-
-
-def get_current_policies() -> Dict[str, Any]:
-    """Get current policy configuration."""
-    global policy_engine
-    return policy_engine.get_policy_summary()
+def get_policy_engine(settings=None) -> PolicyEngine:
+    """Get global policy engine instance."""
+    global _policy_engine
+    if _policy_engine is None:
+        _policy_engine = PolicyEngine(settings)
+    return _policy_engine

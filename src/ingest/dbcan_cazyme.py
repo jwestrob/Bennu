@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import subprocess
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -84,7 +85,15 @@ def run_dbcan_analysis(
         # Enhanced: Use absolute paths for better compatibility
         abs_protein_file = protein_file.resolve()
         abs_output_dir = genome_output_dir.resolve()
-        abs_db_dir = Path("data/dbcan_db").resolve()
+        
+        # Use configurable database directory
+        db_dir = os.getenv('DBCAN_DB_PATH', 'data/dbcan_db')
+        abs_db_dir = Path(db_dir).resolve()
+        
+        if not abs_db_dir.exists():
+            logger.error(f"dbCAN database directory not found: {abs_db_dir}")
+            logger.error("Set DBCAN_DB_PATH environment variable or ensure data/dbcan_db exists")
+            return None
         
         # Run dbCAN using CAZyme_annotation command with DIAMOND only
         cmd = [
@@ -104,8 +113,7 @@ def run_dbcan_analysis(
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
-            timeout=3600  # 1 hour timeout
+            text=True
         )
         
         if result.returncode != 0:

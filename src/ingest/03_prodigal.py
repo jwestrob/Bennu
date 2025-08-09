@@ -225,8 +225,7 @@ def run_prodigal_single(genome_info: Dict[str, Any],
                 cmd,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
-                text=True,
-                timeout=300  # 5 minute timeout per genome
+                text=True
             )
             
         if process_result.returncode != 0:
@@ -238,8 +237,7 @@ def run_prodigal_single(genome_info: Dict[str, Any],
             version_result = subprocess.run(
                 ["prodigal", "-v"],
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             if version_result.returncode == 0:
                 # Parse version from output
@@ -274,7 +272,7 @@ def run_prodigal_single(genome_info: Dict[str, Any],
             result["error_message"] = "Output validation failed"
             
     except subprocess.TimeoutExpired:
-        result["error_message"] = "Prodigal execution timed out (>5 minutes)"
+        result["error_message"] = "Prodigal execution timed out"
     except Exception as e:
         result["error_message"] = f"Unexpected error: {str(e)}"
         

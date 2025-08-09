@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.progress import Progress
 import sys
 import os
+from src.build_kg.csv_schema_validator import CSVSchemaValidator
 
 console = Console()
 
@@ -74,9 +75,16 @@ class Neo4jBulkLoader:
         with Progress(console=console) as progress:
             task = progress.add_task("Bulk importing to Neo4j...", total=6)
             
-            # Step 1: Validate CSV files
-            progress.update(task, description="Validating CSV files...")
-            csv_files = self._validate_csv_files()
+            # Step 1: Comprehensive CSV schema validation
+            progress.update(task, description="Validating CSV schema...")
+            validator = CSVSchemaValidator(self.csv_dir)
+            if not validator.validate_all():
+                console.print("❌ [red]CSV schema validation failed! Fix errors before import.[/red]")
+                return {"success": False, "error": "Schema validation failed", "errors": validator.errors}
+            console.print("✅ [green]CSV schema validation passed![/green]")
+            
+            # Get CSV files for import
+            csv_files = self._get_csv_files()
             progress.advance(task)
             
             # Step 2: Stop Neo4j
@@ -114,8 +122,8 @@ class Neo4jBulkLoader:
             **import_stats
         }
     
-    def _validate_csv_files(self) -> List[Path]:
-        """Validate that required CSV files exist."""
+    def _get_csv_files(self) -> List[Path]:
+        """Get list of CSV files for import."""
         if not self.csv_dir.exists():
             raise FileNotFoundError(f"CSV directory not found: {self.csv_dir}")
         
@@ -185,6 +193,9 @@ class Neo4jBulkLoader:
         for csv_file in csv_files:
             if "relationships" in csv_file.name:
                 rel_files.append(csv_file)
+            elif "_rels.csv" in csv_file.name:
+                # Skip old format files - these are duplicates
+                continue
             else:
                 node_files.append(csv_file)
         
@@ -269,22 +280,43 @@ class Neo4jBulkLoader:
 
 def main():
     """Main execution function."""
-    csv_dir = Path("data/stage07_kg/csv")
+    import argparse
     
-    if not csv_dir.exists():
-        console.print(f"[red]CSV directory not found: {csv_dir}[/red]")
-        console.print("Run rdf_to_csv.py first to generate CSV files")
+    parser = argparse.ArgumentParser(description="Neo4j bulk import with schema validation")
+    parser.add_argument("--csv-dir", type=Path, default=Path("data/stage07_kg/csv"),
+                       help="CSV directory path")
+    parser.add_argument("--validate-only", action="store_true",
+                       help="Only validate schema, don't import")
+    args = parser.parse_args()
+    
+    if not args.csv_dir.exists():
+        console.print(f"[red]CSV directory not found: {args.csv_dir}[/red]")
         return 1
     
+    # Validation-only mode
+    if args.validate_only:
+        console.print("🔍 Running schema validation only...")
+        validator = CSVSchemaValidator(args.csv_dir)
+        if validator.validate_all():
+            console.print(f"\n✅ [green]Schema validation passed! Ready for import.[/green]")
+            return 0
+        else:
+            console.print(f"\n❌ [red]Schema validation failed.[/red]")
+            return 1
+    
+    # Full import with validation
     try:
-        loader = Neo4jBulkLoader(csv_dir)
+        loader = Neo4jBulkLoader(args.csv_dir)
         stats = loader.bulk_import()
         
-        console.print(f"\n[bold green]✓ Bulk import completed successfully![/bold green]")
-        console.print(f"Import time: {stats['import_time_seconds']:.2f} seconds")
-        console.print(f"CSV files processed: {stats['csv_files_processed']}")
-        
-        return 0
+        if stats.get("success", True):
+            console.print(f"\n[bold green]✓ Bulk import completed successfully![/bold green]")
+            console.print(f"Import time: {stats.get('import_time_seconds', 0):.2f} seconds")
+            console.print(f"CSV files processed: {stats.get('csv_files_processed', 0)}")
+            return 0
+        else:
+            console.print(f"[red]Bulk import failed: {stats.get('error', 'Unknown error')}[/red]")
+            return 1
         
     except Exception as e:
         console.print(f"[red]Bulk import failed: {e}[/red]")

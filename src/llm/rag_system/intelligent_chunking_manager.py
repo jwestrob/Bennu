@@ -585,7 +585,7 @@ class IntelligentChunkingManager:
             logger.info(f"📋 Creating clean chunk task: {clean_task_id}")
             
             # CRITICAL FIX: Inject original biological discovery context into chunk descriptions
-            # This ensures sub-agents (gpt-4.1-mini) understand they're doing phage discovery, not generic analysis
+            # This ensures sub-agents (gpt-5-mini-2025-08-07) understand they're doing phage discovery, not generic analysis
             # Use format that avoids triggering old genome selection keywords
             if original_question:
                 enhanced_description = f"Biological discovery task: '{original_question}' | Analyzing: {chunk.description}"

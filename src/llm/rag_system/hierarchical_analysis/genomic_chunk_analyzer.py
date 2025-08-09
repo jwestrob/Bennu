@@ -89,7 +89,7 @@ class GenomicChunkAnalyzer:
     user questions rather than hardcoded keyword filters.
     """
     
-    def __init__(self, model_name: str = "gpt-4o-mini"):
+    def __init__(self, model_name: str = "gpt-4.1-mini"):
         """
         Initialize the genomic chunk analyzer.
         
@@ -244,12 +244,13 @@ class GenomicChunkAnalyzer:
         try:
             # Token limits for different models (conservative estimates)
             model_token_limits = {
+                "gpt-4.1-mini": 30000,  # 30K context limit
                 "gpt-4o-mini": 8000,  # Conservative limit for input context
                 "gpt-4o": 8000,
                 "gpt-4": 6000
             }
             
-            max_tokens = model_token_limits.get(self.model_name, 8000)
+            max_tokens = model_token_limits.get(self.model_name, 30000)
             logger.info(f"🎯 Token-aware chunking: max {max_tokens} tokens for {self.model_name}")
             
             structured_data = []

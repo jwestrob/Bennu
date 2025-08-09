@@ -216,8 +216,7 @@ def run_quast_single(genome_info: Dict[str, Any],
                 cmd,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
-                text=True,
-                timeout=600  # 10 minute timeout per genome
+                text=True
             )
             
         if process_result.returncode != 0:
@@ -229,8 +228,7 @@ def run_quast_single(genome_info: Dict[str, Any],
             version_result = subprocess.run(
                 ["quast.py", "--version"],
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             if version_result.returncode == 0:
                 result["quast_version"] = version_result.stdout.strip()
@@ -266,7 +264,7 @@ def run_quast_single(genome_info: Dict[str, Any],
             result["error_message"] = "Output validation failed"
             
     except subprocess.TimeoutExpired:
-        result["error_message"] = "QUAST execution timed out (>10 minutes)"
+        result["error_message"] = "QUAST execution timed out"
     except Exception as e:
         result["error_message"] = f"Unexpected error: {str(e)}"
         

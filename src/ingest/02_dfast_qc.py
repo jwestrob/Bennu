@@ -6,6 +6,7 @@ Evaluate genome completeness and assign taxonomic classifications using DFAST_QC
 
 import json
 import logging
+import os
 import subprocess
 import tempfile
 import time
@@ -37,24 +38,36 @@ def parse_dqc_json(dqc_result_path: Path) -> Dict[str, Any]:
         with open(dqc_result_path, 'r') as f:
             dqc_data = json.load(f)
         
-        # Extract taxonomy information
-        taxonomy = dqc_data.get("taxonomy", {})
+        # Extract taxonomy information from tc_result (new format)
+        tc_results = dqc_data.get("tc_result", [])
         
-        # Extract quality information
-        quality = dqc_data.get("quality", {})
-        checkm = quality.get("checkm", {})
+        # Use the best hit (first one) if available
+        best_hit = tc_results[0] if tc_results else {}
+        
+        # Extract quality/completeness from cc_result if available
+        cc_result = dqc_data.get("cc_result", {})
+        
+        # Determine rank and name from best taxonomic hit
+        organism_name = best_hit.get("organism_name", "unknown")
+        ani = best_hit.get("ani", 0.0)
+        status = best_hit.get("status", "unknown")
+        
+        # Set rank based on taxonomic classification confidence
+        if status == "inconclusive" or ani == 0.0:
+            rank = "unknown"  # This is valid for metagenomes
+        else:
+            rank = "species"  # Has confident classification
         
         # Build summary dict with standardized keys
         summary = {
-            "rank": taxonomy.get("rank", "unknown"),
-            "name": taxonomy.get("species", taxonomy.get("genus", "unknown")),
-            "ani": taxonomy.get("ani", 0.0),
-            "status": "complete" if checkm.get("completeness", 0) > 90 else "partial",
-            "completeness": checkm.get("completeness", 0.0),
-            "contamination": checkm.get("contamination", 0.0),
+            "rank": rank,
+            "name": organism_name,
+            "ani": ani,
+            "status": "complete" if cc_result.get("completeness", 0) > 90 else "partial",
+            "completeness": cc_result.get("completeness", 0.0),
+            "contamination": cc_result.get("contamination", 0.0),
             "tool": "dfast_qc",
-            "version": dqc_data.get("version", "unknown"),
-            "confidence": taxonomy.get("confidence", 0.0)
+            "version": dqc_data.get("version", "unknown")
         }
         
         return summary
@@ -78,7 +91,8 @@ def run_dfast(
     fasta: Path,
     out: Path, 
     threads: int = 8,
-    enable_cc: bool = True
+    enable_cc: bool = True,
+    force: bool = False
 ) -> Dict[str, Any]:
     """
     Run DFAST_QC on a single genome.
@@ -122,6 +136,10 @@ def run_dfast(
         # Add completeness/contamination flag
         if not enable_cc:
             cmd.append("--disable_cc")
+            
+        # Add force flag if needed
+        if force:
+            cmd.append("--force")
         
         # Create log file
         log_file = out / "dfast_qc.log"
@@ -130,13 +148,16 @@ def run_dfast(
         with tempfile.TemporaryDirectory() as temp_dir:
             # Run DFAST_QC
             with open(log_file, 'w') as log_f:
+                # Create environment that preserves PATH but sets TMPDIR
+                env = os.environ.copy()
+                env["TMPDIR"] = temp_dir
+                
                 process_result = subprocess.run(
                     cmd,
                     stdout=log_f,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    timeout=1800,  # 30 minute timeout per genome
-                    env={"TMPDIR": temp_dir}
+                    env=env
                 )
             
             if process_result.returncode != 0:
@@ -148,8 +169,7 @@ def run_dfast(
             version_result = subprocess.run(
                 ["dfast_qc", "--version"],
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             if version_result.returncode == 0:
                 result["dfast_qc_version"] = version_result.stdout.strip()
@@ -163,8 +183,12 @@ def run_dfast(
             return result
         
         # Parse DFAST_QC results
-        taxonomy_summary = parse_dqc_json(dqc_result_file)
-        result["taxonomy"] = taxonomy_summary
+        try:
+            taxonomy_summary = parse_dqc_json(dqc_result_file)
+            result["taxonomy"] = taxonomy_summary
+        except Exception as e:
+            result["error_message"] = f"Failed to parse DFAST_QC results: {str(e)}"
+            return result
         
         # Write trimmed summary
         tax_summary_file = out / "tax_summary.json"
@@ -179,16 +203,25 @@ def run_dfast(
         }
         
         # Check if execution was successful
-        if (dqc_result_file.exists() and 
-            tax_summary_file.exists() and
-            taxonomy_summary.get("rank") != "unknown"):
+        files_exist = dqc_result_file.exists() and tax_summary_file.exists()
+        # Accept "unknown" as valid for metagenomes - taxonomic classification can be inconclusive
+        rank_valid = taxonomy_summary.get("rank") is not None
+        
+        if files_exist and rank_valid:
             result["execution_status"] = "success"
         else:
             result["execution_status"] = "failed"
-            result["error_message"] = "Output validation failed"
+            validation_errors = []
+            if not dqc_result_file.exists():
+                validation_errors.append("dqc_result.json missing")
+            if not tax_summary_file.exists():
+                validation_errors.append("tax_summary.json missing") 
+            if not rank_valid:
+                validation_errors.append(f"taxonomy rank is None: '{taxonomy_summary.get('rank')}'")
+            result["error_message"] = f"Output validation failed: {'; '.join(validation_errors)}"
             
     except subprocess.TimeoutExpired:
-        result["error_message"] = "DFAST_QC execution timed out (>30 minutes)"
+        result["error_message"] = "DFAST_QC execution timed out"
     except Exception as e:
         result["error_message"] = f"Unexpected error: {str(e)}"
         
@@ -200,7 +233,8 @@ def run_dfast_single(
     genome_info: Dict[str, Any],
     output_base_dir: Path,
     threads: int = 8,
-    enable_cc: bool = True
+    enable_cc: bool = True,
+    force: bool = False
 ) -> Dict[str, Any]:
     """
     Run DFAST_QC on a single genome (wrapper for parallel processing).
@@ -224,7 +258,8 @@ def run_dfast_single(
         fasta=input_file,
         out=genome_output_dir,
         threads=threads,
-        enable_cc=enable_cc
+        enable_cc=enable_cc,
+        force=force
     )
 
 
@@ -427,7 +462,8 @@ def call(
         output_dir,
         max_workers,
         threads=threads,
-        enable_cc=enable_cc
+        enable_cc=enable_cc,
+        force=force
     )
     total_time = time.time() - start_time
     

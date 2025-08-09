@@ -10,6 +10,9 @@ from typing import Dict, Any, Optional, Tuple
 from enum import Enum
 from dataclasses import dataclass
 
+# Import our DSPy compatibility wrapper
+from ..dspy_compat import create_compatible_lm
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +61,7 @@ class ModelAllocation:
         # Define available models
         self.models = {
             ModelTier.NANO: ModelConfig(
-                model_name="gpt-4.1-nano",
+                model_name="gpt-4.1-mini",
                 provider="openai",
                 cost_per_million=0.50,
                 max_context=1000000,
@@ -72,14 +75,14 @@ class ModelAllocation:
                 specialties=["analysis", "summarization", "structured_output"]
             ),
             ModelTier.STANDARD: ModelConfig(
-                model_name="gpt-4.1",
+                model_name="gpt-5-2025-08-07",
                 provider="openai",
                 cost_per_million=3.00,
                 max_context=1000000,
                 specialties=["reasoning", "coding", "complex_analysis"]
             ),
             ModelTier.PREMIUM: ModelConfig(
-                model_name="o3",
+                model_name="gpt-5-2025-08-07",
                 provider="openai",
                 cost_per_million=15.00,
                 max_context=30000,
@@ -102,12 +105,12 @@ class ModelAllocation:
             "report_part_generation": TaskComplexity.MEDIUM,
             "data_overview": TaskComplexity.MEDIUM,
             "pattern_identification": TaskComplexity.MEDIUM,
-            "query_classification": TaskComplexity.MEDIUM,    # Can use gpt-4.1-mini for basic classification
-            "literature_search": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for search queries
-            "data_aggregation": TaskComplexity.MEDIUM,       # Can use gpt-4.1-mini for combining data
-            "statistical_analysis": TaskComplexity.MEDIUM,   # Can use gpt-4.1-mini for basic stats
-            "genomic_synthesis": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for synthesis to avoid o3 token limits
-            "detailed_report_synthesis": TaskComplexity.MEDIUM,  # Force gpt-4.1-mini for detailed reports
+            "query_classification": TaskComplexity.MEDIUM,    # Can use gpt-5-mini-2025-08-07 for basic classification
+            "literature_search": TaskComplexity.MEDIUM,      # Can use gpt-5-mini-2025-08-07 for search queries
+            "data_aggregation": TaskComplexity.MEDIUM,       # Can use gpt-5-mini-2025-08-07 for combining data
+            "statistical_analysis": TaskComplexity.MEDIUM,   # Can use gpt-5-mini-2025-08-07 for basic stats
+            "genomic_synthesis": TaskComplexity.MEDIUM,      # Can use gpt-5-mini-2025-08-07 for synthesis to avoid gpt-5 token limits
+            "detailed_report_synthesis": TaskComplexity.MEDIUM,  # Force gpt-5-mini-2025-08-07 for detailed reports
             "guidance_synthesis": TaskComplexity.MEDIUM,      # Fast lightweight synthesis for agent guidance
             
             # Complex tasks - deep reasoning and synthesis  
@@ -144,7 +147,7 @@ class ModelAllocation:
         """
         Determine if query requires premium model for detailed genome analysis.
         
-        DISABLED FOR COST REDUCTION - Returns False to use gpt-4.1-mini for synthesis.
+        DISABLED FOR COST REDUCTION - Returns False to use gpt-5-mini-2025-08-07 for synthesis.
         
         Args:
             query: The query or task description
@@ -153,7 +156,7 @@ class ModelAllocation:
         Returns:
             Always False to allow normal model allocation (cost optimization)
         """
-        # TEMPORARILY DISABLED: Always return False to reduce costs and use gpt-4.1-mini
+        # TEMPORARILY DISABLED: Always return False to reduce costs and use gpt-5-mini-2025-08-07
         return False
     
     def get_task_complexity(self, task_name: str, query: str = "", task_context: str = "") -> TaskComplexity:
@@ -343,21 +346,24 @@ class ModelAllocation:
         model_name, model_config = self.get_model_for_task(task_name, query, task_context)
         
         try:
-            # Use DSPy 2.6+ LM format with provider/model
+            # Use our compatibility wrapper for all models
             if model_config.provider == "openai":
                 model_string = f"openai/{model_name}"
                 # Special handling for reasoning models
                 if model_name.startswith(('o1', 'o3')):
-                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
+                    lm = create_compatible_lm(model_string, temperature=1.0, max_tokens=20000)
                 else:
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                    # GPT-5 and regular models - wrapper handles parameter mapping
+                    lm = create_compatible_lm(model_string, temperature=0.0, max_tokens=30000)
             elif model_config.provider == "anthropic":
                 model_string = f"anthropic/{model_name}"
-                lm = dspy.LM(model=model_string, max_tokens=8000)
+                # Use regular DSPy for Anthropic (no GPT-5 compatibility needed)
+                lm = dspy.LM(model=model_string, max_tokens=30000)
             else:
                 logger.warning(f"Unknown provider {model_config.provider}, using default")
                 model_string = f"openai/{model_name}"
-                lm = dspy.LM(model=model_string, max_tokens=8000)
+                # Use compatibility wrapper for unknown providers (assume OpenAI)
+                lm = create_compatible_lm(model_string, max_tokens=30000)
             
             # Create module and execute with context manager
             module = dspy.Predict(signature_class)
@@ -377,11 +383,11 @@ class ModelAllocation:
                 logger.warning(f"🚫 Token limit exceeded for {task_name}, forcing fallback to smaller model")
                 try:
                     # Force fallback to mini model for token limit issues
-                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                    fallback_lm = create_compatible_lm("openai/gpt-4.1-mini", temperature=0.0, max_tokens=30000)
                     fallback_module = dspy.Predict(signature_class)
                     with dspy.context(lm=fallback_lm):
                         result = module_call_func(fallback_module)
-                    logger.info(f"✅ Successfully executed {task_name} with token-limit fallback to gpt-4.1-mini")
+                    logger.info(f"✅ Successfully executed {task_name} with token-limit fallback to gpt-5-mini-2025-08-07")
                     return result
                 except Exception as token_fallback_error:
                     logger.error(f"Token-limit fallback also failed for {task_name}: {token_fallback_error}")

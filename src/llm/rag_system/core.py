@@ -10,7 +10,12 @@ import asyncio
 
 try:
     import dspy
+    import litellm
     from rich.console import Console
+    
+    # Enable param dropping for GPT-5 compatibility
+    litellm.drop_params = True
+    
     DSPY_AVAILABLE = True
     console = Console()
 except ImportError:
@@ -24,16 +29,22 @@ except ImportError:
 
 from ..config import LLMConfig
 from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
+from .models import Settings, Plan, PlanStep, Intent, Guard, StopCondition
+from .schema_resolver import SchemaResolver
+from .schema_map import SchemaMap, SchemaEnforcement
+from .detector_registry import DetectorRegistry, DetectorResult
+from .query_builder import QueryBuilder, QueryPlan
 from .dspy_signatures import NEO4J_SCHEMA
 from .utils import setup_debug_logging, GenomicContext
 from .log_formatter import setup_enhanced_logging
-from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
+from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer, BiologicalPlanner, DetectorResolution, QueryAssembly, Playbook, ProteinHit, AnswerBundle
 from .task_management import TaskGraph, Task, TaskType, TaskStatus
 from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
 from .genome_selection import UnifiedGenomeSelector
 from .context_compression import ContextCompressor
 from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
+from .dspy_compat import create_compatible_lm
 from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
 from .query_validator import QueryValidator
@@ -81,6 +92,11 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         # Initialize policy engine
         self.policy_engine = get_policy_engine()
         
+        # Initialize schema-locked detector pipeline
+        self.schema_map = None  # Will be initialized when needed
+        self.detector_registry = None
+        self.query_builder = None
+        
         # Configure DSPy with model allocation
         self._configure_dspy()
         
@@ -111,6 +127,28 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         logger.info(f"🧠 Memory: {'Enabled' if enable_memory else 'Disabled'}, Chunk Size: {chunk_context_size}")
         logger.info(f"🔥 Model: {config.llm_model} ({config.model_mode} mode)")
     
+    async def _initialize_schema_pipeline(self):
+        """Initialize schema-locked detector pipeline components lazily."""
+        if self.schema_map is None:
+            logger.info("🗂️  Initializing schema-locked detector pipeline...")
+            
+            # Load schema from bulk-loader with WARN enforcement to handle drift
+            self.schema_map = SchemaMap.from_bulk_loader(enforcement=SchemaEnforcement.WARN)
+            
+            # Verify schema against live database
+            drift_report = await self.schema_map.verify_against_db(self.neo4j_processor)
+            if drift_report.has_violations:
+                if self.schema_map.enforcement == SchemaEnforcement.STRICT:
+                    raise RuntimeError(f"Schema violations detected: {drift_report.errors}")
+                else:
+                    logger.warning(f"⚠️  Schema violations in warn mode: {drift_report.warnings}")
+            
+            # Initialize detector registry and query builder
+            self.detector_registry = DetectorRegistry(self.neo4j_processor, self.schema_map)
+            self.query_builder = QueryBuilder(self.schema_map)
+            
+            logger.info("✅ Schema-locked pipeline initialized successfully")
+    
     def _configure_dspy(self):
         """Configure DSPy with model allocation system."""
         if not DSPY_AVAILABLE:
@@ -131,18 +169,19 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     model_string = f"openai/{model_name}"
                     
                     if model_name.startswith(('o1', 'o3')):
-                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
+                        lm = create_compatible_lm(model_string, temperature=1.0, max_tokens=20000)
                         logger.info(f"🎯 DSPy configured with premium reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
                     else:
-                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                        # GPT-5 and regular models - wrapper handles parameter mapping
+                        lm = create_compatible_lm(model_string, temperature=0.0, max_tokens=30000)
                         logger.info(f"🎯 DSPy configured with premium model: {model_string}")
                 else:
                     # Cost-effective mode: use ultra-cheap fallback as global default
                     # Individual tasks will use model allocation for intelligent selection
-                    fallback_model = "gpt-4.1-nano"
+                    fallback_model = "gpt-4.1-mini"
                     model_string = f"openai/{fallback_model}"
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
-                    logger.info(f"🎯 DSPy configured with ultra-cheap fallback: {model_string} (temp=0.0, max_tokens=8000)")
+                    lm = create_compatible_lm(model_string, temperature=0.0, max_tokens=30000)
+                    logger.info(f"🎯 DSPy configured with ultra-cheap fallback: {model_string} (temp=0.0)")
                     logger.info(f"💡 Model allocation will override this fallback for complex tasks")
                 
                 dspy.settings.configure(lm=lm)
@@ -156,8 +195,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     logger.info(f"💡 Using task-specific model allocation for cost optimization")
                 
                 # Log available models
-                logger.info(f"💡 Cost-effective option: gpt-4.1-mini")
-                logger.info(f"🔥 Premium option: o3")
+                logger.info(f"💡 Cost-effective option: gpt-5-mini-2025-08-07")
+                logger.info(f"🔥 Premium option: gpt-5-2025-08-07")
                 
             elif self.config.llm_provider == "anthropic" and api_key:
                 # Anthropic configuration
@@ -166,7 +205,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 
                 current_model = self.config.get_current_model()
                 # Map to Anthropic models if needed
-                if current_model.startswith(('gpt', 'o1', 'o3')):
+                if current_model.startswith(('gpt-4', 'o1', 'o3', 'gpt-5')):
                     # Use Anthropic equivalent
                     anthropic_model = "claude-3-haiku-20240307" if self.config.model_mode == "cost_effective" else "claude-3-opus-20240229"
                 else:
@@ -191,7 +230,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     os.environ['OPENAI_API_KEY'] = api_key
                     model_name = getattr(self.config, 'llm_model', 'gpt-4o-mini')
                     model_string = f"openai/{model_name}"
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
+                    # Use compatibility wrapper for all models
+                    lm = create_compatible_lm(model_string, temperature=0.0, max_tokens=30000)
                     dspy.settings.configure(lm=lm)
                     logger.info(f"🔄 DSPy configured with fallback model: {model_string}")
             except Exception as fallback_error:
@@ -237,9 +277,103 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 'dspy': False
             }
     
+    async def run_schema_locked_preprocess(self, question: str) -> 'PreprocessBundle':
+        """
+        Schema-locked detector pipeline preprocessing step.
+        
+        Converts natural language queries to structured detector identifiers and parameterized Cypher plans.
+        Flow: DetectorRegistry → QueryBuilder → PreprocessBundle
+        
+        Args:
+            question: User's natural language query
+            
+        Returns:
+            PreprocessBundle with detectors, cypher_plans, schema_summary, and notes
+            
+        Raises:
+            Exception: If preprocessing fails (triggers legacy fallback)
+        """
+        try:
+            logger.info(f"🔬 [bold blue]Schema-locked preprocessing:[/bold blue] {question}")
+            
+            if not DSPY_AVAILABLE:
+                raise Exception("DSPy not available - install dsp-ml package for full functionality")
+            
+            # Initialize schema pipeline components
+            await self._initialize_schema_pipeline()
+            
+            # Step 1: Generate biological playbook with Pydantic validation
+            playbook = await self._generate_biological_playbook(question)
+            
+            # Step 2: Resolve concepts to detector identifiers (NO early exit)
+            detector_results = []
+            for concept in playbook.concepts:
+                result = await self.detector_registry.resolve(concept, k=playbook.k)
+                detector_results.append(result)
+            
+            # Combine all detector results
+            all_ko_ids = []
+            all_pfam_ids = []
+            resolution_notes = []
+            
+            for result in detector_results:
+                all_ko_ids.extend(result.ko_ids)
+                all_pfam_ids.extend(result.pfam_ids)
+                resolution_notes.append(result.resolution_notes)
+            
+            # Remove duplicates
+            all_ko_ids = list(set(all_ko_ids))
+            all_pfam_ids = list(set(all_pfam_ids))
+            
+            # Step 3: Build parameterized queries
+            query_plans = self.query_builder.build(all_ko_ids, all_pfam_ids, playbook.k)
+            
+            # Convert QueryPlan objects to CypherPlan objects
+            from .dspy_signatures import CypherPlan
+            cypher_plans = []
+            for plan in query_plans:
+                cypher_plan = CypherPlan(
+                    name=plan.producer_type,
+                    statement=plan.cypher,
+                    params=plan.params
+                )
+                cypher_plans.append(cypher_plan)
+            
+            # Step 4: Build schema summary
+            from .dspy_signatures import SchemaSummary
+            schema_summary = SchemaSummary(
+                labels=list(self.schema_map.labels.keys()),
+                relationships=list(set(rel_type for _, rel_type, _ in self.schema_map.edges)),
+                properties_by_label=dict(self.schema_map.labels),
+                warnings=[]  # Add schema drift warnings if any
+            )
+            
+            # Step 5: Build preprocessing bundle
+            from .dspy_signatures import PreprocessBundle
+            preprocessing_bundle = PreprocessBundle(
+                detectors={
+                    "functions": all_ko_ids,
+                    "domains": all_pfam_ids
+                },
+                cypher_plans=cypher_plans,
+                schema_summary=schema_summary,
+                notes=resolution_notes if resolution_notes else None
+            )
+            
+            logger.info(f"📦 Preprocessing complete: {len(all_ko_ids)} KO + {len(all_pfam_ids)} PFAM detectors, {len(cypher_plans)} plans")
+            return preprocessing_bundle
+            
+        except Exception as e:
+            logger.error(f"❌ Schema-locked preprocessing error: {e}")
+            # Re-raise to trigger legacy fallback
+            raise
+
     async def ask(self, question: str) -> Dict[str, Any]:
         """
         Main method to answer genomic questions with agentic planning.
+        
+        DEPRECATED: Fixed-DAG semantics replaced with dynamic planning.
+        Use ask_with_dynamic_planning() for new behavior with early exit.
         
         Args:
             question: Natural language question about genomic data
@@ -259,6 +393,136 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     "error": "Missing dependencies"
                 }
             
+            # NEW: Try schema-locked preprocessing → plan → execute → compose
+            try:
+                console.print("🔬 [bold]Using schema-locked detector preprocessing[/bold]")
+                
+                # Step 1: Preprocessing
+                preprocess_bundle = await self.run_schema_locked_preprocess(question)
+                
+                # Step 2: Check three legacy fallback conditions
+                fallback_to_legacy = (
+                    len(preprocess_bundle.detectors.get("functions", [])) == 0 and 
+                    len(preprocess_bundle.detectors.get("domains", [])) == 0
+                ) or len(preprocess_bundle.cypher_plans) == 0
+                
+                if fallback_to_legacy:
+                    console.print("🔄 [yellow]No detectors/plans found, falling back to legacy dynamic planning[/yellow]")
+                    logger.info("Legacy fallback triggered: empty detectors or no cypher plans")
+                    return await self._dynamic_planning_adapter(question)
+                
+                # Step 3: Plan with preprocessing bundle
+                console.print("📋 [bold]Generating task plan with preprocessing bundle[/bold]")
+                from .models import Settings
+                from .agent_executor import execute_dynamic_loop
+                from .schema_resolver import SchemaResolver
+                import uuid
+                
+                # Generate session ID if using note keeper
+                session_id = getattr(self.note_keeper, 'session_id', None) if hasattr(self, 'note_keeper') else str(uuid.uuid4())[:8]
+                
+                settings = Settings.from_llm_config(self.config, session_id=session_id)
+                resolver = SchemaResolver(self.neo4j_processor, settings)
+                
+                # Generate plan with preprocessing bundle context
+                plan = await plan_initial_with_preprocess(question, resolver, preprocess_bundle)
+                logger.info(f"🎯 Generated plan: {len(plan.steps)} steps for {plan.intent} intent with preprocessing context")
+                
+                # Step 4: Execute with dynamic loop
+                console.print("🤖 [bold]Executing plan with preprocessing context[/bold]")
+                result = await execute_dynamic_loop(plan, settings, session_id, preprocess_bundle)
+                
+                # Step 5: Return composed result (never early exit)
+                return {
+                    "question": question,
+                    "answer": result.get("answer", "No answer generated"),
+                    "confidence": result.get("confidence", "medium"),
+                    "citations": result.get("citations", ""),
+                    "metadata": result.get("metadata", {}),
+                    "plan_metadata": {
+                        "intent": plan.intent,
+                        "steps_planned": len(plan.steps),
+                        "preprocessing_used": True,
+                        "detectors_found": len(preprocess_bundle.detectors.get("functions", [])) + len(preprocess_bundle.detectors.get("domains", [])),
+                        "cypher_plans": len(preprocess_bundle.cypher_plans)
+                    }
+                }
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Schema-locked preprocessing failed, trying legacy: {e}")
+                console.print("🔄 [yellow]Preprocessing error, falling back to legacy dynamic planning[/yellow]")
+                try:
+                    return await self._dynamic_planning_adapter(question)
+                except Exception as e2:
+                    logger.warning(f"⚠️ Dynamic planning also failed, using legacy: {e2}")
+                    console.print("🔄 [yellow]Falling back to legacy execution[/yellow]") 
+                    return await self._legacy_ask_implementation(question)
+            
+        except Exception as e:
+            logger.error(f"❌ Error in ask method: {e}")
+            return {
+                "question": question,
+                "answer": f"Error processing question: {e}",
+                "confidence": "very_low",
+                "citations": "",
+                "error": str(e)
+            }
+
+    async def _dynamic_planning_adapter(self, question: str) -> Dict[str, Any]:
+        """
+        Bridge old ask() calls to new plan-loop-finalize pipeline.
+        
+        Args:
+            question: User's question
+            
+        Returns:
+            Dict in legacy format for backward compatibility
+        """
+        # Create unified settings from legacy config
+        from .models import Settings
+        from .agent_executor import execute_dynamic_loop
+        import uuid
+        
+        # Generate session ID if using note keeper
+        session_id = getattr(self.note_keeper, 'session_id', None) if hasattr(self, 'note_keeper') else str(uuid.uuid4())[:8]
+        
+        settings = Settings.from_llm_config(self.config, session_id=session_id)
+        
+        # Create schema resolver
+        resolver = SchemaResolver(self.neo4j_processor, settings)
+        
+        # Generate initial plan
+        plan = await plan_initial(question, resolver)
+        logger.info(f"🎯 Generated plan: {len(plan.steps)} steps for {plan.intent} intent")
+        
+        # Execute with dynamic loop
+        result = await execute_dynamic_loop(plan, settings, session_id)
+        
+        # Convert to legacy format
+        return {
+            "question": question,
+            "answer": result.get("answer", "No answer generated"),
+            "confidence": result.get("confidence", "low"),
+            "citations": result.get("citations", ""),
+            "metadata": result.get("metadata", {}),
+            "plan_metadata": {
+                "intent": plan.intent,
+                "steps_planned": len(plan.steps),
+                "dynamic_execution": True
+            }
+        }
+
+    async def _legacy_ask_implementation(self, question: str) -> Dict[str, Any]:
+        """
+        Original ask implementation for fallback compatibility.
+        
+        Args:
+            question: User's question
+            
+        Returns:
+            Dict with legacy execution results
+        """
+        try:
             # STEP 1: Let the LLM decide execution strategy directly
             console.print("🤖 [bold]Using LLM-based execution planning[/bold]")
             
@@ -406,7 +670,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Ensure there's a default LM configured for fallback
             if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                 logger.warning("No default LM configured, setting up fallback")
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                fallback_lm = create_compatible_lm("openai/gpt-4.1-mini", temperature=0.0, max_tokens=30000)
                 dspy.settings.configure(lm=fallback_lm)
             classification = self._run("query_classification", QueryClassifier, question=question)
         
@@ -472,7 +736,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Ensure there's a default LM configured for fallback
             if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                 logger.warning("No default LM configured, setting up fallback")
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                fallback_lm = create_compatible_lm("openai/gpt-4.1-mini", temperature=0.0, max_tokens=30000)
                 dspy.settings.configure(lm=fallback_lm)
             retrieval_plan = self._run("context_preparation", ContextRetriever,
                 db_schema=NEO4J_SCHEMA,
@@ -601,7 +865,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Ensure there's a default LM configured for fallback
             if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                 logger.warning("No default LM configured, setting up fallback")
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                fallback_lm = create_compatible_lm("openai/gpt-4.1-mini", temperature=0.0, max_tokens=30000)
                 dspy.settings.configure(lm=fallback_lm)
             
             answer_result = self._run("biological_interpretation", GenomicAnswerer,
@@ -1135,7 +1399,7 @@ print("Data available: {data_summary}")
                 logger.warning("Model allocation failed for answer generation, falling back to default")
                 if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                     logger.warning("No default LM configured, setting up fallback")
-                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                    fallback_lm = create_compatible_lm("openai/gpt-4.1-mini", temperature=0.0, max_tokens=30000)
                     dspy.settings.configure(lm=fallback_lm)
                 
                 answer_result = self._run("biological_interpretation", GenomicAnswerer,
@@ -1202,6 +1466,53 @@ print("Data available: {data_summary}")
             for component, status in health.items()
         }
     
+    # Schema-Locked Pipeline Helper Methods
+    
+    async def _generate_biological_playbook(self, question: str) -> Playbook:
+        """Generate structured playbook using DSPy BiologicalPlanner."""
+        try:
+            planner = dspy.Predict(BiologicalPlanner)
+            result = planner(user_query=question)
+            
+            # Parse JSON and validate with Pydantic
+            import json
+            try:
+                playbook_data = json.loads(result.playbook_json)
+                playbook = Playbook(**playbook_data)
+                logger.info(f"📋 Generated playbook: {playbook.mode}, {playbook.k} limit, {len(playbook.concepts)} concepts")
+                return playbook
+            except Exception as validation_error:
+                # One repair attempt
+                logger.warning(f"Playbook validation failed, attempting repair: {validation_error}")
+                
+                # Simple repair: extract basic components
+                mode = "summary"  # Default safe mode
+                if "neighborhood" in question.lower() or "spatial" in question.lower():
+                    mode = "neighborhood"
+                elif "presence" in question.lower() or "exist" in question.lower():
+                    mode = "presence"
+                
+                k = 20  # Default limit
+                import re
+                numbers = re.findall(r'\d+', question)
+                if numbers:
+                    k = min(int(numbers[0]), 50)  # Cap at 50
+                
+                # Extract potential biological terms (simple approach)
+                bio_terms = []
+                for word in question.lower().split():
+                    if len(word) > 4 and word not in {'what', 'where', 'when', 'proteins', 'genes'}:
+                        bio_terms.append(word)
+                
+                repaired_playbook = Playbook(mode=mode, k=k, concepts=bio_terms[:5])  # Limit concepts
+                logger.info(f"🔧 Repaired playbook: {repaired_playbook}")
+                return repaired_playbook
+                
+        except Exception as e:
+            logger.error(f"❌ Playbook generation failed: {e}")
+            # Return minimal safe playbook
+            return Playbook(mode="summary", k=10, concepts=[])
+    
     def _determine_analysis_type(self, question: str) -> str:
         """
         Determine the analysis type based on question content for biological context.
@@ -1246,3 +1557,333 @@ print("Data available: {data_summary}")
             # Default to functional annotation for general queries
             logger.info(f"📊 Analysis type: FUNCTIONAL_ANNOTATION (default for general queries)")
             return "functional_annotation"
+
+
+async def plan_initial_with_preprocess(query: str, resolver: SchemaResolver, preprocess_bundle: 'PreprocessBundle') -> Plan:
+    """
+    Generate initial execution plan with preprocessing bundle context.
+    
+    Args:
+        query: User's natural language query
+        resolver: SchemaResolver for biological target resolution
+        preprocess_bundle: Preprocessing bundle with detectors and cypher plans
+        
+    Returns:
+        Plan with structured steps that consume preprocessing context
+    """
+    try:
+        logger.info(f"🎯 Generating plan with preprocessing bundle: {len(preprocess_bundle.cypher_plans)} plans")
+        
+        # Use preprocessing bundle detectors as resolved targets
+        resolved_targets = {
+            "functions": preprocess_bundle.detectors.get("functions", []),
+            "domains": preprocess_bundle.detectors.get("domains", []),
+            "proteins": []  # Will be populated by cypher plan execution
+        }
+        
+        has_anchors = len(resolved_targets["functions"]) > 0 or len(resolved_targets["domains"]) > 0
+        
+        # Classify query intent
+        intent = _classify_query_intent(query, resolved_targets)
+        logger.info(f"📊 Classified intent: {intent} with preprocessing context")
+        
+        # Generate plan steps that consume preprocessing bundle
+        steps = _generate_plan_steps_with_preprocess(intent, resolved_targets, has_anchors, query, preprocess_bundle)
+        
+        # Create structured plan with preprocessing context
+        plan = Plan(
+            intent=intent,
+            steps=steps,
+            metadata={
+                "query": query,
+                "resolved_targets": {k: len(v) for k, v in resolved_targets.items()},
+                "has_anchor_entities": has_anchors,
+                "preprocessing_bundle": True,
+                "cypher_plans": len(preprocess_bundle.cypher_plans),
+                "schema_labels": len(preprocess_bundle.schema_summary.labels)
+            }
+        )
+        
+        logger.info(f"✅ Generated preprocessing-aware plan with {len(steps)} steps for {intent} intent")
+        return plan
+        
+    except Exception as e:
+        logger.error(f"❌ Error generating preprocessing plan: {e}")
+        # Fallback to regular planning
+        return await plan_initial(query, resolver)
+
+
+async def plan_initial(query: str, resolver: SchemaResolver) -> Plan:
+    """
+    Generate initial execution plan based on query and resolved targets.
+    
+    Replaces static task lists with dynamic planning that considers
+    resolved biological targets and query intent.
+    
+    Args:
+        query: User's natural language query
+        resolver: SchemaResolver for biological target resolution
+        
+    Returns:
+        Plan with structured steps, guards, and stop conditions
+    """
+    try:
+        logger.info(f"🎯 Generating initial plan for query: {query[:100]}...")
+        
+        # Resolve biological targets from query
+        resolved_targets = await resolver.resolve_targets_from_query(query)
+        has_anchors = resolver.has_anchor_entities(resolved_targets)
+        
+        # Classify query intent based on content and resolved targets
+        intent = _classify_query_intent(query, resolved_targets)
+        logger.info(f"📊 Classified intent: {intent}")
+        
+        # Generate plan steps based on intent and targets
+        steps = _generate_plan_steps(intent, resolved_targets, has_anchors, query)
+        
+        # Create structured plan
+        plan = Plan(
+            intent=intent,
+            steps=steps,
+            metadata={
+                "query": query,
+                "resolved_targets": {k: len(v) for k, v in resolved_targets.items()},
+                "has_anchor_entities": has_anchors,
+                "total_targets": sum(len(targets) for targets in resolved_targets.values())
+            }
+        )
+        
+        logger.info(f"✅ Generated plan with {len(steps)} steps for {intent} intent")
+        return plan
+        
+    except Exception as e:
+        logger.error(f"❌ Error generating initial plan: {e}")
+        # Return minimal fallback plan
+        return Plan(
+            intent=Intent.GENERIC_QNA,
+            steps=[
+                PlanStep(
+                    tool="database_query",
+                    args={"query": query},
+                    cost="cheap",
+                    id="fallback_db_query"
+                )
+            ],
+            metadata={"error": str(e), "fallback": True}
+        )
+
+
+def _classify_query_intent(query: str, resolved_targets: Dict) -> Intent:
+    """
+    Classify query intent based on content and resolved targets.
+    
+    Args:
+        query: User query string
+        resolved_targets: Resolved biological entities
+        
+    Returns:
+        Intent classification
+    """
+    query_lower = query.lower()
+    
+    # Presence/absence patterns (simple yes/no questions)
+    presence_patterns = [
+        "present", "absent", "have", "has", "contain", "contains", 
+        "exist", "exists", "detect", "detected", "is there", "are there"
+    ]
+    
+    # Complex discovery patterns (not simple presence/absence)
+    discovery_patterns = [
+        "find", "tell me about", "describe", "analyze", "identify",
+        "show me", "list", "what are", "which", "how many"
+    ]
+    
+    # Quantification patterns
+    quantity_patterns = [
+        "how many", "count", "number of", "quantity", "abundance",
+        "frequency", "distribution", "levels"
+    ]
+    
+    # Spatial/neighborhood patterns
+    spatial_patterns = [
+        "near", "adjacent", "neighbor", "neighborhood", "cluster", 
+        "operon", "region", "context", "proximity", "around"
+    ]
+    
+    # Novelty/discovery patterns
+    novelty_patterns = [
+        "novel", "new", "unusual", "interesting", "unique", "rare",
+        "discover", "explore", "unknown", "hypothetical"
+    ]
+    
+    # Check patterns and resolved targets - ORDER MATTERS!
+    # Priority 1: Discovery patterns with spatial keywords (find loci, tell me about)
+    if (any(pattern in query_lower for pattern in discovery_patterns) and 
+        ("loci" in query_lower or "locus" in query_lower or 
+         any(spatial in query_lower for spatial in spatial_patterns))):
+        return Intent.SPATIAL_NEIGHBORHOOD
+    
+    # Priority 2: General discovery patterns that need complex analysis
+    elif any(pattern in query_lower for pattern in discovery_patterns):
+        return Intent.GENERIC_QNA
+    elif any(pattern in query_lower for pattern in quantity_patterns):
+        return Intent.QUANTIFICATION
+    elif (any(pattern in query_lower for pattern in spatial_patterns) or 
+          resolved_targets.get("proteins", [])):  # Spatial requires anchors
+        return Intent.SPATIAL_NEIGHBORHOOD  
+    elif any(pattern in query_lower for pattern in novelty_patterns):
+        return Intent.NOVELTY_SCAN
+    elif any(pattern in query_lower for pattern in presence_patterns):
+        return Intent.PRESENCE_ABSENCE
+    else:
+        return Intent.GENERIC_QNA
+
+
+def _generate_plan_steps_with_preprocess(intent: Intent, resolved_targets: Dict, 
+                                        has_anchors: bool, query: str, 
+                                        preprocess_bundle: 'PreprocessBundle') -> List[PlanStep]:
+    """
+    Generate plan steps that consume preprocessing bundle.
+    
+    Args:
+        intent: Classified query intent
+        resolved_targets: Biological targets from preprocessing
+        has_anchors: Whether anchor entities exist for spatial analysis
+        query: Original query string
+        preprocess_bundle: Preprocessing bundle with cypher plans
+        
+    Returns:
+        List of PlanStep objects configured to use preprocessing data
+    """
+    steps = []
+    
+    # Always start with preprocessing-aware database query
+    db_step = PlanStep(
+        tool="database_query",
+        args={
+            "query": query, 
+            "resolved_targets": resolved_targets,
+            "cypher_plans": [plan.dict() for plan in preprocess_bundle.cypher_plans],
+            "use_preprocessing": True
+        },
+        cost="cheap",
+        guards=[],
+        stop_on=[StopCondition(name="presence_absence_conclusive")] if intent == Intent.PRESENCE_ABSENCE else [],
+        id="preprocessing_db_query"
+    )
+    steps.append(db_step)
+    
+    # Add vector search constrained by preprocessing results
+    if resolved_targets.get("functions", []) or resolved_targets.get("domains", []):
+        vector_step = PlanStep(
+            tool="vector_search",  
+            args={
+                "query": query, 
+                "targets": resolved_targets.get("functions", []) + resolved_targets.get("domains", []),
+                "constrain_by_preprocessing": True
+            },
+            cost="moderate",
+            requires=["preprocessing_db_query"],
+            stop_on=[StopCondition(name="presence_absence_conclusive")] if intent == Intent.PRESENCE_ABSENCE else [],
+            id="constrained_semantic_search"
+        )
+        steps.append(vector_step)
+    
+    # Add spatial analysis constrained by schema summary
+    if intent == Intent.SPATIAL_NEIGHBORHOOD and has_anchors:
+        spatial_step = PlanStep(
+            tool="whole_genome_reader",
+            args={
+                "query": query, 
+                "anchor_entities": resolved_targets,
+                "schema_constraints": preprocess_bundle.schema_summary.dict(),
+                "use_preprocessing": True
+            },
+            cost="expensive",
+            requires=["preprocessing_db_query"],
+            guards=[Guard(name="requires_anchor"), Guard(name="requires_inconclusive")],
+            id="schema_constrained_spatial"
+        )
+        steps.append(spatial_step)
+    
+    # Add code analysis for quantification
+    if intent == Intent.QUANTIFICATION:
+        code_step = PlanStep(
+            tool="code_interpreter",
+            args={
+                "analysis_type": "quantification", 
+                "query": query,
+                "preprocessing_results": True
+            },
+            cost="moderate", 
+            requires=["preprocessing_db_query"],
+            id="preprocessing_quantitative_analysis"
+        )
+        steps.append(code_step)
+    
+    return steps
+
+
+def _generate_plan_steps(intent: Intent, resolved_targets: Dict, 
+                        has_anchors: bool, query: str) -> List[PlanStep]:
+    """
+    Generate plan steps based on intent and available targets.
+    
+    Args:
+        intent: Classified query intent
+        resolved_targets: Biological targets from SchemaResolver
+        has_anchors: Whether anchor entities exist for spatial analysis
+        query: Original query string
+        
+    Returns:
+        List of PlanStep objects with appropriate guards and costs
+    """
+    steps = []
+    
+    # Always start with cheap database query
+    db_step = PlanStep(
+        tool="database_query",
+        args={"query": query, "resolved_targets": resolved_targets},
+        cost="cheap",
+        guards=[],
+        stop_on=[StopCondition(name="presence_absence_conclusive")] if intent == Intent.PRESENCE_ABSENCE else [],
+        id="initial_db_query"
+    )
+    steps.append(db_step)
+    
+    # Add vector search for semantic matching
+    if resolved_targets.get("proteins", []) or intent in [Intent.NOVELTY_SCAN, Intent.GENERIC_QNA]:
+        vector_step = PlanStep(
+            tool="vector_search",  
+            args={"query": query, "targets": resolved_targets.get("proteins", [])},
+            cost="moderate",
+            requires=["initial_db_query"],
+            stop_on=[StopCondition(name="presence_absence_conclusive")] if intent == Intent.PRESENCE_ABSENCE else [],
+            id="semantic_search"
+        )
+        steps.append(vector_step)
+    
+    # Add spatial analysis only if anchors exist and intent requires it
+    if intent == Intent.SPATIAL_NEIGHBORHOOD and has_anchors:
+        spatial_step = PlanStep(
+            tool="whole_genome_reader",
+            args={"query": query, "anchor_entities": resolved_targets},
+            cost="expensive",
+            requires=["initial_db_query"],
+            guards=[Guard(name="requires_anchor"), Guard(name="requires_inconclusive")],
+            id="spatial_analysis"
+        )
+        steps.append(spatial_step)
+    
+    # Add code analysis for quantification
+    if intent == Intent.QUANTIFICATION:
+        code_step = PlanStep(
+            tool="code_interpreter",
+            args={"analysis_type": "quantification", "query": query},
+            cost="moderate", 
+            requires=["initial_db_query"],
+            id="quantitative_analysis"
+        )
+        steps.append(code_step)
+    
+    return steps
