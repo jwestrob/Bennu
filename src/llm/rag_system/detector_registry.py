@@ -124,18 +124,19 @@ class DetectorRegistry:
         normalized = phrase.lower().strip()
         
         # Remove common stop words and numerals
+        # NOTE: Removed "protein" and "proteins" from stop words - they're important biological terms
         stop_words = {
             "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
             "from", "what", "where", "when", "how", "why", "which", "that", "this", "these", "those",
             "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
             "will", "would", "could", "should", "may", "might", "can", "must", "find", "show", "tell",
             "me", "about", "all", "any", "some", "many", "much", "more", "most", "analysis", "analyze",
-            "present", "contain", "contains", "gene", "genes", "protein", "proteins"
+            "present", "contain", "contains", "gene", "genes"
         }
         
         # Split and filter words
         words = []
-        for word in re.split(r'[\\s,;.!?()]+', normalized):
+        for word in re.split(r'[\s,;.!?()]+', normalized):
             # Skip empty words
             if not word:
                 continue
@@ -161,13 +162,13 @@ class DetectorRegistry:
     
     def _extract_direct_ko_ids(self, phrase: str) -> List[str]:
         """Extract direct KO accessions from phrase (K##### pattern)."""
-        ko_pattern = r'\\bK\\d{5}\\b'
+        ko_pattern = r'\bK\d{5}\b'
         matches = re.findall(ko_pattern, phrase, re.IGNORECASE)
         return [match.upper() for match in matches]
     
     def _extract_direct_pfam_ids(self, phrase: str) -> List[str]:
         """Extract direct PFAM accessions from phrase (PF##### or PF####.# pattern).""" 
-        pfam_pattern = r'\\bPF\\d{5}(?:\\.\\d+)?\\b'
+        pfam_pattern = r'\bPF\d{5}(?:\.\d+)?\b'
         matches = re.findall(pfam_pattern, phrase, re.IGNORECASE)
         return [match.upper() for match in matches]
     
@@ -179,18 +180,32 @@ class DetectorRegistry:
         if not phrase:
             return []
         
-        # Build parameterized query using only validated properties
-        cypher = """
+        # Build fuzzy matching query - match individual words from phrase
+        phrase_words = phrase.lower().split()
+        
+        # Build WHERE clause that matches any word from the phrase
+        where_conditions = []
+        params = {"candidate_cap": candidate_cap}
+        
+        for i, word in enumerate(phrase_words):
+            if len(word) >= 3:  # Only match words with 3+ characters
+                param_key = f"word_{i}"
+                where_conditions.append(f"toLower(ko.description) CONTAINS ${param_key}")
+                params[param_key] = word
+        
+        if not where_conditions:
+            # Fallback to original exact match if no valid words
+            where_conditions = ["toLower(ko.description) CONTAINS $phrase_lc"]
+            params["phrase_lc"] = phrase.lower()
+        
+        where_clause = " OR ".join(where_conditions)
+        
+        cypher = f"""
         MATCH (ko:KEGGOrtholog)
-        WHERE toLower(ko.description) CONTAINS $phrase_lc
+        WHERE {where_clause}
         RETURN ko.id AS id, ko.description AS description
         LIMIT $candidate_cap
         """
-        
-        params = {
-            "phrase_lc": phrase.lower(),
-            "candidate_cap": candidate_cap
-        }
         
         try:
             logger.debug(f"🔍 KO query: {cypher}")
@@ -224,18 +239,32 @@ class DetectorRegistry:
         if not phrase:
             return []
         
-        # Build parameterized query using only validated properties
-        cypher = """
+        # Build fuzzy matching query - match individual words from phrase
+        phrase_words = phrase.lower().split()
+        
+        # Build WHERE clause that matches any word from the phrase
+        where_conditions = []
+        params = {"candidate_cap": candidate_cap}
+        
+        for i, word in enumerate(phrase_words):
+            if len(word) >= 3:  # Only match words with 3+ characters
+                param_key = f"word_{i}"
+                where_conditions.append(f"toLower(dom.description) CONTAINS ${param_key}")
+                params[param_key] = word
+        
+        if not where_conditions:
+            # Fallback to original exact match if no valid words
+            where_conditions = ["toLower(dom.description) CONTAINS $phrase_lc"]
+            params["phrase_lc"] = phrase.lower()
+        
+        where_clause = " OR ".join(where_conditions)
+        
+        cypher = f"""
         MATCH (dom:Domain)
-        WHERE toLower(dom.description) CONTAINS $phrase_lc
+        WHERE {where_clause}
         RETURN dom.id AS id, dom.description AS description
         LIMIT $candidate_cap
         """
-        
-        params = {
-            "phrase_lc": phrase.lower(), 
-            "candidate_cap": candidate_cap
-        }
         
         try:
             logger.debug(f"🔍 PFAM query: {cypher}")

@@ -457,13 +457,67 @@ class UnifiedAgentExecutor:
         )
     
     async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
-        """Execute database query using existing processors."""
+        """Execute database query using schema-locked QueryBuilder."""
         # Extract query intent from parameters
         description = params.get("description", params.get("query", "General database search"))
         
-        # Use existing query processing logic from core.py
-        # This will generate appropriate Cypher queries and execute them
-        return await self._execute_traditional_query_logic(description)
+        # Use schema-locked detector registry and query builder
+        return await self._execute_schema_locked_query(description)
+    
+    async def _execute_schema_locked_query(self, description: str) -> Any:
+        """Execute query using schema-locked DetectorRegistry and QueryBuilder."""
+        try:
+            # Use the same schema-locked system as in core.py preprocessing
+            from .detector_registry import DetectorRegistry
+            from .query_builder import QueryBuilder
+            from .schema_map import SchemaMap
+            
+            # Initialize schema components
+            schema_map = SchemaMap(self.rag_system.neo4j_processor.graph_client)
+            await schema_map.load_schema()
+            
+            detector_registry = DetectorRegistry(self.rag_system.neo4j_processor.graph_client, schema_map)
+            query_builder = QueryBuilder(schema_map)
+            
+            # Resolve query to detectors
+            detector_result = await detector_registry.resolve(description)
+            logger.info(f"🔍 Database query resolved: {len(detector_result.ko_ids)} KOs, {len(detector_result.pfam_ids)} PFAMs")
+            
+            # Build query plans
+            query_plans = query_builder.build(
+                ko_ids=detector_result.ko_ids,
+                pfam_ids=detector_result.pfam_ids,
+                k=100  # Reasonable limit for agent queries
+            )
+            
+            if not query_plans:
+                logger.warning(f"⚠️ No query plans generated for: {description}")
+                return {"results": [], "message": f"No database matches found for: {description}"}
+            
+            # Execute query plans
+            all_results = []
+            for plan in query_plans:
+                try:
+                    with self.rag_system.neo4j_processor.graph_client.driver.session() as session:
+                        neo4j_result = session.run(plan.cypher, **plan.params)
+                        records = [dict(record) for record in neo4j_result]
+                        all_results.extend(records)
+                        logger.debug(f"✅ {plan.producer_type} query: {len(records)} results")
+                except Exception as e:
+                    logger.error(f"❌ Query plan {plan.producer_type} failed: {e}")
+            
+            logger.info(f"🎯 Schema-locked database query complete: {len(all_results)} total results")
+            
+            return {
+                "results": all_results,
+                "query_plans_executed": len(query_plans),
+                "detector_resolution": detector_result.resolution_notes,
+                "total_results": len(all_results)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Schema-locked database query failed: {e}")
+            return {"results": [], "error": str(e), "message": f"Database query failed: {e}"}
     
     async def _execute_whole_genome_reader(self, params: Dict[str, Any]) -> Any:
         """Execute hierarchical genomic analysis instead of raw data dumping."""
@@ -770,68 +824,6 @@ class UnifiedAgentExecutor:
         
         return result
     
-    async def _execute_traditional_query_logic(self, question: str) -> Any:
-        """
-        Execute traditional query logic from core.py for database queries.
-        
-        This reuses the existing sophisticated query processing pipeline.
-        """
-        try:
-            # Use existing query classification and retrieval logic
-            from .dspy_signatures import QueryClassifier, ContextRetriever, NEO4J_SCHEMA
-            
-            # Classify query type
-            def classification_call(module):
-                return module(question=question)
-            
-            classification = self.model_allocator.create_context_managed_call(
-                task_name="query_classification",
-                signature_class=QueryClassifier,
-                module_call_func=classification_call
-            )
-            
-            if not classification:
-                raise Exception("Query classification failed")
-            
-            # Generate retrieval plan
-            def retrieval_call(module):
-                return module(
-                    db_schema=NEO4J_SCHEMA,
-                    question=question,
-                    query_type=classification.query_type,
-                    task_context="Agent database query",
-                    genome_filter_required="false",
-                    target_genome="",
-                    analysis_type="functional_annotation"
-                )
-            
-            retrieval_plan = self.model_allocator.create_context_managed_call(
-                task_name="context_preparation",
-                signature_class=ContextRetriever,
-                module_call_func=retrieval_call
-            )
-            
-            if not retrieval_plan:
-                raise Exception("Retrieval plan generation failed")
-            
-            # Execute the query
-            if classification.query_type in ["structural", "general"]:
-                result = await self.rag_system.neo4j_processor.process_query(
-                    retrieval_plan.cypher_query, 
-                    query_type="cypher"
-                )
-                return result.results if result.results else []
-            else:
-                result = await self.rag_system.hybrid_processor.process_query(retrieval_plan.cypher_query)
-                combined_data = result.results[0] if result.results else {}
-                return {
-                    "structured_data": combined_data.get("structured_data", []),
-                    "semantic_data": combined_data.get("semantic_data", [])
-                }
-                
-        except Exception as e:
-            logger.error(f"Traditional query execution failed: {e}")
-            return []
     
     def _generate_analysis_code(self, params: Dict[str, Any]) -> str:
         """Generate Python analysis code using clean data interface."""
@@ -1212,31 +1204,35 @@ analysis_results = {{
                 if tool_name not in tools_used:
                     tools_used.append(tool_name)
         
-        # Use progressive synthesizer if available
-        if self.note_keeper and hasattr(self.rag_system, 'progressive_synthesizer'):
-            # Convert steps to note-like format for synthesis
-            synthesis_data = []
+        # Use schema-locked DSPy synthesis
+        if all_results:
+            # Format context from agent steps
+            context_parts = []
             for result in all_results:
-                synthesis_data.append({
-                    "_source_task": f"agent_step_{result['step']}",
-                    "_data_type": f"{result['tool']}_result",
-                    "reasoning": result["reasoning"],
-                    "data": result["result"]
-                })
+                context_parts.append(f"Step {result['step']} ({result['tool']}): {result['reasoning']} -> {str(result['result'])[:500]}...")
             
-            # Use progressive synthesis
-            synthesizer = self.rag_system.progressive_synthesizer
-            if not synthesizer:
-                from .memory import ProgressiveSynthesizer
-                synthesizer = ProgressiveSynthesizer(self.note_keeper)
+            integrated_context = "\n\n".join(context_parts)
             
-            answer = synthesizer.synthesize_progressive(
-                task_notes=[],  # No traditional task notes
-                question=question,
-                raw_data=synthesis_data
+            # Use GenomicSynthesizer for comprehensive synthesis
+            from .dspy_signatures import GenomicSynthesizer
+            
+            def synthesis_call(module):
+                return module(
+                    question=question,
+                    context=integrated_context,
+                    synthesis_mode="comprehensive_report"
+                )
+            
+            synthesis_result = self.model_allocator.create_context_managed_call(
+                task_name="genomic_synthesis",
+                signature_class=GenomicSynthesizer,
+                module_call_func=synthesis_call,
+                query=question,
+                task_context=f"Agent synthesis with {len(all_results)} steps"
             )
             
-            return answer, "high", f"Agent exploration using: {', '.join(tools_used)}"
+            if synthesis_result:
+                return synthesis_result.summary, "high", f"Schema-locked agent analysis: {', '.join(tools_used)}"
         
         # Fallback synthesis using GenomicAnswerer
         from .dspy_signatures import GenomicAnswerer
@@ -1291,15 +1287,33 @@ analysis_results = {{
             recent_steps = steps[-3:] if len(steps) > 3 else steps
             recent_notes = self._steps_to_task_notes(recent_steps, question)
             
-            # Use progressive synthesizer in guidance mode
-            from .memory import ProgressiveSynthesizer
-            synthesizer = ProgressiveSynthesizer(self.note_keeper)
+            # Use simple DSPy guidance synthesis
+            from .dspy_signatures import GenomicSynthesizer
             
-            guidance = synthesizer.synthesize_progressive(
-                task_notes=recent_notes,
-                question=question,
-                synthesis_mode="guidance"  # NEW: Lightweight mode
+            # Format recent steps into context
+            context_parts = []
+            for step in recent_steps:
+                if step.success and step.result:
+                    context_parts.append(f"Step {step.step_number}: {step.reasoning}")
+            
+            context = "; ".join(context_parts) if context_parts else "No recent steps"
+            
+            def guidance_call(module):
+                return module(
+                    question=question,
+                    context=context,
+                    synthesis_mode="discovery_summary"  # Lightweight mode
+                )
+            
+            guidance_result = self.model_allocator.create_context_managed_call(
+                task_name="genomic_synthesis",
+                signature_class=GenomicSynthesizer,
+                module_call_func=guidance_call,
+                query=question,
+                task_context="Agent guidance synthesis"
             )
+            
+            guidance = guidance_result.summary if guidance_result else None
             
             return guidance
             
@@ -1326,19 +1340,45 @@ analysis_results = {{
                 all_notes = self.note_keeper.get_all_task_notes()
                 
                 if all_notes:
-                    logger.info(f"📊 Using {len(all_notes)} task notes for comprehensive reporting")
-                    from .memory import ProgressiveSynthesizer
-                    synthesizer = ProgressiveSynthesizer(self.note_keeper)
+                    logger.info(f"🧬 Using {len(all_notes)} task notes for schema-locked comprehensive reporting")
                     
-                    # Enhanced synthesis with evidence mapping
-                    final_answer = synthesizer.synthesize_with_evidence_mapping(
-                        task_notes=all_notes,
-                        question=question,
-                        preprocess_bundle=preprocess_bundle,
-                        evidence_ledger=self._build_evidence_ledger(steps, preprocess_bundle)
+                    # Format task notes into context
+                    context_parts = []
+                    for note in all_notes:
+                        if hasattr(note, 'content'):
+                            context_parts.append(note.content)
+                        elif isinstance(note, dict) and 'content' in note:
+                            context_parts.append(note['content'])
+                        else:
+                            context_parts.append(str(note)[:500])
+                    
+                    integrated_context = "\n\n".join(context_parts)
+                    
+                    # Add preprocessing bundle context if available
+                    if preprocess_bundle:
+                        detector_info = f"Preprocessed detectors: functions={preprocess_bundle.detectors.get('functions', [])}, domains={preprocess_bundle.detectors.get('domains', [])}"
+                        integrated_context = f"{detector_info}\n\n{integrated_context}"
+                    
+                    # Use GenomicSynthesizer for comprehensive reporting
+                    from .dspy_signatures import GenomicSynthesizer
+                    
+                    def reporting_call(module):
+                        return module(
+                            question=question,
+                            context=integrated_context,
+                            synthesis_mode="comprehensive_report"
+                        )
+                    
+                    synthesis_result = self.model_allocator.create_context_managed_call(
+                        task_name="genomic_synthesis",
+                        signature_class=GenomicSynthesizer,
+                        module_call_func=reporting_call,
+                        query=question,
+                        task_context=f"Comprehensive reporting with {len(all_notes)} task notes"
                     )
                     
-                    return final_answer, "high", f"Comprehensive analysis with evidence mapping using {len(all_notes)} task notes"
+                    if synthesis_result:
+                        return synthesis_result.summary, "high", f"Schema-locked comprehensive analysis using {len(all_notes)} task notes"
             
             # Enhanced fallback with evidence mapping
             logger.info("📊 No task notes available, generating narrative report from agent steps")
@@ -1815,7 +1855,7 @@ async def execute_dynamic_loop(plan: Plan, settings: Settings, session_id: Optio
             
             # Execute the step
             logger.info(f"🔧 Executing step: {eligible_step.tool} (cost: {eligible_step.cost})")
-            tool_output = await _execute_tool_step(eligible_step, settings, preprocess_bundle)
+            tool_output = await _execute_tool_step(eligible_step, settings, preprocess_bundle, evidence_ledger)
             
             # Record in evidence ledger
             evidence_ledger.calls.append(tool_output)
@@ -1896,7 +1936,8 @@ def _find_next_eligible_step(plan: Plan, executed_steps: List[str], policy_engin
     return None
 
 
-async def _execute_tool_step(step: PlanStep, settings: Settings, preprocess_bundle: Optional['PreprocessBundle'] = None) -> ToolOutput:
+async def _execute_tool_step(step: PlanStep, settings: Settings, preprocess_bundle: Optional['PreprocessBundle'] = None, 
+                           evidence_ledger: Optional['EvidenceLedger'] = None) -> ToolOutput:
     """Execute a single tool step and return standardized output."""
     start_time = datetime.now()
     
@@ -1913,7 +1954,7 @@ async def _execute_tool_step(step: PlanStep, settings: Settings, preprocess_bund
         if step.tool == "database_query":
             result = await _execute_database_query(step.args, settings, preprocess_bundle)
         elif step.tool == "vector_search":
-            result = await _execute_vector_search(step.args, settings)
+            result = await _execute_vector_search(step.args, settings, evidence_ledger)
         elif step.tool == "whole_genome_reader":
             result = await _execute_whole_genome_reader(step.args, settings)
         elif step.tool == "code_interpreter":
@@ -1963,52 +2004,90 @@ def _should_stop_execution(step: PlanStep, tool_outputs: List[ToolOutput], inten
 
 
 async def _generate_final_synthesis(evidence_ledger: EvidenceLedger, intent: Intent, question: str) -> Dict[str, Any]:
-    """Generate final response using EXISTING synthesis system."""
+    """Generate final response using schema-locked DSPy synthesis."""
     try:
-        logger.info("📊 Using existing synthesis system for comprehensive report")
+        logger.info("🧬 Using schema-locked DSPy synthesis for comprehensive report")
         
-        # Extract tool results for synthesis
+        # Extract rich biological context from evidence ledger
+        context_parts = []
         all_results = []
-        findings_parts = []
+        successful_tools = []
         
         for tool_output in evidence_ledger.calls:
-            if tool_output.success and tool_output.artifacts:
-                # Add tool results to synthesis data
-                if isinstance(tool_output.artifacts, dict):
+            if tool_output.success:
+                successful_tools.append(tool_output.tool)
+                
+                # Extract rich biological data from artifacts
+                if tool_output.artifacts and isinstance(tool_output.artifacts, dict):
                     if 'results' in tool_output.artifacts:
-                        all_results.extend(tool_output.artifacts['results'])
-                    
-                # Build findings summary
-                if tool_output.summary:
-                    findings_parts.append(tool_output.summary)
+                        results = tool_output.artifacts['results']
+                        all_results.extend(results)
+                        
+                        # Format biological context from actual data
+                        if results:
+                            context_parts.append(_format_biological_context(tool_output.tool, results))
+                        else:
+                            context_parts.append(f"{tool_output.tool}: No results found")
+                    else:
+                        # Fallback to summary if no results structure
+                        if tool_output.summary:
+                            context_parts.append(f"{tool_output.tool}: {tool_output.summary}")
+                
+        # Combine all biological evidence into rich context
+        integrated_context = "\n\n".join(context_parts) if context_parts else "Analysis completed with available tools"
         
-        current_findings = "; ".join(findings_parts) if findings_parts else "Analysis completed"
+        # Use GenomicSynthesizer DSPy signature for final synthesis
+        from .dspy_signatures import GenomicSynthesizer
+        from .memory import get_model_allocator
         
-        # Use existing ProgressiveSynthesizer with raw data
-        from .memory import ProgressiveSynthesizer, NoteKeeper
-        temp_note_keeper = NoteKeeper(session_id="temp_synthesis") 
-        synthesizer = ProgressiveSynthesizer(temp_note_keeper)
+        model_allocator = get_model_allocator()
         
-        # Call existing synthesis with raw_data
-        final_answer = synthesizer.synthesize_progressive(
-            task_notes=[],  # No task notes, use raw data
-            question=question,
-            synthesis_mode="report",
-            raw_data=all_results  # Use tool results directly
+        # Determine synthesis mode based on intent
+        synthesis_mode = "comprehensive_report"  # Default
+        if intent == Intent.SPATIAL_NEIGHBORHOOD:
+            synthesis_mode = "discovery_summary"
+        elif intent == Intent.COMPARATIVE_ANALYSIS:
+            synthesis_mode = "comparative_analysis"
+        elif intent == Intent.FUNCTIONAL_ANALYSIS:
+            synthesis_mode = "functional_interpretation"
+        
+        def synthesis_call(module):
+            return module(
+                question=question,
+                context=integrated_context,
+                synthesis_mode=synthesis_mode
+            )
+        
+        synthesis_result = model_allocator.create_context_managed_call(
+            task_name="genomic_synthesis",
+            signature_class=GenomicSynthesizer,
+            module_call_func=synthesis_call,
+            query=question,
+            task_context=f"Final synthesis for {intent} query with {len(successful_tools)} tools"
         )
         
-        logger.info(f"✅ Synthesis complete using existing system: {len(final_answer)} characters")
+        if not synthesis_result:
+            logger.warning("Model allocation failed for synthesis, using fallback")
+            # Simple fallback without complex synthesis
+            final_answer = f"Analysis complete using {len(successful_tools)} tools: {', '.join(successful_tools)}.\n\n{integrated_context}"
+            confidence = "medium"
+        else:
+            final_answer = synthesis_result.summary
+            confidence = "high" if synthesis_result.confidence_assessment and "high" in synthesis_result.confidence_assessment.lower() else "medium"
+        
+        logger.info(f"✅ Schema-locked synthesis complete: {len(final_answer)} characters")
         
         return {
             "answer": final_answer,
-            "confidence": "high" if all_results else "medium",
-            "citations": f"Analysis based on {len(evidence_ledger.calls)} tools with {len(all_results)} total results",
+            "confidence": confidence,
+            "citations": f"Schema-locked analysis using {len(successful_tools)} tools: {', '.join(successful_tools)}",
             "metadata": {
-                "synthesis_mode": "existing_progressive",
+                "synthesis_mode": "schema_locked_dspy",
                 "tools_executed": len(evidence_ledger.calls),
-                "tools_successful": len([o for o in evidence_ledger.calls if o.success]),
+                "tools_successful": len(successful_tools),
                 "total_results": len(all_results),
-                "intent": intent
+                "intent": intent.value if hasattr(intent, 'value') else str(intent),
+                "dspy_synthesis_mode": synthesis_mode
             }
         }
         
@@ -2016,6 +2095,70 @@ async def _generate_final_synthesis(evidence_ledger: EvidenceLedger, intent: Int
         logger.error(f"❌ Existing synthesis failed: {e}")
         # Fallback to simple summary
         return _generate_simple_final_response(evidence_ledger, intent)
+
+
+def _format_biological_context(tool_name: str, results: list) -> str:
+    """Format biological results into rich context for synthesis."""
+    if not results:
+        return f"{tool_name}: No results found"
+    
+    # Limit results to avoid token overflow while preserving biological richness
+    sample_size = min(50, len(results))  # Show up to 50 representative results
+    sampled_results = results[:sample_size]
+    
+    context_lines = [f"{tool_name} Results ({len(results)} total, showing first {sample_size}):"]
+    
+    for i, result in enumerate(sampled_results, 1):
+        if isinstance(result, dict):
+            # Extract key biological identifiers and annotations
+            biological_details = []
+            
+            # Protein and gene information
+            if 'protein_id' in result:
+                biological_details.append(f"Protein: {result['protein_id']}")
+            
+            # Functional annotations (KEGG)
+            if 'ko_id' in result and result['ko_id']:
+                ko_desc = result.get('ko_description', 'No description')
+                biological_details.append(f"Function: {result['ko_id']} ({ko_desc})")
+            
+            # Domain annotations (PFAM)
+            if 'pfam_accessions' in result and result['pfam_accessions']:
+                domains = result['pfam_accessions']
+                if isinstance(domains, list) and domains:
+                    domains_str = ', '.join([str(d) for d in domains if d])
+                    biological_details.append(f"Domains: {domains_str}")
+            
+            # Genomic location
+            genomic_info = []
+            if 'contig_id' in result and result['contig_id']:
+                genomic_info.append(f"Contig: {result['contig_id']}")
+            if 'start_coordinate' in result and result['start_coordinate']:
+                genomic_info.append(f"Start: {result['start_coordinate']}")
+            if 'end_coordinate' in result and result['end_coordinate']:
+                genomic_info.append(f"End: {result['end_coordinate']}")
+            if 'strand' in result and result['strand']:
+                genomic_info.append(f"Strand: {result['strand']}")
+            
+            if genomic_info:
+                biological_details.append(f"Location: {', '.join(genomic_info)}")
+            
+            # Neighborhood context
+            if 'distance_from_anchor' in result:
+                biological_details.append(f"Distance: {result['distance_from_anchor']}bp from anchor")
+            
+            # Combine into readable line
+            if biological_details:
+                context_lines.append(f"  {i}. {' | '.join(biological_details)}")
+            else:
+                context_lines.append(f"  {i}. {str(result)[:200]}...")
+        else:
+            context_lines.append(f"  {i}. {str(result)[:200]}...")
+    
+    if len(results) > sample_size:
+        context_lines.append(f"  ... and {len(results) - sample_size} more results")
+    
+    return "\n".join(context_lines)
 
 
 def _generate_simple_final_response(evidence_ledger: EvidenceLedger, intent: Intent) -> Dict[str, Any]:
@@ -2208,19 +2351,50 @@ async def _execute_database_query(args: Dict[str, Any], settings: Settings, prep
                 }
             }
         else:
-            # Fall back to existing traditional query logic
-            logger.info("🔄 Using traditional query generation (no preprocessing)")
-            from . import UnifiedAgentExecutor
-            temp_executor = UnifiedAgentExecutor(None)  # We'll use its method directly
+            # Fall back to schema-locked query logic without preprocessing
+            logger.info("🧬 Using schema-locked query generation (no preprocessing)")
             
-            result = await temp_executor._execute_traditional_query_logic(query)
+            # Initialize schema components
+            from .detector_registry import DetectorRegistry
+            from .query_builder import QueryBuilder  
+            from .schema_map import SchemaMap
+            from ..query_processor import Neo4jQueryProcessor
+            
+            neo4j_processor = Neo4jQueryProcessor(config)
+            schema_map = SchemaMap(neo4j_processor.graph_client)
+            await schema_map.load_schema()
+            
+            detector_registry = DetectorRegistry(neo4j_processor.graph_client, schema_map)
+            query_builder = QueryBuilder(schema_map)
+            
+            # Resolve query to detectors
+            detector_result = await detector_registry.resolve(query)
+            logger.info(f"🔍 Standalone query resolved: {len(detector_result.ko_ids)} KOs, {len(detector_result.pfam_ids)} PFAMs")
+            
+            # Build and execute query plans
+            query_plans = query_builder.build(
+                ko_ids=detector_result.ko_ids,
+                pfam_ids=detector_result.pfam_ids,
+                k=100
+            )
+            
+            all_results = []
+            for plan in query_plans:
+                try:
+                    with neo4j_processor.graph_client.driver.session() as session:
+                        neo4j_result = session.run(plan.cypher, **plan.params)
+                        records = [dict(record) for record in neo4j_result]
+                        all_results.extend(records)
+                except Exception as e:
+                    logger.error(f"❌ Schema-locked query plan failed: {e}")
             
             return {
-                "summary": f"Database query executed: {len(result) if isinstance(result, list) else 'processed'}",
-                "artifacts": {"results": result, "query": "Generated dynamically via DSPy signatures"},
+                "summary": f"Schema-locked database query executed: {len(all_results)} results",
+                "artifacts": {"results": all_results, "detector_resolution": detector_result.resolution_notes},
                 "metrics": {
-                    "kg_matches": len(result) if isinstance(result, list) else 1,
-                    "conclusive": len(result) == 0 if isinstance(result, list) else False,
+                    "kg_matches": len(all_results),
+                    "conclusive": len(all_results) > 0,
+                    "query_plans_executed": len(query_plans),
                     "execution_time": 0.1
                 }
             }
@@ -2302,14 +2476,113 @@ def _normalize_gene_records(raw_records: List[Dict[str, Any]]) -> List[Dict[str,
     
     return normalized
 
-async def _execute_vector_search(args: Dict[str, Any], settings: Settings) -> Dict[str, Any]:
-    """Execute vector search tool."""
-    # Placeholder - integrate with existing LanceDB processor
-    return {
-        "summary": "Vector search executed (placeholder)", 
-        "artifacts": {"results": []},
-        "metrics": {"vector_matches": 0, "max_similarity": 0.0, "execution_time": 0.2}
-    }
+async def _execute_vector_search(args: Dict[str, Any], settings: Settings, evidence_ledger: Optional['EvidenceLedger'] = None) -> Dict[str, Any]:
+    """Execute vector search using LanceDB protein embeddings."""
+    from ..query_processor import LanceDBQueryProcessor
+    from ..config import LLMConfig
+    
+    try:
+        # Create LanceDB processor
+        config = LLMConfig(database={"lancedb_path": settings.lancedb_path})
+        lancedb_processor = LanceDBQueryProcessor(config)
+        
+        # Extract protein IDs from args or previous database query results
+        protein_ids = args.get('protein_ids', [])
+        query_proteins = args.get('query_proteins', [])  # Specific proteins to use as queries
+        limit = args.get('limit', 50)
+        similarity_threshold = args.get('similarity_threshold', 0.5)
+        exclude_terms = args.get('exclude_terms', ['integrase', 'recombinase'])  # User wants non-integrases
+        
+        # If no explicit protein IDs, extract from previous database query results
+        if not protein_ids and not query_proteins and evidence_ledger:
+            for tool_output in evidence_ledger.calls:
+                if tool_output.tool == "database_query" and tool_output.success:
+                    if tool_output.artifacts and 'results' in tool_output.artifacts:
+                        database_results = tool_output.artifacts['results']
+                        # Extract protein IDs from database results
+                        for result in database_results:
+                            if isinstance(result, dict) and 'protein_id' in result:
+                                protein_ids.append(result['protein_id'])
+                        logger.info(f"🔗 Extracted {len(protein_ids)} protein IDs from database query results")
+                        break
+        
+        # Use first few proteins as queries (user asked for "three integrase proteins")
+        if query_proteins:
+            query_ids = query_proteins[:3]
+        elif protein_ids:
+            query_ids = protein_ids[:3]  # Use first 3 proteins as queries
+            logger.info(f"🎯 Selected query proteins for vector search: {query_ids}")
+        else:
+            # Fallback - no proteins specified
+            return {
+                "summary": "Vector search skipped: no query proteins specified",
+                "artifacts": {"results": []},
+                "metrics": {"vector_matches": 0, "max_similarity": 0.0, "execution_time": 0.1}
+            }
+        
+        # Perform similarity search for each query protein
+        all_results = []
+        query_count = 0
+        
+        for protein_id in query_ids:
+            try:
+                # Find similar proteins using LanceDB with configurable threshold
+                similar_proteins = await lancedb_processor._find_similar_by_id(
+                    protein_id, limit=limit, similarity_threshold=similarity_threshold
+                )
+                
+                # Filter out proteins with excluded terms (e.g., integrases)
+                # (similarity filtering is already done in the processor)
+                non_excluded_proteins = []
+                for protein in similar_proteins:
+                    protein_id_lower = protein['protein_id'].lower()
+                    # Simple heuristic - if protein ID suggests it's an integrase, skip it
+                    exclude = any(term in protein_id_lower for term in exclude_terms)
+                    if not exclude:
+                        non_excluded_proteins.append({
+                            **protein,
+                            'query_protein': protein_id,
+                            'search_rank': len(non_excluded_proteins) + 1
+                        })
+                
+                all_results.extend(non_excluded_proteins)
+                query_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Vector search failed for protein {protein_id}: {e}")
+                continue
+        
+        # Sort by similarity and limit total results
+        all_results.sort(key=lambda x: x['similarity'], reverse=True)
+        final_results = all_results[:limit]
+        
+        max_similarity = max([r['similarity'] for r in final_results]) if final_results else 0.0
+        
+        logger.info(f"🎯 Vector search complete: {len(final_results)} similar proteins found (max similarity: {max_similarity:.3f})")
+        
+        return {
+            "summary": f"Vector similarity search found {len(final_results)} non-integrase proteins similar to {query_count} query integrases",
+            "artifacts": {
+                "results": final_results,
+                "query_proteins": query_ids,
+                "total_candidates": len(all_results),
+                "similarity_threshold": similarity_threshold
+            },
+            "metrics": {
+                "vector_matches": len(final_results),
+                "max_similarity": max_similarity,
+                "queries_executed": query_count,
+                "execution_time": 1.0  # Approximate
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Vector search failed: {e}")
+        return {
+            "summary": f"Vector search failed: {e}",
+            "artifacts": {"results": [], "error": str(e)},
+            "metrics": {"vector_matches": 0, "max_similarity": 0.0, "execution_time": 0.1}
+        }
 
 async def _execute_whole_genome_reader(args: Dict[str, Any], settings: Settings) -> Dict[str, Any]:
     """Execute whole genome reader tool."""

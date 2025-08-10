@@ -606,49 +606,59 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
                 execution_time=execution_time
             )
     
-    async def _find_similar_by_id(self, protein_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def _find_similar_by_id(self, protein_id: str, limit: int = 10, similarity_threshold: float = 0.1) -> List[Dict[str, Any]]:
         """Find proteins similar to a given protein ID (excluding self)."""
-        # First find the protein's embedding
-        results = self.table.search().where(f"protein_id = '{protein_id}'").limit(1).to_pandas()
+        # Strip 'protein:' prefix if present to match LanceDB format
+        clean_protein_id = protein_id.replace('protein:', '') if protein_id.startswith('protein:') else protein_id
+        logger.info(f"🔍 LanceDB: Looking up protein {protein_id} -> {clean_protein_id}")
+        results = self.table.search().where(f"protein_id = '{clean_protein_id}'").limit(1).to_pandas()
         
         if results.empty:
+            logger.warning(f"❌ LanceDB: Protein {protein_id} not found in embeddings table")
+            # Try to check what IDs actually exist (sample a few)
+            sample_results = self.table.search().limit(5).to_pandas()
+            if not sample_results.empty:
+                sample_ids = sample_results['protein_id'].tolist()
+                logger.info(f"📊 LanceDB contains protein IDs like: {sample_ids[:3]}")
             return []
         
         query_embedding = results.iloc[0]['vector']
-        # Get more results than needed to filter out self-similarity
-        similar_results = await self._find_similar_by_embedding(query_embedding, limit=limit+5)
+        # Get many more results than needed to filter out self-similarity and find biological matches
+        similar_results = await self._find_similar_by_embedding(query_embedding, limit=limit+50, similarity_threshold=similarity_threshold)
         
-        # Filter out self-similarity and very high similarity (likely identical)
-        # For cosine similarity: 1.0 = identical, values closer to 1.0 are more similar
+        # Filter out self-similarity with configurable threshold
+        # For cosine similarity: 1.0 = identical, threshold is configurable by LLM
         filtered_results = []
         for result in similar_results:
-            if (result['protein_id'] != protein_id and 
-                result['distance'] > 0.001 and  # Exclude nearly identical (cosine distance)
-                result['similarity'] < 0.999):  # Exclude near-perfect matches (cosine similarity)
+            if (result['protein_id'] != clean_protein_id and  # Use clean_protein_id for comparison
+                result['similarity'] >= similarity_threshold):  # User-configurable similarity threshold
                 filtered_results.append(result)
                 if len(filtered_results) >= limit:
                     break
         
         return filtered_results
     
-    async def _find_similar_by_embedding(self, embedding: np.ndarray, limit: int = 10) -> List[Dict[str, Any]]:
+    async def _find_similar_by_embedding(self, embedding: np.ndarray, limit: int = 10, similarity_threshold: float = 0.1) -> List[Dict[str, Any]]:
         """Find proteins similar to a given embedding."""
         # Use cosine distance which is proper for sequence embeddings
         results = self.table.search(embedding).metric("cosine").limit(limit).to_pandas()
         
-        # Convert cosine distance to cosine similarity
+        # Convert cosine distance to cosine similarity and filter by threshold
         # Cosine distance = 1 - cosine similarity, so similarity = 1 - distance
         # This gives proper values in range [-1, 1] where 1 = identical
-        return [
-            {
-                "protein_id": row['protein_id'],
-                "genome_id": row['genome_id'],
-                "sequence_length": row['sequence_length'],
-                "distance": row['_distance'],
-                "similarity": float(1.0 - row['_distance'])  # Cosine distance to cosine similarity
-            }
-            for _, row in results.iterrows()
-        ]
+        filtered_results = []
+        for _, row in results.iterrows():
+            similarity = float(1.0 - row['_distance'])
+            if similarity >= similarity_threshold:
+                filtered_results.append({
+                    "protein_id": row['protein_id'],
+                    "genome_id": row['genome_id'],
+                    "sequence_length": row['sequence_length'],
+                    "distance": row['_distance'],
+                    "similarity": similarity
+                })
+        
+        return filtered_results
     
     async def _lookup_protein(self, protein_id: str) -> List[Dict[str, Any]]:
         """Look up a specific protein by ID."""

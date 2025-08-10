@@ -12,9 +12,9 @@ from typing import Dict, Any
 # Import the modules under test
 from ..models import Plan, PlanStep, Intent, Guard, ToolOutput, Settings, EvidenceLedger
 from ..policy_engine import PolicyEngine
-from ..schema_resolver import SchemaResolver
+# from ..schema_resolver import SchemaResolver  # DEPRECATED - removed in Phase 2 schema consolidation
 from ..agent_executor import execute_dynamic_loop, _find_next_eligible_step
-from ..core import plan_initial
+# from ..core import plan_initial  # DEPRECATED - removed in Phase 2 schema consolidation
 
 
 class TestEarlyExit:

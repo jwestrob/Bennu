@@ -72,9 +72,9 @@ class CSVSchemaValidator:
             RelationshipSchema("ASSIGNEDFUNCTION", "assignedfunction_relationships.csv", ["protein"], [""]),  # func annotation -> kegg (no prefix)
             RelationshipSchema("HASDOMAIN", "hasdomain_relationships.csv", ["protein"], ["protein"]),  # protein -> domain annotation
             RelationshipSchema("HASFUNCTION", "hasfunction_relationships.csv", ["protein"], [""]),  # protein -> kegg (no prefix)
-            RelationshipSchema("HASPARTICIPANT", "hasparticipant_relationships.csv", ["map"], [""]),  # pathway -> kegg
-            RelationshipSchema("PARTICIPATESIN", "participatesin_relationships.csv", [""], ["map"]),  # kegg -> pathway
-            RelationshipSchema("HASQUALITYMETRICS", "hasqualitymetrics_relationships.csv", [""], ["quality"]),
+            RelationshipSchema("HASPARTICIPANT", "hasparticipant_relationships.csv", ["pathway"], [""]),  # pathway -> kegg
+            RelationshipSchema("PARTICIPATESIN", "participatesin_relationships.csv", [""], ["pathway"]),  # kegg -> pathway
+            RelationshipSchema("HASQUALITYMETRICS", "hasqualitymetrics_relationships.csv", [""], ["genome"]),  # genome -> quality metrics
         ]
     
     def add_error(self, file: str, error: str, line: int = None, field: str = None):
