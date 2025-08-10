@@ -2134,22 +2134,33 @@ async def _execute_database_query(args: Dict[str, Any], settings: Settings, prep
                     schema_map = SchemaMap.from_bulk_loader()
                     query_builder = QueryBuilder(schema_map)
                     
-                    # Build neighborhood expansion query
-                    neighborhood_plan = query_builder.build_neighborhood_expansion(anchor_proteins, k=100)
+                    # Process anchors in batches to avoid memory issues
+                    batch_size = 25  # Process 25 proteins at a time
+                    total_neighbors = 0
                     
-                    if neighborhood_plan.cypher:
-                        with neo4j_processor.driver.session() as session:
-                            neo4j_result = session.run(neighborhood_plan.cypher, **neighborhood_plan.params)
-                            raw_records = [dict(record) for record in neo4j_result]
+                    for batch_start in range(0, len(anchor_proteins), batch_size):
+                        batch_end = min(batch_start + batch_size, len(anchor_proteins))
+                        batch_proteins = anchor_proteins[batch_start:batch_end]
                         
-                        # Normalize to canonical gene record format
-                        normalized_records = _normalize_gene_records(raw_records)
-                        all_results.extend(normalized_records)
-                        queries_executed.append(f"Stage 2 - Neighborhood expansion: {len(normalized_records)} neighboring proteins")
-                        logger.info(f"✅ Stage 2 complete: expanded to {len(normalized_records)} neighborhood proteins")
-                    else:
-                        logger.warning("⚠️ Stage 2 - No neighborhood expansion query generated")
-                        queries_executed.append("Stage 2 - Neighborhood expansion: SKIPPED - no query")
+                        logger.info(f"🔍 Processing batch {batch_start//batch_size + 1}: proteins {batch_start+1}-{batch_end}")
+                        
+                        # Build neighborhood expansion query for this batch
+                        neighborhood_plan = query_builder.build_neighborhood_expansion(batch_proteins, k=50)
+                        
+                        if neighborhood_plan.cypher:
+                            with neo4j_processor.driver.session() as session:
+                                neo4j_result = session.run(neighborhood_plan.cypher, **neighborhood_plan.params)
+                                raw_records = [dict(record) for record in neo4j_result]
+                            
+                            # Normalize to canonical gene record format
+                            normalized_records = _normalize_gene_records(raw_records)
+                            all_results.extend(normalized_records)
+                            total_neighbors += len(normalized_records)
+                            
+                            logger.info(f"  ✅ Batch complete: {len(normalized_records)} neighbors found")
+                    
+                    queries_executed.append(f"Stage 2 - Neighborhood expansion: {total_neighbors} neighboring proteins from {len(anchor_proteins)} anchors")
+                    logger.info(f"✅ Stage 2 complete: expanded to {total_neighbors} neighborhood proteins")
                         
                 except Exception as e:
                     logger.error(f"❌ Stage 2 neighborhood expansion failed: {e}")

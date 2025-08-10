@@ -536,8 +536,6 @@ class GenomicSelector(dspy.Signature):
     final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data. VERIFICATION REQUIREMENT: For any genomic loci mentioned, always include the complete scaffold/contig identifier (not abbreviated) to enable independent verification of findings.")
     selection_reasoning = dspy.OutputField(desc="Explanation of why specific loci were chosen based on biological significance and question relevance")
     biological_significance = dspy.OutputField(desc="Biological interpretation using only the data available in chunk_extractions")
-    data_sources = dspy.OutputField(desc="Explicit list of data sources and tools actually used (must match what appears in chunk_extractions)")
-    unsupported_claims = dspy.OutputField(desc="Any claims that cannot be directly supported by the provided chunk_extractions data")
 
 
 class NotingDecision(dspy.Signature):

@@ -1652,7 +1652,7 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                         chunk_extractions=safe_context
                     )
                     # Return combined output with data validation fields
-                    return f"FINAL REPORT:\n{result.final_report}\n\nSELECTION REASONING:\n{result.selection_reasoning}\n\nBIOLOGICAL SIGNIFICANCE:\n{result.biological_significance}\n\nDATA SOURCES:\n{result.data_sources}\n\nUNSUPPORTED CLAIMS:\n{result.unsupported_claims}"
+                    return f"FINAL REPORT:\n{result.final_report}\n\nSELECTION REASONING:\n{result.selection_reasoning}\n\nBIOLOGICAL SIGNIFICANCE:\n{result.biological_significance}"
                     
             else:  # Default to summarization
                 from ..dspy_signatures import GenomicSummarizer

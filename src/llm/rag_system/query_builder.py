@@ -235,11 +235,10 @@ class QueryBuilder:
         WITH g, contig, toInteger(g.startCoordinate) as anchor_start
         WHERE anchor_start IS NOT NULL
         
-        // Find neighboring genes on SAME CONTIG within ~10kb window (roughly 10 genes)
+        // Find neighboring genes on SAME CONTIG within ~10kb window (including anchors)
         MATCH (neighbor_gene:Gene)-[:BELONGSTOCONTIG]->(contig)
         WITH g, neighbor_gene, contig, anchor_start, toInteger(neighbor_gene.startCoordinate) as neighbor_start
-        WHERE neighbor_gene.id <> g.id
-          AND neighbor_start IS NOT NULL
+        WHERE neighbor_start IS NOT NULL
           AND neighbor_start >= (anchor_start - 10000)
           AND neighbor_start <= (anchor_start + 10000)
         
