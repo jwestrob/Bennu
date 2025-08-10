@@ -497,8 +497,9 @@ If you use Bennu in your research, please cite:
 
 ### AI/ML Frameworks
 - **ESM2** - Protein language models (Meta AI)
-- **DSPy** - Structured LLM prompting (Stanford)
-- **LangChain** - Agent orchestration
+- **DSPy** - Structured LLM prompting framework (Stanford)
+- **PyTorch/Transformers** - ML model inference and embeddings
+- **asyncio/httpx** - Asynchronous agent orchestration and API communication
 - **OpenAI/Anthropic APIs** - Large language models
 
 ### Data Infrastructure
@@ -507,3 +508,35 @@ If you use Bennu in your research, please cite:
 - **pandas/numpy** - Data processing
 - **Docker** - Containerization
 - **Nextflow** - Workflow orchestration
+
+
+# Example outputs
+
+### PROMPT:
+
+"Find three integrase proteins and do a LanceDB search to see what else in the metagenome is most similar to these sequences that *isn't* an integrase. If it's a hypothetical protein take a look at the surrounding genomic neighborhood and see if you can tell me anything about it."
+
+### OUTPUT:
+
+🤖 Answer:
+Three integrase proteins were selected from the metagenome dataset for further LanceDB similarity searches: protein:NODE_54803_length_1170_cov_1.749776_1 (contig:NODE_54803_length_1170_cov_1.749776), 
+protein:NODE_46840_length_1296_cov_1.780822_2 (contig:NODE_46840_length_1296_cov_1.780822), and protein:NODE_5340_length_4625_cov_3.100000_3 (contig:NODE_5340_length_4625_cov_3.100000). LanceDB searches for these integrase sequences identified
+several highly similar proteins in the metagenome that were not annotated as integrases. Notably, some of these top hits were annotated as hypothetical proteins.
+
+For example, the integrase protein from contig:NODE_54803_length_1170_cov_1.749776 had top non-integrase hits including hypothetical proteins located on contigs such as NODE_49104_length_1256_cov_1.621982 and 
+NODE_50338_length_1236_cov_1.716342. Examination of the genomic neighborhoods surrounding these hypothetical proteins revealed the presence of genes encoding DNA-binding proteins, recombination-related proteins, and mobile element-associated 
+functions, suggesting these hypothetical proteins may be involved in DNA recombination or mobility functions despite lacking integrase annotation.
+
+Similarly, the integrase from contig:NODE_46840_length_1296_cov_1.780822 showed similarity to hypothetical proteins on contigs NODE_51646_length_1216_cov_2.434109 and NODE_53023_length_1195_cov_2.428070. Their genomic contexts included genes 
+encoding transposase-like proteins and phage-related proteins, indicating a potential role in mobile genetic elements or phage integration processes.
+
+The integrase from contig:NODE_5340_length_4625_cov_3.100000 also matched hypothetical proteins on contigs NODE_5203_length_4689_cov_3.170263 and NODE_4984_length_4801_cov_14.037084. These neighborhoods contained genes for DNA repair, 
+helicases, and other recombination-associated proteins, reinforcing the hypothesis that these hypothetical proteins may participate in DNA integration or recombination events.
+
+Overall, the LanceDB search results suggest that several hypothetical proteins closely related to integrases may represent novel or divergent recombination-related proteins. Their genomic neighborhoods enriched in mobile element and DNA 
+manipulation genes support this functional inference.
+
+Confidence: medium
+Sources: Schema-locked analysis using 3 tools: database_query, vector_search, whole_genome_reader
+
+📝 Session ID: 54e9be0e-64b1-48db-baf9-c27039852d8a
