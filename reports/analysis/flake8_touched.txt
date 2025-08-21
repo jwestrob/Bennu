@@ -1,0 +1,728 @@
+src/build_kg/pathway_integration.py:17:1: F401 'rdflib.URIRef' imported but unused
+src/build_kg/pathway_integration.py:25:1: E302 expected 2 blank lines, found 1
+src/build_kg/pathway_integration.py:34:1: E302 expected 2 blank lines, found 1
+src/build_kg/pathway_integration.py:36:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:41:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:45:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:49:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:50:80: E501 line too long (86 > 79 characters)
+src/build_kg/pathway_integration.py:51:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:53:1: DAR101 Missing parameter(s) in Docstring: - found_ko_ids
+src/build_kg/pathway_integration.py:53:80: E501 line too long (81 > 79 characters)
+src/build_kg/pathway_integration.py:55:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:59:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:65:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:68:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:71:80: E501 line too long (87 > 79 characters)
+src/build_kg/pathway_integration.py:72:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:73:80: E501 line too long (105 > 79 characters)
+src/build_kg/pathway_integration.py:75:80: E501 line too long (85 > 79 characters)
+src/build_kg/pathway_integration.py:77:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:78:80: E501 line too long (92 > 79 characters)
+src/build_kg/pathway_integration.py:81:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:82:80: E501 line too long (86 > 79 characters)
+src/build_kg/pathway_integration.py:86:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:90:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:93:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:102:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:104:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:106:80: E501 line too long (85 > 79 characters)
+src/build_kg/pathway_integration.py:108:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:110:80: E501 line too long (114 > 79 characters)
+src/build_kg/pathway_integration.py:111:80: E501 line too long (91 > 79 characters)
+src/build_kg/pathway_integration.py:112:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:115:80: E501 line too long (105 > 79 characters)
+src/build_kg/pathway_integration.py:116:80: E501 line too long (103 > 79 characters)
+src/build_kg/pathway_integration.py:117:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:119:80: E501 line too long (89 > 79 characters)
+src/build_kg/pathway_integration.py:121:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:194:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:199:80: E501 line too long (90 > 79 characters)
+src/build_kg/pathway_integration.py:201:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:203:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:209:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:213:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:218:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:221:13: E265 block comment should start with '# '
+src/build_kg/pathway_integration.py:222:80: E501 line too long (92 > 79 characters)
+src/build_kg/pathway_integration.py:223:80: E501 line too long (88 > 79 characters)
+src/build_kg/pathway_integration.py:224:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:226:80: E501 line too long (80 > 79 characters)
+src/build_kg/pathway_integration.py:228:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:230:80: E501 line too long (91 > 79 characters)
+src/build_kg/pathway_integration.py:231:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:233:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:235:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:238:9: F841 local variable 'missing_ko_count' is assigned to but never used
+src/build_kg/pathway_integration.py:251:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:254:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:256:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:259:80: E501 line too long (82 > 79 characters)
+src/build_kg/pathway_integration.py:260:80: E501 line too long (92 > 79 characters)
+src/build_kg/pathway_integration.py:261:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:263:1: DAR201 Missing "Returns" in Docstring: - return
+src/build_kg/pathway_integration.py:265:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:268:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:272:21: F541 f-string is missing placeholders
+src/build_kg/pathway_integration.py:273:21: F541 f-string is missing placeholders
+src/build_kg/pathway_integration.py:275:80: E501 line too long (109 > 79 characters)
+src/build_kg/pathway_integration.py:276:80: E501 line too long (107 > 79 characters)
+src/build_kg/pathway_integration.py:277:80: E501 line too long (90 > 79 characters)
+src/build_kg/pathway_integration.py:278:80: E501 line too long (99 > 79 characters)
+src/build_kg/pathway_integration.py:280:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:283:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:287:80: E501 line too long (98 > 79 characters)
+src/build_kg/pathway_integration.py:290:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:294:80: E501 line too long (85 > 79 characters)
+src/build_kg/pathway_integration.py:295:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:300:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:303:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:306:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:309:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:312:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:315:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:318:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:325:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:331:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:336:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:340:1: W293 blank line contains whitespace
+src/build_kg/pathway_integration.py:343:66: W292 no newline at end of file
+src/code_interpreter/service.py:5:80: E501 line too long (87 > 79 characters)
+src/code_interpreter/service.py:17:1: F401 'uuid' imported but unused
+src/code_interpreter/service.py:21:1: F401 'json' imported but unused
+src/code_interpreter/service.py:37:80: E501 line too long (94 > 79 characters)
+src/code_interpreter/service.py:39:80: E501 line too long (94 > 79 characters)
+src/code_interpreter/service.py:40:80: E501 line too long (103 > 79 characters)
+src/code_interpreter/service.py:57:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:62:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:64:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:64:1: DAR101 Missing parameter(s) in Docstring: - session_id
+src/code_interpreter/service.py:71:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:73:80: E501 line too long (108 > 79 characters)
+src/code_interpreter/service.py:75:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:77:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:84:80: E501 line too long (80 > 79 characters)
+src/code_interpreter/service.py:88:80: E501 line too long (83 > 79 characters)
+src/code_interpreter/service.py:89:80: E501 line too long (84 > 79 characters)
+src/code_interpreter/service.py:93:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:99:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:108:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:119:13: F811 redefinition of unused 'json' from line 21
+src/code_interpreter/service.py:123:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:124:80: E501 line too long (82 > 79 characters)
+src/code_interpreter/service.py:138:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:164:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:166:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:170:80: E501 line too long (90 > 79 characters)
+src/code_interpreter/service.py:171:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:181:80: E501 line too long (89 > 79 characters)
+src/code_interpreter/service.py:182:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:190:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:193:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:194:80: E501 line too long (89 > 79 characters)
+src/code_interpreter/service.py:195:1: DAR101 Missing parameter(s) in Docstring: - request
+src/code_interpreter/service.py:195:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:197:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:199:80: E501 line too long (80 > 79 characters)
+src/code_interpreter/service.py:200:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:203:80: E501 line too long (93 > 79 characters)
+src/code_interpreter/service.py:204:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:210:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:214:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:218:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:222:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:227:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:233:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:236:80: E501 line too long (107 > 79 characters)
+src/code_interpreter/service.py:237:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:239:80: E501 line too long (83 > 79 characters)
+src/code_interpreter/service.py:243:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:250:13: E722 do not use bare 'except'
+src/code_interpreter/service.py:252:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:254:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:265:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:267:1: DAR101 Missing parameter(s) in Docstring: - compiled_code
+src/code_interpreter/service.py:267:1: DAR101 Missing parameter(s) in Docstring: - session
+src/code_interpreter/service.py:280:1: DAR101 Missing parameter(s) in Docstring: - app
+src/code_interpreter/service.py:280:1: DAR301 Missing "Yields" in Docstring: - yield
+src/code_interpreter/service.py:282:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:288:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:290:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:292:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:310:1: DAR101 Missing parameter(s) in Docstring: - request
+src/code_interpreter/service.py:310:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:310:1: DAR401 Missing exception(s) in Raises section: -r HTTPException
+src/code_interpreter/service.py:314:80: E501 line too long (87 > 79 characters)
+src/code_interpreter/service.py:320:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:330:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:330:1: DAR101 Missing parameter(s) in Docstring: - session_id
+src/code_interpreter/service.py:338:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:342:1: W293 blank line contains whitespace
+src/code_interpreter/service.py:349:1: DAR201 Missing "Returns" in Docstring: - return
+src/code_interpreter/service.py:357:66: W292 no newline at end of file
+src/ingest/00_prepare_inputs.py:11:1: F401 'typing.Optional' imported but unused
+src/ingest/00_prepare_inputs.py:26:1: DAR101 Missing parameter(s) in Docstring: - file_path
+src/ingest/00_prepare_inputs.py:28:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:41:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:48:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:52:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:55:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:61:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:64:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:68:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:74:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:79:80: E501 line too long (101 > 79 characters)
+src/ingest/00_prepare_inputs.py:81:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:83:80: E501 line too long (84 > 79 characters)
+src/ingest/00_prepare_inputs.py:88:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:90:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:94:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:99:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:103:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:108:1: DAR101 Missing parameter(s) in Docstring: - file_path
+src/ingest/00_prepare_inputs.py:108:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/00_prepare_inputs.py:117:1: DAR101 Missing parameter(s) in Docstring: - extensions
+src/ingest/00_prepare_inputs.py:117:1: DAR101 Missing parameter(s) in Docstring: - input_dir
+src/ingest/00_prepare_inputs.py:117:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/00_prepare_inputs.py:119:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:124:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:127:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:132:1: DAR101 Missing parameter(s) in Docstring: - file_path
+src/ingest/00_prepare_inputs.py:132:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/00_prepare_inputs.py:136:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:141:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:146:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:177:1: DAR101 Missing parameter(s) in Docstring: - copy_files
+src/ingest/00_prepare_inputs.py:177:1: DAR101 Missing parameter(s) in Docstring: - file_extensions
+src/ingest/00_prepare_inputs.py:177:1: DAR101 Missing parameter(s) in Docstring: - force
+src/ingest/00_prepare_inputs.py:177:1: DAR101 Missing parameter(s) in Docstring: - input_dir
+src/ingest/00_prepare_inputs.py:177:1: DAR101 Missing parameter(s) in Docstring: - output_dir
+src/ingest/00_prepare_inputs.py:177:1: DAR101 Missing parameter(s) in Docstring: - validate_format
+src/ingest/00_prepare_inputs.py:177:1: DAR401 Missing exception(s) in Raises section: -r Exit
+src/ingest/00_prepare_inputs.py:184:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:189:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:192:80: E501 line too long (87 > 79 characters)
+src/ingest/00_prepare_inputs.py:194:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:196:80: E501 line too long (86 > 79 characters)
+src/ingest/00_prepare_inputs.py:198:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:202:80: E501 line too long (93 > 79 characters)
+src/ingest/00_prepare_inputs.py:206:80: E501 line too long (95 > 79 characters)
+src/ingest/00_prepare_inputs.py:208:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:211:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:215:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:217:80: E501 line too long (100 > 79 characters)
+src/ingest/00_prepare_inputs.py:219:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:221:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:233:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:237:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:239:80: E501 line too long (82 > 79 characters)
+src/ingest/00_prepare_inputs.py:240:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:243:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:246:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:257:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:262:80: E501 line too long (85 > 79 characters)
+src/ingest/00_prepare_inputs.py:263:80: E501 line too long (81 > 79 characters)
+src/ingest/00_prepare_inputs.py:264:80: E501 line too long (81 > 79 characters)
+src/ingest/00_prepare_inputs.py:265:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:271:80: E501 line too long (103 > 79 characters)
+src/ingest/00_prepare_inputs.py:273:80: E501 line too long (109 > 79 characters)
+src/ingest/00_prepare_inputs.py:274:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:279:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:282:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:288:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:291:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:295:80: E501 line too long (92 > 79 characters)
+src/ingest/00_prepare_inputs.py:296:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:299:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:304:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:307:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:311:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:315:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:319:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:320:80: E501 line too long (80 > 79 characters)
+src/ingest/00_prepare_inputs.py:322:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:324:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:333:1: W293 blank line contains whitespace
+src/ingest/00_prepare_inputs.py:334:19: F541 f-string is missing placeholders
+src/ingest/00_prepare_inputs.py:334:80: E501 line too long (82 > 79 characters)
+src/ingest/00_prepare_inputs.py:335:80: E501 line too long (95 > 79 characters)
+src/ingest/01_run_quast.py:16:1: F401 'os' imported but unused
+src/ingest/01_run_quast.py:29:1: DAR101 Missing parameter(s) in Docstring: - report_file
+src/ingest/01_run_quast.py:31:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:50:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:54:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:57:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:58:80: E501 line too long (86 > 79 characters)
+src/ingest/01_run_quast.py:62:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:66:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:69:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:101:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:104:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:108:80: E501 line too long (86 > 79 characters)
+src/ingest/01_run_quast.py:109:1: DAR101 Missing parameter(s) in Docstring: - genome_id
+src/ingest/01_run_quast.py:109:1: DAR101 Missing parameter(s) in Docstring: - genome_output_dir
+src/ingest/01_run_quast.py:111:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:122:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:126:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:142:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:146:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:150:50: W291 trailing whitespace
+src/ingest/01_run_quast.py:151:21: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:152:21: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:153:21: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:154:21: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:157:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:164:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:169:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:173:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:177:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:180:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:194:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:208:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:212:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:222:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:224:80: E501 line too long (98 > 79 characters)
+src/ingest/01_run_quast.py:226:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:239:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:243:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:245:80: E501 line too long (83 > 79 characters)
+src/ingest/01_run_quast.py:246:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:249:80: E501 line too long (91 > 79 characters)
+src/ingest/01_run_quast.py:252:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:255:80: E501 line too long (128 > 79 characters)
+src/ingest/01_run_quast.py:257:80: E501 line too long (121 > 79 characters)
+src/ingest/01_run_quast.py:258:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:260:59: W291 trailing whitespace
+src/ingest/01_run_quast.py:262:13: E129 visually indented line with same indent as next logical line
+src/ingest/01_run_quast.py:267:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:272:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:278:28: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:279:28: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:280:1: DAR101 Missing parameter(s) in Docstring: - **quast_kwargs
+src/ingest/01_run_quast.py:280:1: DAR101 Missing parameter(s) in Docstring: - genomes
+src/ingest/01_run_quast.py:280:1: DAR101 Missing parameter(s) in Docstring: - max_workers
+src/ingest/01_run_quast.py:280:1: DAR101 Missing parameter(s) in Docstring: - output_dir
+src/ingest/01_run_quast.py:280:28: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:283:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:288:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:300:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:303:80: E501 line too long (81 > 79 characters)
+src/ingest/01_run_quast.py:304:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:310:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:312:80: E501 line too long (84 > 79 characters)
+src/ingest/01_run_quast.py:313:42: W291 trailing whitespace
+src/ingest/01_run_quast.py:314:35: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:314:80: E501 line too long (92 > 79 characters)
+src/ingest/01_run_quast.py:315:35: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:316:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:326:42: W291 trailing whitespace
+src/ingest/01_run_quast.py:327:35: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:327:80: E501 line too long (85 > 79 characters)
+src/ingest/01_run_quast.py:328:35: E128 continuation line under-indented for visual indent
+src/ingest/01_run_quast.py:329:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:334:1: DAR101 Missing parameter(s) in Docstring: - results
+src/ingest/01_run_quast.py:334:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/01_run_quast.py:337:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:339:80: E501 line too long (86 > 79 characters)
+src/ingest/01_run_quast.py:340:80: E501 line too long (90 > 79 characters)
+src/ingest/01_run_quast.py:341:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:344:80: E501 line too long (107 > 79 characters)
+src/ingest/01_run_quast.py:345:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:347:80: E501 line too long (121 > 79 characters)
+src/ingest/01_run_quast.py:348:80: E501 line too long (134 > 79 characters)
+src/ingest/01_run_quast.py:349:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:352:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:363:80: E501 line too long (106 > 79 characters)
+src/ingest/01_run_quast.py:365:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:388:80: E501 line too long (94 > 79 characters)
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - force
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - input_dir
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - max_workers
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - min_contig_length
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - output_dir
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - reference_genome
+src/ingest/01_run_quast.py:401:1: DAR101 Missing parameter(s) in Docstring: - threads_per_genome
+src/ingest/01_run_quast.py:401:1: DAR401 Missing exception(s) in Raises section: -r Exit
+src/ingest/01_run_quast.py:408:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:409:80: E501 line too long (81 > 79 characters)
+src/ingest/01_run_quast.py:410:80: E501 line too long (83 > 79 characters)
+src/ingest/01_run_quast.py:413:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:416:80: E501 line too long (87 > 79 characters)
+src/ingest/01_run_quast.py:418:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:421:80: E501 line too long (85 > 79 characters)
+src/ingest/01_run_quast.py:422:80: E501 line too long (83 > 79 characters)
+src/ingest/01_run_quast.py:424:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:432:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:434:80: E501 line too long (89 > 79 characters)
+src/ingest/01_run_quast.py:436:80: E501 line too long (83 > 79 characters)
+src/ingest/01_run_quast.py:438:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:440:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:443:80: E501 line too long (90 > 79 characters)
+src/ingest/01_run_quast.py:445:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:449:80: E501 line too long (93 > 79 characters)
+src/ingest/01_run_quast.py:453:80: E501 line too long (95 > 79 characters)
+src/ingest/01_run_quast.py:455:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:460:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:464:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:470:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:473:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:484:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:487:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:498:80: E501 line too long (83 > 79 characters)
+src/ingest/01_run_quast.py:503:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:508:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:513:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:516:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:520:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:526:80: E501 line too long (81 > 79 characters)
+src/ingest/01_run_quast.py:527:80: E501 line too long (81 > 79 characters)
+src/ingest/01_run_quast.py:527:82: W291 trailing whitespace
+src/ingest/01_run_quast.py:528:80: E501 line too long (100 > 79 characters)
+src/ingest/01_run_quast.py:530:80: E501 line too long (87 > 79 characters)
+src/ingest/01_run_quast.py:532:80: E501 line too long (112 > 79 characters)
+src/ingest/01_run_quast.py:533:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:535:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:541:80: E501 line too long (112 > 79 characters)
+src/ingest/01_run_quast.py:542:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:545:23: F541 f-string is missing placeholders
+src/ingest/01_run_quast.py:545:80: E501 line too long (86 > 79 characters)
+src/ingest/01_run_quast.py:547:1: W293 blank line contains whitespace
+src/ingest/01_run_quast.py:548:80: E501 line too long (113 > 79 characters)
+src/ingest/03_prodigal.py:17:1: F401 'shutil' imported but unused
+src/ingest/03_prodigal.py:29:1: DAR101 Missing parameter(s) in Docstring: - log_file
+src/ingest/03_prodigal.py:31:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:43:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:47:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:50:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:92:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:95:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:100:1: DAR101 Missing parameter(s) in Docstring: - file_path
+src/ingest/03_prodigal.py:100:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/03_prodigal.py:103:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:112:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:116:80: E501 line too long (82 > 79 characters)
+src/ingest/03_prodigal.py:117:1: DAR101 Missing parameter(s) in Docstring: - genome_dir
+src/ingest/03_prodigal.py:117:1: DAR101 Missing parameter(s) in Docstring: - genome_id
+src/ingest/03_prodigal.py:119:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:131:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:135:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:136:80: E501 line too long (93 > 79 characters)
+src/ingest/03_prodigal.py:150:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:154:53: W291 trailing whitespace
+src/ingest/03_prodigal.py:155:24: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:156:24: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:157:24: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:158:24: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:159:24: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:162:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:170:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:175:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:179:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:183:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:188:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:202:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:213:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:217:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:221:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:231:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:233:80: E501 line too long (101 > 79 characters)
+src/ingest/03_prodigal.py:235:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:253:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:256:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:258:80: E501 line too long (86 > 79 characters)
+src/ingest/03_prodigal.py:259:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:265:80: E501 line too long (101 > 79 characters)
+src/ingest/03_prodigal.py:266:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:268:59: W291 trailing whitespace
+src/ingest/03_prodigal.py:270:13: E129 visually indented line with same indent as next logical line
+src/ingest/03_prodigal.py:275:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:280:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:286:28: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:287:28: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:288:1: DAR101 Missing parameter(s) in Docstring: - **prodigal_kwargs
+src/ingest/03_prodigal.py:288:1: DAR101 Missing parameter(s) in Docstring: - genomes
+src/ingest/03_prodigal.py:288:1: DAR101 Missing parameter(s) in Docstring: - max_workers
+src/ingest/03_prodigal.py:288:1: DAR101 Missing parameter(s) in Docstring: - output_dir
+src/ingest/03_prodigal.py:288:28: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:291:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:296:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:308:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:311:80: E501 line too long (81 > 79 characters)
+src/ingest/03_prodigal.py:312:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:318:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:320:80: E501 line too long (84 > 79 characters)
+src/ingest/03_prodigal.py:321:42: W291 trailing whitespace
+src/ingest/03_prodigal.py:322:35: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:322:80: E501 line too long (92 > 79 characters)
+src/ingest/03_prodigal.py:323:35: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:324:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:334:42: W291 trailing whitespace
+src/ingest/03_prodigal.py:335:35: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:335:80: E501 line too long (85 > 79 characters)
+src/ingest/03_prodigal.py:336:35: E128 continuation line under-indented for visual indent
+src/ingest/03_prodigal.py:337:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:341:80: E501 line too long (95 > 79 characters)
+src/ingest/03_prodigal.py:343:80: E501 line too long (81 > 79 characters)
+src/ingest/03_prodigal.py:344:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:346:42: W291 trailing whitespace
+src/ingest/03_prodigal.py:348:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:358:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:363:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:365:80: E501 line too long (83 > 79 characters)
+src/ingest/03_prodigal.py:366:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:369:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:374:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:377:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:381:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:385:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:387:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:395:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:400:1: DAR101 Missing parameter(s) in Docstring: - results
+src/ingest/03_prodigal.py:400:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/03_prodigal.py:403:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:404:80: E501 line too long (92 > 79 characters)
+src/ingest/03_prodigal.py:405:80: E501 line too long (93 > 79 characters)
+src/ingest/03_prodigal.py:406:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:409:80: E501 line too long (107 > 79 characters)
+src/ingest/03_prodigal.py:410:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:419:80: E501 line too long (106 > 79 characters)
+src/ingest/03_prodigal.py:421:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - force
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - genetic_code
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - include_nucleotides
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - input_dir
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - max_workers
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - min_gene_length
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - mode
+src/ingest/03_prodigal.py:462:1: DAR101 Missing parameter(s) in Docstring: - output_dir
+src/ingest/03_prodigal.py:462:1: DAR401 Missing exception(s) in Raises section: -r Exit
+src/ingest/03_prodigal.py:469:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:471:71: W291 trailing whitespace
+src/ingest/03_prodigal.py:475:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:478:80: E501 line too long (87 > 79 characters)
+src/ingest/03_prodigal.py:480:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:483:80: E501 line too long (85 > 79 characters)
+src/ingest/03_prodigal.py:484:80: E501 line too long (83 > 79 characters)
+src/ingest/03_prodigal.py:486:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:494:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:496:80: E501 line too long (89 > 79 characters)
+src/ingest/03_prodigal.py:498:80: E501 line too long (83 > 79 characters)
+src/ingest/03_prodigal.py:500:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:502:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:506:80: E501 line too long (93 > 79 characters)
+src/ingest/03_prodigal.py:510:80: E501 line too long (95 > 79 characters)
+src/ingest/03_prodigal.py:511:13: F811 redefinition of unused 'shutil' from line 17
+src/ingest/03_prodigal.py:513:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:518:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:522:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:527:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:530:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:542:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:544:80: E501 line too long (83 > 79 characters)
+src/ingest/03_prodigal.py:546:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:549:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:567:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:572:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:577:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:580:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:584:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:590:80: E501 line too long (81 > 79 characters)
+src/ingest/03_prodigal.py:591:80: E501 line too long (97 > 79 characters)
+src/ingest/03_prodigal.py:591:98: W291 trailing whitespace
+src/ingest/03_prodigal.py:592:80: E501 line too long (83 > 79 characters)
+src/ingest/03_prodigal.py:593:80: E501 line too long (93 > 79 characters)
+src/ingest/03_prodigal.py:595:80: E501 line too long (112 > 79 characters)
+src/ingest/03_prodigal.py:596:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:598:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:604:80: E501 line too long (112 > 79 characters)
+src/ingest/03_prodigal.py:605:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:608:23: F541 f-string is missing placeholders
+src/ingest/03_prodigal.py:608:80: E501 line too long (86 > 79 characters)
+src/ingest/03_prodigal.py:609:80: E501 line too long (81 > 79 characters)
+src/ingest/03_prodigal.py:611:80: E501 line too long (105 > 79 characters)
+src/ingest/03_prodigal.py:612:1: W293 blank line contains whitespace
+src/ingest/03_prodigal.py:613:80: E501 line too long (113 > 79 characters)
+src/ingest/06_esm2_embeddings.py:12:1: F401 'typing.Tuple' imported but unused
+src/ingest/06_esm2_embeddings.py:14:1: F401 're' imported but unused
+src/ingest/06_esm2_embeddings.py:30:80: E501 line too long (88 > 79 characters)
+src/ingest/06_esm2_embeddings.py:31:80: E501 line too long (83 > 79 characters)
+src/ingest/06_esm2_embeddings.py:32:36: E261 at least two spaces before inline comment
+src/ingest/06_esm2_embeddings.py:32:80: E501 line too long (92 > 79 characters)
+src/ingest/06_esm2_embeddings.py:33:80: E501 line too long (84 > 79 characters)
+src/ingest/06_esm2_embeddings.py:47:80: E501 line too long (95 > 79 characters)
+src/ingest/06_esm2_embeddings.py:48:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:49:80: E501 line too long (99 > 79 characters)
+src/ingest/06_esm2_embeddings.py:50:62: W291 trailing whitespace
+src/ingest/06_esm2_embeddings.py:51:80: E501 line too long (82 > 79 characters)
+src/ingest/06_esm2_embeddings.py:53:80: E501 line too long (91 > 79 characters)
+src/ingest/06_esm2_embeddings.py:54:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:57:80: E501 line too long (87 > 79 characters)
+src/ingest/06_esm2_embeddings.py:58:80: E501 line too long (80 > 79 characters)
+src/ingest/06_esm2_embeddings.py:66:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:69:80: E501 line too long (83 > 79 characters)
+src/ingest/06_esm2_embeddings.py:77:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:80:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:86:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:90:80: E501 line too long (91 > 79 characters)
+src/ingest/06_esm2_embeddings.py:92:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:93:64: W291 trailing whitespace
+src/ingest/06_esm2_embeddings.py:94:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:97:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:101:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:106:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:108:80: E501 line too long (86 > 79 characters)
+src/ingest/06_esm2_embeddings.py:109:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:113:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:114:80: E501 line too long (92 > 79 characters)
+src/ingest/06_esm2_embeddings.py:117:80: E501 line too long (84 > 79 characters)
+src/ingest/06_esm2_embeddings.py:118:80: E501 line too long (131 > 79 characters)
+src/ingest/06_esm2_embeddings.py:127:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:129:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:130:80: E501 line too long (87 > 79 characters)
+src/ingest/06_esm2_embeddings.py:131:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/06_esm2_embeddings.py:131:1: DAR101 Missing parameter(s) in Docstring: - sequence
+src/ingest/06_esm2_embeddings.py:131:1: DAR101 Missing parameter(s) in Docstring: - threshold
+src/ingest/06_esm2_embeddings.py:137:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:138:80: E501 line too long (101 > 79 characters)
+src/ingest/06_esm2_embeddings.py:141:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:145:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:156:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:160:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:162:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:166:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:172:34: W291 trailing whitespace
+src/ingest/06_esm2_embeddings.py:173:45: W291 trailing whitespace
+src/ingest/06_esm2_embeddings.py:176:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:178:80: E501 line too long (87 > 79 characters)
+src/ingest/06_esm2_embeddings.py:181:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:189:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:191:80: E501 line too long (86 > 79 characters)
+src/ingest/06_esm2_embeddings.py:195:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:200:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:210:80: E501 line too long (89 > 79 characters)
+src/ingest/06_esm2_embeddings.py:213:80: E501 line too long (97 > 79 characters)
+src/ingest/06_esm2_embeddings.py:215:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:217:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:218:80: E501 line too long (107 > 79 characters)
+src/ingest/06_esm2_embeddings.py:219:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/06_esm2_embeddings.py:219:1: DAR101 Missing parameter(s) in Docstring: - sequences
+src/ingest/06_esm2_embeddings.py:221:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:225:80: E501 line too long (105 > 79 characters)
+src/ingest/06_esm2_embeddings.py:226:80: E501 line too long (100 > 79 characters)
+src/ingest/06_esm2_embeddings.py:227:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:229:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:233:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:236:80: E501 line too long (99 > 79 characters)
+src/ingest/06_esm2_embeddings.py:238:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:240:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:241:80: E501 line too long (93 > 79 characters)
+src/ingest/06_esm2_embeddings.py:242:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/06_esm2_embeddings.py:242:1: DAR101 Missing parameter(s) in Docstring: - sequences
+src/ingest/06_esm2_embeddings.py:246:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:251:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:252:80: E501 line too long (87 > 79 characters)
+src/ingest/06_esm2_embeddings.py:260:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:263:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:264:80: E501 line too long (81 > 79 characters)
+src/ingest/06_esm2_embeddings.py:265:80: E501 line too long (91 > 79 characters)
+src/ingest/06_esm2_embeddings.py:267:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:275:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:280:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:282:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:284:80: E501 line too long (82 > 79 characters)
+src/ingest/06_esm2_embeddings.py:291:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:293:80: E501 line too long (91 > 79 characters)
+src/ingest/06_esm2_embeddings.py:294:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:295:80: E501 line too long (86 > 79 characters)
+src/ingest/06_esm2_embeddings.py:296:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/06_esm2_embeddings.py:296:1: DAR101 Missing parameter(s) in Docstring: - sequences
+src/ingest/06_esm2_embeddings.py:296:80: E501 line too long (81 > 79 characters)
+src/ingest/06_esm2_embeddings.py:301:1: DAR401 Missing exception(s) in Raises section: -r FileNotFoundError
+src/ingest/06_esm2_embeddings.py:303:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:306:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:312:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:315:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:317:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:321:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:325:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:327:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:333:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:337:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:338:80: E501 line too long (123 > 79 characters)
+src/ingest/06_esm2_embeddings.py:342:80: E501 line too long (84 > 79 characters)
+src/ingest/06_esm2_embeddings.py:343:1: DAR101 Missing parameter(s) in Docstring: - fasta_file
+src/ingest/06_esm2_embeddings.py:343:1: DAR101 Missing parameter(s) in Docstring: - genome_id
+src/ingest/06_esm2_embeddings.py:343:1: DAR201 Missing "Returns" in Docstring: - return
+src/ingest/06_esm2_embeddings.py:345:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:350:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:366:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:368:80: E501 line too long (81 > 79 characters)
+src/ingest/06_esm2_embeddings.py:372:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:384:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:387:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:391:60: W291 trailing whitespace
+src/ingest/06_esm2_embeddings.py:396:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:401:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:406:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:409:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:413:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:423:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:425:80: E501 line too long (86 > 79 characters)
+src/ingest/06_esm2_embeddings.py:426:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:432:27: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:433:27: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:434:27: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:435:27: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:436:27: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:436:80: E501 line too long (89 > 79 characters)
+src/ingest/06_esm2_embeddings.py:439:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:447:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:452:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:456:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:460:80: E501 line too long (83 > 79 characters)
+src/ingest/06_esm2_embeddings.py:461:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:462:80: E501 line too long (95 > 79 characters)
+src/ingest/06_esm2_embeddings.py:468:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:472:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:489:80: E501 line too long (84 > 79 characters)
+src/ingest/06_esm2_embeddings.py:490:80: E501 line too long (84 > 79 characters)
+src/ingest/06_esm2_embeddings.py:491:80: E501 line too long (92 > 79 characters)
+src/ingest/06_esm2_embeddings.py:499:80: E501 line too long (82 > 79 characters)
+src/ingest/06_esm2_embeddings.py:504:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:508:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:510:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:520:61: W291 trailing whitespace
+src/ingest/06_esm2_embeddings.py:521:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:522:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:523:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:524:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:525:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:525:80: E501 line too long (87 > 79 characters)
+src/ingest/06_esm2_embeddings.py:526:24: E128 continuation line under-indented for visual indent
+src/ingest/06_esm2_embeddings.py:527:1: DAR401 Missing exception(s) in Raises section: -r ValueError
+src/ingest/06_esm2_embeddings.py:528:80: E501 line too long (92 > 79 characters)
+src/ingest/06_esm2_embeddings.py:529:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:539:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:544:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:549:80: E501 line too long (84 > 79 characters)
+src/ingest/06_esm2_embeddings.py:550:80: E501 line too long (87 > 79 characters)
+src/ingest/06_esm2_embeddings.py:554:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:560:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:562:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:567:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:575:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:584:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:586:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:589:80: E501 line too long (86 > 79 characters)
+src/ingest/06_esm2_embeddings.py:590:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:594:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:604:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:605:19: F541 f-string is missing placeholders
+src/ingest/06_esm2_embeddings.py:606:80: E501 line too long (82 > 79 characters)
+src/ingest/06_esm2_embeddings.py:608:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:614:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:618:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:621:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:623:1: W293 blank line contains whitespace
+src/ingest/06_esm2_embeddings.py:625:80: E501 line too long (86 > 79 characters)
+src/ingest/06_esm2_embeddings.py:625:87: W292 no newline at end of file

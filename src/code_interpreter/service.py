@@ -24,7 +24,7 @@ import io
 import traceback
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from rich.console import Console
 

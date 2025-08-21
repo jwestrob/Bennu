@@ -1,0 +1,18 @@
+{
+  "servers": [
+    {
+      "extensions": [
+        "py",
+        "pyi"
+      ],
+      "command": [
+        "uvx",
+        "--from",
+        "python-lsp-server",
+        "pylsp"
+      ],
+      "rootDir": ".",
+      "restartInterval": 5
+    }
+  ]
+}

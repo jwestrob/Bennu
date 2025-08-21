@@ -11,9 +11,7 @@ Integrates KEGG pathway information into the knowledge graph by:
 
 import logging
 from pathlib import Path
-from typing import Dict, Set, Tuple, List
-import requests
-import time
+from typing import Dict, Tuple, List
 from dataclasses import dataclass
 
 from rdflib import Graph, Namespace, URIRef, Literal

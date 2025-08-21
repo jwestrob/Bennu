@@ -16,7 +16,7 @@ import re
 import typer
 from rich.console import Console
 from rich.table import Table
-from rich.progress import Progress, TaskID
+from rich.progress import Progress
 
 console = Console()
 logger = logging.getLogger(__name__)

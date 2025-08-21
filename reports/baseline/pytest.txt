@@ -1,0 +1,61 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.13, pytest-8.4.1, pluggy-1.6.0 -- /Users/jacob/.pyenv/versions/miniconda3-latest/envs/genome-kg/bin/python3.11
+cachedir: .pytest_cache
+rootdir: /Users/jacob/Documents/Sandbox/microbial_claude_matter
+configfile: pytest.ini
+plugins: xdist-3.7.0, anyio-4.9.0, cov-6.2.1, asyncio-1.0.0
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items / 1 error
+
+==================================== ERRORS ====================================
+_____________ ERROR collecting src/tests/demo/test_agentic_demo.py _____________
+ImportError while importing test module '/Users/jacob/Documents/Sandbox/microbial_claude_matter/src/tests/demo/test_agentic_demo.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tests/demo/test_agentic_demo.py:10: in <module>
+    from ...llm.config import LLMConfig
+E   ImportError: attempted relative import beyond top-level package
+=============================== warnings summary ===============================
+src/llm/rag_system/memory/note_schemas.py:45
+src/llm/rag_system/memory/note_schemas.py:45
+  /Users/jacob/Documents/Sandbox/microbial_claude_matter/src/llm/rag_system/memory/note_schemas.py:45: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    @validator('importance_score')
+
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323
+  /Users/jacob/.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+../../../.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298
+  /Users/jacob/.pyenv/versions/miniconda3-latest/envs/genome-kg/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:298: PydanticDeprecatedSince20: `json_encoders` is deprecated. See https://docs.pydantic.dev/2.11/concepts/serialization/#custom-serializers for alternatives. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(
+
+src/llm/rag_system/memory/note_schemas.py:152
+src/llm/rag_system/memory/note_schemas.py:152
+  /Users/jacob/Documents/Sandbox/microbial_claude_matter/src/llm/rag_system/memory/note_schemas.py:152: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    @validator('relevance_score')
+
+src/llm/rag_system/memory/note_schemas.py:172
+src/llm/rag_system/memory/note_schemas.py:172
+  /Users/jacob/Documents/Sandbox/microbial_claude_matter/src/llm/rag_system/memory/note_schemas.py:172: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    @validator('note_efficiency')
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR src/tests/demo/test_agentic_demo.py
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+======================== 20 warnings, 1 error in 8.52s =========================

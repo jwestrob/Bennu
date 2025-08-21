@@ -1,0 +1,71 @@
+\n=== References to src/llm/model_switcher.py ===
+\n=== References to src/llm/model_switcher.py ===
+reports/baseline/radon_mi.txt:30:src/llm/model_switcher.py - A (67.69)
+reports/baseline/radon_cc.txt:362:src/llm/model_switcher.py
+reports/analysis/vulture_med_conf.txt:115:src/llm/model_switcher.py:116: unused function 'get_current_model_status' (60% confidence)
+reports/analysis/vulture_med_conf.txt:116:src/llm/model_switcher.py:140: unused function 'configure_models' (60% confidence)
+reports/analysis/vulture_med_conf.txt:117:src/llm/model_switcher.py:168: unused variable 'cost_effective' (60% confidence)
+reports/analysis/vulture_med_conf.txt:118:src/llm/model_switcher.py:169: unused variable 'premium' (60% confidence)
+reports/analysis/orphan_refs.txt:1:\n=== References to src/llm/model_switcher.py ===
+reports/analysis/orphan_refs.txt:2:\n=== References to src/llm/model_switcher.py ===
+reports/baseline/flake8.txt:3637:src/llm/model_switcher.py:24:1: E302 expected 2 blank lines, found 1
+reports/baseline/flake8.txt:3638:src/llm/model_switcher.py:25:1: DAR201 Missing "Returns" in Docstring: - return
+reports/baseline/flake8.txt:3639:src/llm/model_switcher.py:31:1: E302 expected 2 blank lines, found 1
+reports/baseline/flake8.txt:3640:src/llm/model_switcher.py:32:1: DAR101 Missing parameter(s) in Docstring: - config
+reports/baseline/flake8.txt:3641:src/llm/model_switcher.py:36:1: W293 blank line contains whitespace
+reports/baseline/flake8.txt:3642:src/llm/model_switcher.py:40:1: W293 blank line contains whitespace
+reports/baseline/flake8.txt:3643:src/llm/model_switcher.py:44:1: W293 blank line contains whitespace
+reports/baseline/flake8.txt:3644:src/llm/model_switcher.py:48:1: W293 blank line contains whitespace
+reports/baseline/flake8.txt:3645:src/llm/model_switcher.py:51:80: E501 line too long (83 > 79 characters)
+reports/baseline/flake8.txt:3646:src/llm/model_switcher.py:52:80: E501 line too long (88 > 79 characters)
+reports/baseline/flake8.txt:3647:src/llm/model_switcher.py:54:80: E501 line too long (82 > 79 characters)
+reports/baseline/flake8.txt:3648:src/llm/model_switcher.py:55:80: E501 line too long (87 > 79 characters)
+---
+---
+\n=== References to core_clean.py ===
+\n=== References to core_clean.py ===
+reports/analysis/orphan_refs.txt:25:\n=== References to core_clean.py ===
+reports/analysis/orphan_refs.txt:26:\n=== References to core_clean.py ===
+---
+---
+\n=== References to core_final.py ===
+\n=== References to core_final.py ===
+reports/analysis/orphan_refs.txt:31:\n=== References to core_final.py ===
+reports/analysis/orphan_refs.txt:32:\n=== References to core_final.py ===
+---
+---
+\n=== References to temp_core.py ===
+\n=== References to temp_core.py ===
+reports/analysis/orphan_refs.txt:37:\n=== References to temp_core.py ===
+reports/analysis/orphan_refs.txt:38:\n=== References to temp_core.py ===
+---
+---
+\n=== References to src/llm/context_compression.py ===
+\n=== References to src/llm/context_compression.py ===
+src/tests/test_context_compression.py:15:from llm.context_compression import ContextCompressor, CompressionLevel, GenomicDataCompressor
+reports/analysis/orphan_refs.txt:45:src/tests/test_context_compression.py:15:from llm.context_compression import ContextCompressor, CompressionLevel, GenomicDataCompressor
+src/tests/test_rag_compression_integration.py:72:        from llm.context_compression import ContextCompressor
+docs/context_compression.md:68:from llm.context_compression import ContextCompressor
+docs/context_compression.md:90:from llm.context_compression import GenomicDataCompressor, CompressionLevel
+docs/LLM_SYSTEM_ARCHITECTURE.md:99:#### Context Compression (`context_compression.py`)
+docs/context_compression.md:211:- `src/llm/context_compression.py` - Main compression module
+docs/context_compression.md:217:- `src/tests/test_context_compression.py` - Unit tests
+docs/context_compression.md:222:python src/tests/test_context_compression.py
+docs/COMPONENT_MAP.md:15:│   ├── ContextCompressor (context_compression.py)
+docs/COMPONENT_MAP.md:117:| ContextCompressor | `context_compression.py` | Intelligent context compression with biological preservation |
+docs/QUICK_REFERENCE.md:12:- **`src/llm/rag_system/context_compression.py`** - Intelligent context compression
+reports/baseline/radon_mi.txt:17:src/llm/context_compression.py - A (30.65)
+reports/baseline/radon_mi.txt:35:src/llm/rag_system/context_compression.py - A (43.31)
+reports/baseline/radon_mi.txt:87:src/tests/test_context_compression.py - A (55.93)
+reports/analysis/vulture_med_conf.txt:110:src/llm/context_compression.py:119: unused variable 'unique_proteins' (60% confidence)
+reports/analysis/vulture_med_conf.txt:111:src/llm/context_compression.py:336: unused attribute 'LARGE_LIMIT' (60% confidence)
+reports/analysis/vulture_med_conf.txt:145:src/llm/rag_system/context_compression.py:21: unused variable 'compression_method' (60% confidence)
+reports/analysis/vulture_med_conf.txt:146:src/llm/rag_system/context_compression.py:22: unused variable 'preserved_fields' (60% confidence)
+reports/analysis/vulture_med_conf.txt:147:src/llm/rag_system/context_compression.py:39: unused attribute 'summarizable_fields' (60% confidence)
+reports/analysis/vulture_med_conf.txt:148:src/llm/rag_system/context_compression.py:355: unused method 'get_compression_recommendation' (60% confidence)
+reports/baseline/radon_cc.txt:182:src/llm/context_compression.py
+reports/baseline/radon_cc.txt:433:src/llm/rag_system/context_compression.py
+reports/baseline/radon_cc.txt:1161:src/tests/test_context_compression.py
+reports/analysis/orphan_refs.txt:43:\n=== References to src/llm/context_compression.py ===
+---
+---

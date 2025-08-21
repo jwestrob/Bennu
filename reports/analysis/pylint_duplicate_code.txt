@@ -1,0 +1,1168 @@
+************* Module tests.test_esm2_no_truncation
+src/tests/test_esm2_no_truncation.py:16:19: E0001: Parsing failed: 'invalid decimal literal (tests.test_esm2_no_truncation, line 16)' (syntax-error)
+************* Module code_interpreter.sequence_service
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.02_dfast_qc:[370:412]
+==ingest.03_prodigal:[476:516]
+    if not input_dir.exists():
+        console.print(f"[red]Error: Input directory does not exist: {input_dir}[/red]")
+        raise typer.Exit(1)
+
+    manifest_file = input_dir / "processing_manifest.json"
+    if not manifest_file.exists():
+        console.print(f"[red]Error: Input manifest not found: {manifest_file}[/red]")
+        console.print("[yellow]Please run Stage 0 (prepare_inputs) first[/yellow]")
+        raise typer.Exit(1)
+
+    # Load input manifest
+    try:
+        with open(manifest_file, 'r') as f:
+            input_manifest = json.load(f)
+    except Exception as e:
+        console.print(f"[red]Error: Failed to load input manifest: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Filter for valid genomes only
+    valid_genomes = [g for g in input_manifest["genomes"] if g.get("format_valid", True)]
+    if not valid_genomes:
+        console.print("[red]Error: No valid genomes found in input manifest[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Found {len(valid_genomes)} valid genomes to process")
+
+    # Handle output directory
+    if output_dir.exists():
+        if not force:
+            console.print(f"[red]Error: Output directory already exists: {output_dir}[/red]")
+            console.print("[yellow]Use --force to overwrite[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[yellow]Removing existing output directory: {output_dir}[/yellow]")
+            import shutil
+            shutil.rmtree(output_dir)
+
+    # Create output directories
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "genomes").mkdir(exist_ok=True)
+
+    # Determine number of workers (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[297:338]
+==ingest.02_dfast_qc:[253:294]
+            )
+            future_to_genome[future] = genome_info["genome_id"]
+
+        # Collect results as they complete
+        with Progress() as progress:
+            task = progress.add_task("Processing genomes...", total=len(genomes))
+
+            for future in as_completed(future_to_genome):
+                genome_id = future_to_genome[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+
+                    # Update progress
+                    status = "✓" if result["execution_status"] == "success" else "✗"
+                    progress.update(task,
+                                  description=f"Processing genomes... {status} {genome_id}",
+                                  advance=1)
+
+                except Exception as e:
+                    # Handle unexpected errors
+                    error_result = {
+                        "genome_id": genome_id,
+                        "execution_status": "failed",
+                        "error_message": f"Execution error: {str(e)}",
+                        "execution_time_seconds": 0.0
+                    }
+                    results.append(error_result)
+                    progress.update(task,
+                                  description=f"Processing genomes... ✗ {genome_id}",
+                                  advance=1)
+
+    return results
+
+
+def generate_summary_stats(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Generate aggregate statistics across all genomes."""
+    successful = [r for r in results if r["execution_status"] == "success"]
+    failed = [r for r in results if r["execution_status"] == "failed"]
+
+    # Calculate aggregate statistics (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[297:334]
+==ingest.03_prodigal:[305:351]
+            )
+            future_to_genome[future] = genome_info["genome_id"]
+
+        # Collect results as they complete
+        with Progress() as progress:
+            task = progress.add_task("Processing genomes...", total=len(genomes))
+
+            for future in as_completed(future_to_genome):
+                genome_id = future_to_genome[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+
+                    # Update progress
+                    status = "✓" if result["execution_status"] == "success" else "✗"
+                    progress.update(task,
+                                  description=f"Processing genomes... {status} {genome_id}",
+                                  advance=1)
+
+                except Exception as e:
+                    # Handle unexpected errors
+                    error_result = {
+                        "genome_id": genome_id,
+                        "execution_status": "failed",
+                        "error_message": f"Execution error: {str(e)}",
+                        "execution_time_seconds": 0.0
+                    }
+                    results.append(error_result)
+                    progress.update(task,
+                                  description=f"Processing genomes... ✗ {genome_id}",
+                                  advance=1)
+
+    return results
+
+
+def create_protein_symlinks(output_dir: Path, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Create symlinks to all .faa files in a centralized directory for easy access.
+
+    Args:
+        output_dir: Base output directory
+        results: List of processing results from prodigal runs
+
+    Returns:
+        Dict containing symlink creation statistics
+    """ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[414:441]
+==ingest.03_prodigal:[476:503]
+    if not input_dir.exists():
+        console.print(f"[red]Error: Input directory does not exist: {input_dir}[/red]")
+        raise typer.Exit(1)
+
+    manifest_file = input_dir / "processing_manifest.json"
+    if not manifest_file.exists():
+        console.print(f"[red]Error: Input manifest not found: {manifest_file}[/red]")
+        console.print("[yellow]Please run Stage 0 (prepare_inputs) first[/yellow]")
+        raise typer.Exit(1)
+
+    # Load input manifest
+    try:
+        with open(manifest_file, 'r') as f:
+            input_manifest = json.load(f)
+    except Exception as e:
+        console.print(f"[red]Error: Failed to load input manifest: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Filter for valid genomes only
+    valid_genomes = [g for g in input_manifest["genomes"] if g.get("format_valid", True)]
+    if not valid_genomes:
+        console.print("[red]Error: No valid genomes found in input manifest[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Found {len(valid_genomes)} valid genomes to process")
+
+    # Validate reference genome if provided (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.utils:[42:61]
+==llm.sequence_tools:[22:60]
+    try:
+        if isinstance(data, (dict, list)):
+            data_str = str(data)
+            if len(data_str) > max_length:
+                if isinstance(data, dict):
+                    return f"<large_dict: {len(data)} keys, {len(data_str)} chars>"
+                elif isinstance(data, list):
+                    return f"<large_list: {len(data)} items, {len(data_str)} chars>"
+            return data_str
+        else:
+            data_str = str(data)
+            if len(data_str) > max_length:
+                return f"<large_{type(data).__name__}: {len(data_str)} chars>"
+            return data_str
+    except Exception as e:
+        return f"<error_logging_{description}: {str(e)}>"
+
+def setup_debug_logging():
+    """Setup debug logging to redirect verbose output to log files.""" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_ingest.test_01_quast:[328:367]
+==tests.test_ingest.test_03_prodigal:[301:341]
+class MockProcessPoolExecutor:
+    """Mock ProcessPoolExecutor that runs tasks synchronously to preserve mock behavior."""
+
+    def __init__(self, max_workers=None):
+        self.max_workers = max_workers
+        self._futures = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def submit(self, fn, *args, **kwargs):
+        """Submit a task and return a mock future with the result."""
+        future = Mock()
+        try:
+            result = fn(*args, **kwargs)
+            future.result.return_value = result
+        except Exception as e:
+            future.result.side_effect = e
+
+        self._futures.append(future)
+        return future
+
+
+def mock_as_completed(futures):
+    """Mock version of as_completed that returns futures immediately."""
+    return futures
+
+
+class TestProcessGenomesParallel:
+    """Test parallel genome processing functionality."""
+
+    @patch.object(run_quast_module, 'ProcessPoolExecutor', MockProcessPoolExecutor)
+    @patch.object(run_quast_module, 'as_completed', mock_as_completed)
+    @patch.object(run_quast_module, 'run_quast_single')
+    def test_process_genomes_parallel_success(self, mock_run_single, tmp_path):
+        """Test successful parallel processing of multiple genomes.""" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[446:465]
+==ingest.03_prodigal:[503:523]
+    if output_dir.exists():
+        if not force:
+            console.print(f"[red]Error: Output directory already exists: {output_dir}[/red]")
+            console.print("[yellow]Use --force to overwrite[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[yellow]Removing existing output directory: {output_dir}[/yellow]")
+            import shutil
+            shutil.rmtree(output_dir)
+
+    # Create output directories
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "genomes").mkdir(exist_ok=True)
+    (output_dir / "logs").mkdir(exist_ok=True)
+
+    # Determine number of workers
+    if max_workers is None:
+        max_workers = max(1, multiprocessing.cpu_count() - 1)
+
+    console.print(f"Using {max_workers} parallel workers") (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_genomic_questions:[79:95]
+==tests.test_multiple_questions:[50:67]
+        for i, question in enumerate(TEST_QUESTIONS, 1):
+            console.print(Panel(
+                f"[bold cyan]Question {i}:[/bold cyan] {question}",
+                title="Test Case",
+                border_style="blue"
+            ))
+
+            try:
+                response = await rag.ask(question)
+
+                # Display results
+                console.print(f"[bold green]Answer:[/bold green]")
+                console.print(response['answer'])
+                console.print(f"\n[yellow]Confidence:[/yellow] {response['confidence']}")
+                console.print(f"[yellow]Citations:[/yellow] {response['citations']}")
+
+                # Check for real data indicators (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.task_executor:[665:694]
+==llm.rag_system.task_plan_parser:[530:553]
+        patterns = [
+            (r'\bfor\s+each\s+genome,?\s+', 'compare across all genomes to '),
+            (r'\bfor\s+each\s+protein,?\s+', 'compare across all proteins to '),
+            (r'\bfor\s+each\s+gene,?\s+', 'compare across all genes to '),
+            (r'\bfor\s+each\s+domain,?\s+', 'compare across all domains to '),
+        ]
+
+        transformed = description
+        for pattern, replacement in patterns:
+            transformed = re.sub(pattern, replacement, transformed, flags=re.IGNORECASE)
+
+        # If we transformed anything, log it
+        if transformed != description:
+            logger.debug(f"Transformed task description: '{description}' -> '{transformed}'")
+
+        return transformed
+
+    def _extract_tool_args(self, description: str) -> Dict[str, Any]:
+        """
+        Extract tool arguments from task description.
+
+        Parses "Invoke [tool] for [param]: [value]" syntax and other patterns.
+        """ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.00_prepare_inputs:[196:212]
+==ingest.01_run_quast:[443:457]
+        raise typer.Exit(1)
+
+    # Handle output directory
+    if output_dir.exists():
+        if not force:
+            console.print(f"[red]Error: Output directory already exists: {output_dir}[/red]")
+            console.print("[yellow]Use --force to overwrite[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[yellow]Removing existing output directory: {output_dir}[/yellow]")
+            shutil.rmtree(output_dir)
+
+    # Create output directories
+    output_dir.mkdir(parents=True, exist_ok=True) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[498:514]
+==ingest.02_dfast_qc:[446:462]
+        },
+        "summary": summary_stats,
+        "genomes": results
+    }
+
+    # Save manifest
+    output_manifest = output_dir / "processing_manifest.json"
+    with open(output_manifest, 'w') as f:
+        json.dump(manifest, f, indent=2)
+
+    # Save summary statistics
+    summary_file = output_dir / "summary_stats.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary_stats, f, indent=2)
+
+    # Display results (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[446:458]
+==ingest.02_dfast_qc:[397:412]
+    if output_dir.exists():
+        if not force:
+            console.print(f"[red]Error: Output directory already exists: {output_dir}[/red]")
+            console.print("[yellow]Use --force to overwrite[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[yellow]Removing existing output directory: {output_dir}[/yellow]")
+            import shutil
+            shutil.rmtree(output_dir)
+
+    # Create output directories
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "genomes").mkdir(exist_ok=True)
+
+    # Determine number of workers (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_domain_enhancement:[35:48]
+==tests.debug.debug_tpr_query:[38:51]
+        console.print(f"[cyan]Question:[/cyan] {question}")
+
+        # Step 1: Classification
+        console.print("\n[yellow]Step 1: Classification[/yellow]")
+        classification = rag.classifier(question=question)
+        console.print(f"Query type: {classification.query_type}")
+
+        # Step 2: Retrieval plan
+        console.print("\n[yellow]Step 2: Retrieval Plan[/yellow]")
+        retrieval_plan = rag.retriever(
+            question=question,
+            query_type=classification.query_type
+        ) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.00_prepare_inputs:[199:212]
+==ingest.03_prodigal:[503:515]
+    if output_dir.exists():
+        if not force:
+            console.print(f"[red]Error: Output directory already exists: {output_dir}[/red]")
+            console.print("[yellow]Use --force to overwrite[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[yellow]Removing existing output directory: {output_dir}[/yellow]")
+            import shutil
+            shutil.rmtree(output_dir)
+
+    # Create output directories
+    output_dir.mkdir(parents=True, exist_ok=True) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[530:544]
+==ingest.03_prodigal:[593:607]
+    summary_table.add_row("Execution time", f"{total_time:.1f} seconds")
+    summary_table.add_row("Mean time per genome", f"{summary_stats['mean_execution_time_seconds']:.1f} seconds")
+
+    console.print(summary_table)
+
+    # Show failed genomes if any
+    failed_results = [r for r in results if r["execution_status"] == "failed"]
+    if failed_results:
+        console.print("\n[bold red]Failed Genomes:[/bold red]")
+        for result in failed_results:
+            console.print(f"[red]• {result['genome_id']}: {result.get('error_message', 'Unknown error')}[/red]")
+
+    # Success message
+    if summary_stats["successful"] > 0: (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[516:526]
+==ingest.03_prodigal:[580:590]
+    summary_table = Table()
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="magenta")
+
+    summary_table.add_row("Input directory", str(input_dir))
+    summary_table.add_row("Output directory", str(output_dir))
+    summary_table.add_row("Total genomes", str(summary_stats["total_genomes"]))
+    summary_table.add_row("Successful", str(summary_stats["successful"]))
+    summary_table.add_row("Failed", str(summary_stats["failed"]))
+    summary_table.add_row("Success rate", f"{summary_stats['success_rate']:.1%}") (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[269:293]
+==ingest.03_prodigal:[277:301]
+    except Exception as e:
+        result["error_message"] = f"Unexpected error: {str(e)}"
+
+    result["execution_time_seconds"] = round(time.time() - start_time, 2)
+    return result
+
+
+def process_genomes_parallel(genomes: List[Dict[str, Any]],
+                           output_dir: Path,
+                           max_workers: int,
+                           **quast_kwargs) -> List[Dict[str, Any]]:
+    """
+    Process multiple genomes in parallel using ProcessPoolExecutor.
+
+    Returns:
+        List of dictionaries containing results for each genome
+    """
+    results = []
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all jobs
+        future_to_genome = {}
+        for genome_info in genomes:
+            future = executor.submit( (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[446:457]
+==ingest.04_astra_scan:[193:204]
+    if output_dir.exists():
+        if not force:
+            console.print(f"[red]Error: Output directory already exists: {output_dir}[/red]")
+            console.print("[yellow]Use --force to overwrite[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[yellow]Removing existing output directory: {output_dir}[/yellow]")
+            shutil.rmtree(output_dir)
+
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==cli:[307:320]
+==llm.cli:[54:67]
+        status = config.validate_configuration()
+        if not all(status.values()):
+            console.print("[red]⚠️  Configuration issues detected:[/red]")
+            for component, ok in status.items():
+                icon = "✅" if ok else "❌"
+                console.print(f"  {icon} {component}")
+
+            if not status.get('llm_configured', False):
+                console.print("\n[yellow]💡 Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable[/yellow]")
+
+            raise typer.Exit(1)
+
+        # Process question (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_ggdef_fix:[27:40]
+==tests.test_multiple_questions:[35:47]
+    if not os.getenv('OPENAI_API_KEY'):
+        console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
+        pytest.skip("No OPENAI_API_KEY found")
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+        config.llm_model = "gpt-4o-mini"
+
+        rag = GenomicRAG(config)
+ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_genomic_questions:[110:121]
+==tests.test_multiple_questions:[87:98]
+        rag.close()
+        console.print("[green]🎉 Testing completed![/green]")
+        assert True  # Test completed successfully
+
+    except Exception as e:
+        console.print(f"[red]❌ System test failed: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        assert False, f"System test failed: {e}"
+
+if __name__ == "__main__": (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[500:514]
+==ingest.03_prodigal:[564:578]
+        "genomes": results
+    }
+
+    # Save manifest
+    output_manifest = output_dir / "processing_manifest.json"
+    with open(output_manifest, 'w') as f:
+        json.dump(manifest, f, indent=2)
+
+    # Save summary statistics
+    summary_file = output_dir / "summary_stats.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary_stats, f, indent=2)
+
+    # Display results (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.intelligent_task_splitter:[255:269]
+==llm.rag_system.memory.task_based_synthesizer:[179:191]
+        return chunks
+
+    def _chunk_by_genomes(self, data: List[Dict[str, Any]]) -> List[AnalysisChunk]:
+        """Chunk by genomes, including all data per genome."""
+        genome_groups = {}
+        for item in data:
+            genome_id = item.get('genome_id', item.get('genome', 'unknown'))
+            if genome_id not in genome_groups:
+                genome_groups[genome_id] = []
+            genome_groups[genome_id].append(item)
+
+        chunks = [] (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.core:[205:217]
+==llm.rag_system.memory.multipart_synthesizer:[71:96]
+            return module(**kwargs)
+
+        return self.model_allocator.create_context_managed_call(
+            task_name=task_name,
+            signature_class=signature_cls,
+            module_call_func=_call,
+            query=kwargs.get("question", "") or kwargs.get("user_query", ""),
+            task_context=kwargs.get("task_context", "")
+        )
+
+    def health_check(self) -> Dict[str, bool]:
+        """Check health of all system components.""" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_ggdef_fix:[25:35]
+==tests.test_tpr_context_format:[26:37]
+    console.print("=" * 60)
+
+    if not os.getenv('OPENAI_API_KEY'):
+        console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
+        pytest.skip("No OPENAI_API_KEY found")
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_rag_context:[450:461]
+==tests.debug.debug_rag_context_enhanced:[248:259]
+    except Exception as e:
+        console.print(f"[red]Error during debugging: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+
+    finally:
+        debugger.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main()) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[181:188]
+==ingest.03_prodigal:[189:196]
+    result = {
+        "genome_id": genome_id,
+        "input_file": str(input_file),
+        "output_dir": str(genome_output_dir),
+        "execution_status": "failed",
+        "execution_time_seconds": 0.0,
+        "error_message": None, (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[501:514]
+==ingest.04_astra_scan:[277:290]
+    }
+
+    # Save manifest
+    output_manifest = output_dir / "processing_manifest.json"
+    with open(output_manifest, 'w') as f:
+        json.dump(manifest, f, indent=2)
+
+    # Save summary statistics
+    summary_file = output_dir / "summary_stats.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary_stats, f, indent=2)
+
+    # Display results (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[422:433]
+==ingest.04_astra_scan:[171:182]
+        raise typer.Exit(1)
+
+    # Load input manifest
+    try:
+        with open(manifest_file, 'r') as f:
+            input_manifest = json.load(f)
+    except Exception as e:
+        console.print(f"[red]Error: Failed to load input manifest: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Filter for valid genomes only (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_agentic_integration:[89:102]
+==tests.debug.debug_task_graph_issues:[24:35]
+    ))
+
+    # Check for API key
+    if not os.getenv('OPENAI_API_KEY'):
+        console.print("[red]❌ Please set OPENAI_API_KEY environment variable[/red]")
+        return
+
+    try:
+        # Initialize the system
+        config = LLMConfig.from_env()
+        rag = GenomicRAG(config)
+
+        # Health check (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_multiple_questions:[35:43]
+==tests.test_tpr_context_format:[28:37]
+    if not os.getenv('OPENAI_API_KEY'):
+        console.print("[red]❌ No OPENAI_API_KEY found.[/red]")
+        pytest.skip("No OPENAI_API_KEY found")
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_genomic_questions:[58:69]
+==tests.test_multiple_questions:[37:47]
+        pytest.skip("No OPENAI_API_KEY found")
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+        config.llm_model = "gpt-4o-mini"  # Use 4o-mini for testing
+
+        rag = GenomicRAG(config)
+
+        # Health check (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.code_enhancement:[262:272]
+==llm.rag_system.data_scaling:[84:93]
+        enhanced_code = f"""
+# Medium Dataset Analysis Setup ({total_count} proteins)
+# Batch processing with representative sampling
+
+import pandas as pd
+import numpy as np
+from collections import Counter
+import matplotlib.pyplot as plt
+import seaborn as sns (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.code_enhancement:[157:166]
+==llm.rag_system.data_scaling:[34:45]
+        enhanced_code = f"""
+# Genomic Data Analysis Setup - CSV File Access
+# Dataset: {total_count} proteins, Data types: {data_types}
+
+import pandas as pd
+import numpy as np
+from collections import Counter
+import matplotlib.pyplot as plt
+import seaborn as sns (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_build_kg.test_integration:[61:69]
+==tests.test_build_kg.test_rdf_builder:[413:420]
+        assert 'total_triples' in result
+        assert 'genomes_processed' in result
+        assert 'proteins_annotated' in result
+        assert 'pfam_domains' in result
+        assert 'kofam_functions' in result
+        assert 'output_files' in result
+
+        # Check that we actually processed some data (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_rag_context:[34:42]
+==tests.debug.debug_rag_context_enhanced:[33:44]
+        self.config = config or LLMConfig.from_env()
+        self.chunk_context_size = chunk_context_size
+        self.rag = GenomicRAG(self.config, chunk_context_size=chunk_context_size)
+        self.command_runner = CommandRunner(output_dir="data/debug_outputs", max_stdout_lines=30)
+
+        # Create debug output directory
+        self.debug_dir = Path("data/debug_outputs")
+        self.debug_dir.mkdir(parents=True, exist_ok=True)
+
+    async def debug_query_with_file_output(self, question: str) -> Dict[str, Any]:
+        """Run a query and capture all context data with file redirection.""" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_ggdef_query:[24:36]
+==tests.debug.debug_structured_data_flow:[23:35]
+    console.print("=" * 60)
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+
+        rag = GenomicRAG(config)
+
+        question = "What proteins contain GGDEF domains and what do they do?"
+
+        # Get the classification and retrieval plan (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[536:544]
+==ingest.02_dfast_qc:[488:496]
+    failed_results = [r for r in results if r["execution_status"] == "failed"]
+    if failed_results:
+        console.print("\n[bold red]Failed Genomes:[/bold red]")
+        for result in failed_results:
+            console.print(f"[red]• {result['genome_id']}: {result.get('error_message', 'Unknown error')}[/red]")
+
+    # Success message
+    if summary_stats["successful"] > 0: (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[471:478]
+==ingest.03_prodigal:[528:535]
+    console.print("\n[bold yellow]Processing genomes...[/bold yellow]")
+
+    start_time = time.time()
+    results = process_genomes_parallel(
+        valid_genomes,
+        output_dir,
+        max_workers, (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[213:219]
+==ingest.03_prodigal:[222:228]
+        with open(log_file, 'w') as log_f:
+            process_result = subprocess.run(
+                cmd,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                text=True, (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[189:197]
+==ingest.03_prodigal:[197:205]
+        "statistics": {},
+        "validation": {},
+        "output_files": {}
+    }
+
+    try:
+        # Build prodigal command
+        cmd = [ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[146:178]
+==ingest.03_prodigal:[150:184]
+    return validation
+
+
+def run_quast_single(genome_info: Dict[str, Any],
+                    output_base_dir: Path,
+                    min_contig_length: int = 500,
+                    threads: int = 1,
+                    reference_genome: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Run QUAST on a single genome.
+
+    Args:
+        genome_info: Dictionary containing genome metadata from input manifest
+        output_base_dir: Base output directory for all genomes
+        min_contig_length: Minimum contig length for analysis
+        threads: Number of threads to use per genome
+        reference_genome: Optional reference genome for comparison
+
+    Returns:
+        Dict containing execution results and statistics
+    """
+    start_time = time.time()
+
+    # Extract genome information
+    genome_id = genome_info["genome_id"]
+    input_file = Path(genome_info["output_path"])  # From stage00 manifest
+
+    # Create output directory for this genome
+    genome_output_dir = output_base_dir / "genomes" / genome_id
+    genome_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Define log file (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.hierarchical_analysis.genomic_chunk_analyzer:[24:30]
+==llm.rag_system.whole_genome_reader:[28:34]
+    gene_id: str
+    protein_id: Optional[str]
+    start: int
+    end: int
+    strand: str
+    length: int (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.annotation_tools:[556:562]
+==llm.rag_system.dspy_signatures:[149:155]
+            MATCH (p:Protein)-[:HASFUNCTION]->(ko)
+            OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
+            OPTIONAL MATCH (p)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
+            RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
+                   g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
+                   collect(DISTINCT dom.id) AS pfam_accessions (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_ingest.test_01_quast:[487:498]
+==tests.test_ingest.test_03_prodigal:[590:598]
+        results = []
+
+        summary = generate_summary_stats(results)
+
+        assert summary["total_genomes"] == 0
+        assert summary["successful"] == 0
+        assert summary["failed"] == 0
+        assert summary["success_rate"] == 0.0
+
+    def test_generate_summary_stats_no_valid_metrics(self):
+        """Test summary generation when no genomes have valid metrics.""" (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.intelligent_task_splitter:[260:268]
+==llm.rag_system.memory.report_manager:[222:230]
+        genome_groups = {}
+        for item in data:
+            genome_id = item.get('genome_id', item.get('genome', 'unknown'))
+            if genome_id not in genome_groups:
+                genome_groups[genome_id] = []
+            genome_groups[genome_id].append(item)
+
+        # Each genome becomes a chunk (or split if too large) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.core:[455:463]
+==llm.rag_system.task_executor:[319:327]
+                query_type=classification.query_type,
+                task_context=task_context,
+                genome_filter_required=str(genome_filter_required),
+                target_genome=target_genome,
+                analysis_type=analysis_type
+            )
+
+        # Validate query for comparative questions (same as in core.py) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.agent_executor:[783:791]
+==llm.rag_system.core:[361:371]
+            return module(question=question)
+
+        from .dspy_signatures import QueryClassifier
+        classification = self.model_allocator.create_context_managed_call(
+            task_name="query_classification",  # Now maps to COMPLEX = o3
+            signature_class=QueryClassifier,
+            module_call_func=classification_call
+        )
+
+        # Step 1.5: Determine analysis type for biological context (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.agent_tool_selector:[17:31]
+==llm.rag_system.genome_selection:[20:30]
+try:
+    import dspy
+    DSPY_AVAILABLE = True
+except ImportError:
+    DSPY_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.demo.test_pathway_based_discovery:[160:167]
+==tests.demo.test_template_resolution:[130:137]
+    except Exception as e:
+        print(f"\n❌ Test failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    asyncio.run(main()) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_simple_limit:[70:78]
+==tests.test_tpr_context_format:[63:71]
+        rag.close()
+
+    except Exception as e:
+        console.print(f"[red]❌ Test failed: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__": (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_tpr_query:[29:38]
+==tests.test_tpr_context_format:[32:42]
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+
+        rag = GenomicRAG(config)
+
+        question = "How many TPR domains are found in the dataset and what do they do?"
+ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.test_genomic_questions:[14:30]
+==tests.test_multiple_questions:[13:24]
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.llm.config import LLMConfig
+from src.llm.rag_system import GenomicRAG
+
+console = Console()
+
+# Test cases covering different aspects of bacterial genomes
+TEST_QUESTIONS = [
+    # 1. Domain-based questions (we know GGDEF exists)
+    "What proteins contain GGDEF domains and what do they do?",
+
+    # 2. Specific protein analysis (test neighborhood analysis)
+    "Tell me about protein RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_14_66",
+
+    # 3. Functional pathway questions (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_ggdef_query:[24:33]
+==tests.test_enhanced_tpr:[25:35]
+    console.print("=" * 60)
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+
+        rag = GenomicRAG(config)
+ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_domain_enhancement:[85:93]
+==tests.debug.debug_structured_data_flow:[103:111]
+        rag.close()
+
+    except Exception as e:
+        console.print(f"[red]❌ Debug failed: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__": (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_domain_enhancement:[26:35]
+==tests.debug.debug_structured_data_flow:[25:35]
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+
+        rag = GenomicRAG(config)
+
+        question = "What proteins contain GGDEF domains and what do they do?"
+ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.demo.test_agentic_validation:[154:161]
+==tests.test_agentic_rag_system:[96:103]
+        mock_search_handle = Mock()
+        mock_entrez.esearch.return_value = mock_search_handle
+
+        mock_fetch_handle = Mock()
+        mock_entrez.efetch.return_value = mock_fetch_handle
+
+        mock_entrez.read.side_effect = [ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.00_prepare_inputs:[307:313]
+==ingest.03_prodigal:[580:586]
+    summary_table = Table()
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="magenta")
+
+    summary_table.add_row("Input directory", str(input_dir))
+    summary_table.add_row("Output directory", str(output_dir)) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[286:293]
+==ingest.02_dfast_qc:[242:249]
+    results = []
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all jobs
+        future_to_genome = {}
+        for genome_info in genomes:
+            future = executor.submit( (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[352:357]
+==ingest.03_prodigal:[410:415]
+    summary = {
+        "total_genomes": len(results),
+        "successful": len(successful),
+        "failed": len(failed),
+        "success_rate": len(successful) / len(results) if results else 0.0, (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[262:268]
+==ingest.03_prodigal:[270:276]
+            result["execution_status"] = "success"
+        else:
+            result["execution_status"] = "failed"
+            result["error_message"] = "Output validation failed"
+
+    except subprocess.TimeoutExpired: (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==ingest.01_run_quast:[516:522]
+==ingest.04_astra_scan:[292:298]
+    summary_table = Table()
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="magenta")
+
+    summary_table.add_row("Input directory", str(input_dir))
+    summary_table.add_row("Output directory", str(output_dir)) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.intelligent_chunking_manager:[18:25]
+==llm.rag_system.memory.task_based_synthesizer:[19:26]
+logger = logging.getLogger(__name__)
+
+@dataclass
+class AnalysisChunk:
+    """A chunk of data for analysis without artificial size limits."""
+    chunk_id: str
+    title: str (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.intelligent_chunking_manager:[67:88]
+==llm.rag_system.memory.report_manager:[93:113]
+        try:
+            self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
+        except Exception as e:
+            logger.warning(f"Failed to initialize tokenizer: {e}")
+            self.tokenizer = None
+
+    async def analyze_and_chunk_dataset(self,
+                                      task: Task,
+                                      raw_data: List[Dict[str, Any]],
+                                      question: str) -> List[AnalysisChunk]:
+        """
+        Analyze dataset and create intelligent chunks upfront.
+
+        Args:
+            task: Original task to be chunked
+            raw_data: Complete dataset to analyze
+            question: Original user question for context
+
+        Returns:
+            List of AnalysisChunk objects with meaningful biological groupings
+        """ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.model_switcher:[10:21]
+==llm.rag_system.agent_tool_selector:[17:30]
+try:
+    import dspy
+    DSPY_AVAILABLE = True
+except ImportError:
+    DSPY_AVAILABLE = False
+
+from .config import LLMConfig
+
+logger = logging.getLogger(__name__)
+
+# Global config instance (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.hierarchical_analysis.genomic_chunk_analyzer:[31:38]
+==llm.rag_system.whole_genome_reader:[35:41]
+    ko_id: Optional[str]
+    ko_description: Optional[str]
+    pfam_domains: List[str]
+    is_hypothetical: bool
+
+
+@dataclass (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.query_processor:[263:271]
+==llm.task_repair_agent:[304:311]
+                    continue
+                if re.match(r'^\d+\)', stripped):  # Skip numbered sections
+                    continue
+                if stripped.startswith('---') or stripped.endswith('---'):  # Skip dashed headers
+                    continue
+
+                # Query has started (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==tests.debug.debug_query_limit:[23:33]
+==tests.debug.debug_structured_data_flow:[23:32]
+    console.print("=" * 60)
+
+    try:
+        # Initialize system
+        config = LLMConfig.from_env()
+        config.database.neo4j_password = "your_new_password"
+
+        rag = GenomicRAG(config)
+
+        # Test 1: Count total GGDEF domains without limit (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.rag_system.intelligent_task_splitter:[52:67]
+==llm.rag_system.memory.multipart_synthesizer:[53:63]
+        try:
+            self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
+        except Exception as e:
+            logger.warning(f"Failed to initialize tokenizer: {e}")
+            self.tokenizer = None
+
+    async def execute_with_intelligent_splitting(self,
+                                               task: Task,
+                                               task_executor,
+                                               raw_data: List[Dict[str, Any]] = None) -> ExecutionResult:
+        """
+        DEPRECATED: This method is disabled to prevent recursive naming issues.
+
+        Use IntelligentChunkingManager instead for clean biological chunking.
+        """ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==build_kg.sequence_db_builder:[147:152]
+==ingest.dbcan_cazyme:[358:363]
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(), (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.model_switcher:[66:72]
+==llm.rag_system.core:[171:177]
+                else:
+                    anthropic_model = current_model
+
+                model_string = f"anthropic/{anthropic_model}"
+                lm = dspy.LM(model=model_string, max_tokens=1000)
+                dspy.settings.configure(lm=lm) (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==llm.qa_chain:[9:21]
+==llm.rag_system.genome_selection:[20:29]
+try:
+    import dspy
+    DSPY_AVAILABLE = True
+except ImportError:
+    DSPY_AVAILABLE = False
+
+from .rag_system.dspy_signatures import GenomicQuery, TaxonomicClassification, FunctionalAnnotation
+from .retrieval import HybridRetriever
+
+logger = logging.getLogger(__name__)
+
+ (duplicate-code)
+src/code_interpreter/sequence_service.py:1:0: R0801: Similar lines in 2 files
+==cli:[295:303]
+==llm.cli:[46:54]
+    try:
+        # Load configuration
+        if config_file and config_file.exists():
+            config = LLMConfig.from_file(config_file)
+        else:
+            config = LLMConfig.from_env()
+
+        # Override Neo4j password if provided (duplicate-code)
+
+-----------------------------------
+Your code has been rated at 9.96/10
+
