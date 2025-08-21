@@ -438,6 +438,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         pass
                     # Execute template safely via processor
                     db_result = await self.neo4j_processor.execute_named_template(template, slots)
+                    # Derive scope (non-overridable) from slots when available
+                    scope = self._derive_scope_from_slots(slots)
                     # Convert to GenomicContext and synthesize
                     context = GenomicContext(
                         structured_data=db_result.results,
@@ -446,6 +448,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             'analysis_type': 'FUNCTIONAL_ANNOTATION',
                             'tool_used': 'database_query',
                             'template': template,
+                            'genome_scope': scope.__dict__ if scope else None,
                             'result_count': db_result.metadata.get('result_count', 0)
                         },
                         query_time=db_result.execution_time,
@@ -903,6 +906,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             pid = m.group(0) if m.group(0).startswith("protein:") else f"protein:{m.group(1)}"
             slots = {"id": pid}
             db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
             ctx = GenomicContext(
                 structured_data=db_result.results,
                 semantic_data=[],
@@ -919,6 +923,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             template = "proteins_with_ko"
             slots = {"ko": f"K{m.group(1)}"}
             db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
             ctx = GenomicContext(
                 structured_data=db_result.results,
                 semantic_data=[],
@@ -935,6 +940,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             template = "cazy_family"
             slots = {"family": f"{m.group(1).upper()}{m.group(2)}"}
             db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
             ctx = GenomicContext(
                 structured_data=db_result.results,
                 semantic_data=[],
@@ -951,6 +957,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             template = "pathway_membership"
             slots = {"pathway": f"map{m.group(1)}"}
             db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
             ctx = GenomicContext(
                 structured_data=db_result.results,
                 semantic_data=[],

@@ -334,3 +334,5 @@ GDS usage policy:
 - Final module boundaries/names for router/FSM (`agent/router/two_stage.py`, `agent/fsm/action_graph.py`)?
 - Scope seeding: where `GenomeScope` is set (front door vs Stage A)?
 - Minimum template set for initial pass; which queries first?
+
+- 2025-08-21 12:10:00Z — Threaded initial GenomeScope into WGR metadata; disabled free-form DB auto-query; added PFAM/pathway count templates + mapper hooks; added GDS wrapper scaffolding behind flag; documented flags in docs/AGENT_FLAGS.md.
