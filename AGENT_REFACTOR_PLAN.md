@@ -82,6 +82,7 @@ flowchart TD
     - [x] Safe compiler/registry created; parameterized execution through Neo4j.
     - [x] Stage B `database_query` wired to execute templates and synthesize.
     - [x] Agent path `database_query` now strict-template only in `UnifiedAgentExecutor`.
+    - [x] Traditional path strict mode added (env `AGENT_DB_TEMPLATES_ONLY=1`): maps question to templates (protein_by_id, proteins_with_ko, cazy_family, pathway_membership); bypasses free-form Cypher.
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.
@@ -299,6 +300,7 @@ GDS usage policy:
 - 2025-08-21 10:36:47Z — Added runtime ESM2 embedder wrapper (mirrors pipeline manifest) and wired by_sequence similarity with dimension assertion; surfaces clear error if dependencies are missing.
 - 2025-08-21 10:55:24Z — Implemented typed FSM and minimal enforcement in `UnifiedAgentExecutor`; enforced strict template-only DB queries in agent path.
 - 2025-08-21 10:59:40Z — Added FSM-governed runner behind `AGENT_FSM_STRICT=1` in `UnifiedAgentExecutor` to avoid oscillations without disrupting defaults.
+- 2025-08-21 11:03:53Z — Enabled FSM runner by default (set `AGENT_FSM_STRICT=0` to disable). Added strict traditional DB template mode (`AGENT_DB_TEMPLATES_ONLY=1` default) with heuristic mapping; blocks free-form LLM Cypher.
 
 ### BLOCKER: similarity_search by_sequence
 

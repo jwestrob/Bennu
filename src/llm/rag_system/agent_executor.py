@@ -200,7 +200,7 @@ class UnifiedAgentExecutor:
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
         # Optional strict FSM mode: prefer FSM-governed workflow to avoid oscillations
-        if os.getenv("AGENT_FSM_STRICT", "0") == "1":
+        if os.getenv("AGENT_FSM_STRICT", "1") != "0":
             return await self._execute_agent_workflow_fsm(question, selected_genome)
         # Store current user question for hierarchical analysis context
         self.current_user_question = question

@@ -524,6 +524,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         except Exception:
             pass
         
+        # Optional strict DB template mode: avoid free-form LLM Cypher by mapping question → template
+        import os as _os
+        if _os.getenv("AGENT_DB_TEMPLATES_ONLY", "1") == "1":
+            mapped = await self._execute_from_templates_only(question)
+            if mapped is not None:
+                return mapped
+
         # Step 1: Classify the query type using model allocation (o3 for biological reasoning)
         def classification_call(module):
             return module(question=question)
@@ -846,6 +853,79 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             return True
         
         return False
+
+    async def _execute_from_templates_only(self, question: str) -> Optional[Dict[str, Any]]:
+        """Map question heuristically to a named template (strict mode) and execute.
+
+        Returns a response dict if a template mapping is found, else None to continue legacy flow.
+        """
+        import re
+        # Protein by id: look for protein:ID pattern
+        m = re.search(r"\bprotein:([A-Za-z0-9:_\-\.]+)\b", question)
+        if m:
+            template = "protein_by_id"
+            pid = m.group(0) if m.group(0).startswith("protein:") else f"protein:{m.group(1)}"
+            slots = {"id": pid}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        # KO id: Kxxxxx
+        m = re.search(r"\bK(\d{5})\b", question)
+        if m:
+            template = "proteins_with_ko"
+            slots = {"ko": f"K{m.group(1)}"}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        # CAZy family: GH/PL/CE digits
+        m = re.search(r"\b(GH|PL|CE)(\d+)\b", question, re.IGNORECASE)
+        if m:
+            template = "cazy_family"
+            slots = {"family": f"{m.group(1).upper()}{m.group(2)}"}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        # Pathway map id: mapxxxxx
+        m = re.search(r"\bmap(\d{5})\b", question, re.IGNORECASE)
+        if m:
+            template = "pathway_membership"
+            slots = {"pathway": f"map{m.group(1)}"}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        return None
     
     async def _execute_literature_search(self, question: str) -> Optional[str]:
         """Execute literature search tool."""
