@@ -483,14 +483,37 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         analysis_type="functional_annotation",
                     )
                 else:
-                    # by_sequence not supported in runtime without embedder
-                    return {
-                        "question": question,
-                        "answer": "Similarity by raw sequence is not yet supported in runtime.",
-                        "confidence": "low",
-                        "citations": "",
-                        "error": "similarity_by_sequence_not_supported"
-                    }
+                    # by_sequence supported via runtime embedder (if deps available)
+                    sequence = params.get("sequence")
+                    try:
+                        sim = await self.lancedb_processor.execute_similarity(mode, k, sequence=sequence, filters=filters)
+                        context = GenomicContext(
+                            structured_data=sim.results,
+                            semantic_data=[],
+                            metadata={
+                                'analysis_type': 'SIMILARITY_SEARCH',
+                                'tool_used': 'similarity_search',
+                                'mode': mode,
+                                'k': k,
+                            },
+                            query_time=sim.execution_time,
+                            compressed_context=""
+                        )
+                        formatted_context = self._format_context(context)
+                        return await self._synthesize_answer(
+                            question,
+                            formatted_context,
+                            query_type=f"similarity:{mode}",
+                            analysis_type="functional_annotation",
+                        )
+                    except Exception as e:
+                        return {
+                            "question": question,
+                            "answer": f"Similarity by sequence unavailable: {e}",
+                            "confidence": "low",
+                            "citations": "",
+                            "error": "similarity_by_sequence_unavailable"
+                        }
         except Exception as e:
             logger.error(f"Stage A/B routing failed or not applicable: {e}")
 

@@ -292,6 +292,7 @@ GDS usage policy:
 - 2025-08-21 10:20:13Z — Quarantined legacy selectors by default (set `AGENT_ENABLE_LEGACY_SELECTORS=1` to re-enable). Gated TaskGraph exports off by default. Enabled JSONL tracing by default and instrumented pipeline start/plan.
 - 2025-08-21 10:24:21Z — Added Cypher template library (`src/llm/kg/cypher_templates`) and safe compiler/registry; wired Stage B `database_query` to execute named templates via Neo4j with parameters; short-circuits to synthesis.
 - 2025-08-21 10:27:56Z — Implemented Stage B `similarity_search` (by_id) with deterministic ordering and filters; by_sequence not supported at runtime.
+- 2025-08-21 10:36:47Z — Added runtime ESM2 embedder wrapper (mirrors pipeline manifest) and wired by_sequence similarity with dimension assertion; surfaces clear error if dependencies are missing.
 
 ### BLOCKER: similarity_search by_sequence
 

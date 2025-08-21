@@ -20,6 +20,7 @@ from .config import LLMConfig
 from .task_repair_agent import TaskRepairAgent
 from .repair_types import RepairResult
 from .kg.cypher_templates.registry import compile_query
+from .embedding.runtime_embedder import ESM2RuntimeEmbedder, RuntimeEmbedderConfig, find_embedding_manifest
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -564,6 +565,7 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
         self.db = None
         self.table = None
         self.embeddings_file = None
+        self._embedder: Optional[ESM2RuntimeEmbedder] = None
         self._connect()
     
     def _connect(self):
@@ -704,12 +706,38 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
     async def execute_similarity(self, mode: str, k: int, *, protein_id: Optional[str] = None, sequence: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> QueryResult:
         """Execute similarity search with deterministic ordering and optional filters."""
         import time
+        import json
+        from pathlib import Path
         start = time.time()
         if mode == "by_id":
             base = await self._find_similar_by_id(protein_id or "", limit=max(1, int(k)))
         elif mode == "by_sequence":
-            # BLOCKER: embedding generation for raw sequence is not wired in runtime pipeline
-            raise NotImplementedError("similarity_search by_sequence is not supported at runtime (no embedder)")
+            # Embed at runtime using pipeline manifest settings
+            if not sequence:
+                raise ValueError("Missing 'sequence' for similarity_search by_sequence")
+            if self._embedder is None:
+                manifest = find_embedding_manifest(self.config.database.lancedb_path)
+                if not manifest:
+                    raise RuntimeError("Embedding manifest not found near LanceDB path; cannot embed sequence")
+                cfg = ESM2RuntimeEmbedder.load_manifest(manifest)
+                self._embedder = ESM2RuntimeEmbedder(cfg)
+                # Dimension assertion vs manifest
+                manifest_dim = json.loads(Path(manifest).read_text()).get("embedding_dim")
+                if isinstance(manifest_dim, int) and manifest_dim != self._embedder.embedding_dim:
+                    raise RuntimeError(f"Embedder dim {self._embedder.embedding_dim} != manifest {manifest_dim}")
+            vec = self._embedder.embed_sequence(sequence)
+            # Search and convert as embedding path
+            results_df = self.table.search(vec).metric("cosine").limit(max(1, int(k))).to_pandas()
+            items = []
+            for _, row in results_df.iterrows():
+                items.append({
+                    "protein_id": row['protein_id'],
+                    "genome_id": row['genome_id'],
+                    "sequence_length": row['sequence_length'],
+                    "distance": row['_distance'],
+                    "similarity": float(1.0 - row['_distance']),
+                })
+            base = items
         else:
             raise ValueError(f"Unknown similarity mode: {mode}")
 
