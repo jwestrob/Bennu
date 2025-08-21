@@ -301,6 +301,7 @@ GDS usage policy:
 - 2025-08-21 10:55:24Z — Implemented typed FSM and minimal enforcement in `UnifiedAgentExecutor`; enforced strict template-only DB queries in agent path.
 - 2025-08-21 10:59:40Z — Added FSM-governed runner behind `AGENT_FSM_STRICT=1` in `UnifiedAgentExecutor` to avoid oscillations without disrupting defaults.
 - 2025-08-21 11:03:53Z — Enabled FSM runner by default (set `AGENT_FSM_STRICT=0` to disable). Added strict traditional DB template mode (`AGENT_DB_TEMPLATES_ONLY=1` default) with heuristic mapping; blocks free-form LLM Cypher.
+- 2025-08-21 11:09:41Z — Added tests for FSM transitions and template mapping helper; kept tests fast and dependency-light.
 
 ### BLOCKER: similarity_search by_sequence
 
