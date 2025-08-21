@@ -1,6 +1,21 @@
+import importlib.util
+import sys
+from pathlib import Path
 import pytest
 
-from src.llm.kg.cypher_templates.registry import compile_query
+
+def _load_module(rel_path: str, name: str):
+    path = Path(__file__).resolve().parents[2] / rel_path
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    return mod
+
+
+registry = _load_module("src/llm/kg/cypher_templates/registry.py", "registry")
+compile_query = registry.compile_query
 
 
 def test_compile_protein_by_id():
@@ -29,4 +44,3 @@ def test_unknown_slot_rejected():
 def test_missing_required_slot_rejected():
     with pytest.raises(ValueError):
         compile_query("protein_by_id", {})
-
