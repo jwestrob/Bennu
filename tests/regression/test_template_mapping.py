@@ -30,6 +30,18 @@ def test_map_ko():
     assert int(slots.get("limit", "0")) > 0
 
 
+
+def test_map_count_proteins():
+    tpl = mapper.map_question_to_template("count proteins")
+    assert tpl == ("count_by_label", {"label": "Protein"})
+
+
+
+def test_map_count_ko():
+    tpl = mapper.map_question_to_template("count K20469 proteins")
+    assert tpl == ("count_proteins_with_ko", {"ko": "K20469"})
+
+
 def test_map_cazy():
     tpl = mapper.map_question_to_template("find GH13 family members")
     assert tpl is not None
@@ -39,6 +51,12 @@ def test_map_cazy():
     assert int(slots.get("limit", "0")) > 0
 
 
+
+def test_map_count_ko():
+    tpl = mapper.map_question_to_template("count K20469 proteins")
+    assert tpl == ("count_proteins_with_ko", {"ko": "K20469"})
+
+
 def test_map_pathway():
     tpl = mapper.map_question_to_template("proteins in map00500")
     assert tpl is not None
@@ -46,6 +64,12 @@ def test_map_pathway():
     assert name == "pathway_membership"
     assert slots.get("pathway") == "map00500"
     assert int(slots.get("limit", "0")) > 0
+
+
+
+def test_map_count_ko():
+    tpl = mapper.map_question_to_template("count K20469 proteins")
+    assert tpl == ("count_proteins_with_ko", {"ko": "K20469"})
 
 
 def test_no_mapping():
@@ -61,6 +85,12 @@ def test_map_genome_id():
     assert int(slots.get("limit", "0")) > 0
 
 
+
+def test_map_count_ko():
+    tpl = mapper.map_question_to_template("count K20469 proteins")
+    assert tpl == ("count_proteins_with_ko", {"ko": "K20469"})
+
+
 def test_map_contig_id():
     tpl = mapper.map_question_to_template("genes on contig:contig_42")
     assert tpl is not None
@@ -68,3 +98,9 @@ def test_map_contig_id():
     assert name == "genes_on_contig"
     assert slots.get("contig") == "contig:contig_42"
     assert int(slots.get("limit", "0")) > 0
+
+
+
+def test_map_count_ko():
+    tpl = mapper.map_question_to_template("count K20469 proteins")
+    assert tpl == ("count_proteins_with_ko", {"ko": "K20469"})

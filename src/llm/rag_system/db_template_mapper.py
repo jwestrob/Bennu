@@ -18,6 +18,11 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
         pid = m.group(0)  # already includes 'protein:' prefix
         return "protein_by_id", {"id": pid}
 
+    # Count KO proteins: e.g., "count K20469 proteins"
+    m = re.search(r"\bcount\s+K(\d{5})\b", q)
+    if m:
+        return "count_proteins_with_ko", {"ko": f"K{m.group(1)}"}
+
     # KEGG KO: Kxxxxx
     m = re.search(r"\bK(\d{5})\b", q)
     if m:
@@ -28,6 +33,10 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
     if m:
         fam = f"{m.group(1).upper()}{m.group(2)}"
         return "cazy_family", {"family": fam, "limit": str(_default_limit())}
+
+    # Generic count proteins
+    if re.search(r"\bcount\s+proteins\b", q):
+        return "count_by_label", {"label": "Protein"}
 
     # KEGG pathway map: mapxxxxx
     m = re.search(r"\bmap(\d{5})\b", q, re.IGNORECASE)
