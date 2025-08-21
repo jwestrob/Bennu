@@ -106,5 +106,9 @@ def compile_query(name: str, slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]
     if spec.compiler:
         return spec.compiler(slots)
     text = _read(name)
+    # Optionally append LIMIT if provided and not already present
+    limit = slots.get("limit")
+    if isinstance(limit, int) and limit > 0 and "LIMIT" not in text.upper():
+        text = text.rstrip().rstrip(";") + "\nLIMIT $limit;\n"
     # Use parameterized execution via Neo4j; slots are params directly.
     return text, slots

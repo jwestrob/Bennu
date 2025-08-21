@@ -7,12 +7,14 @@ What’s covered:
 - Cypher template compilation and slot validation (no free-form Cypher)
 - Tracing JSONL emission
 - Schema validator strictness (reject unknown fields)
+ - Router regression scaffold: JSON set exercises Stage A detection and template mapping without LLM
 
 How to run (fast set):
 - Single test example:
   - `pytest -q tests/regression/test_router.py::test_stage_a_routes_spatial_to_wgr`
 - Run a file:
   - `pytest -q tests/regression/test_templates.py`
+  - `pytest -q tests/regression/test_router_regression.py`
 
 Notes:
 - No APOC/GDS calls are used in these tests.

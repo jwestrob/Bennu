@@ -33,5 +33,15 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
     if m:
         return "pathway_membership", {"pathway": f"map{m.group(1)}"}
 
-    return None
+    # Genome by ID: explicit genome:<id>
+    m = re.search(r"\bgenome:([A-Za-z0-9:_\-\.]+)\b", q)
+    if m:
+        gid = m.group(0)  # already includes 'genome:' prefix
+        return "proteins_by_genome", {"genome_id": gid}
 
+    # Genes on contig: explicit contig:<id>
+    m = re.search(r"\bcontig:([A-Za-z0-9:_\-\.]+)\b", q)
+    if m:
+        return "genes_on_contig", {"contig": m.group(0)}
+
+    return None

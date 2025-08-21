@@ -450,6 +450,34 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         query_type=f"template:{template}",
                         analysis_type="functional_annotation",
                     )
+            # Stage B: literature_search
+            if router_decision.tool == "literature_search":
+                try:
+                    self.tracer.emit("router.literature.start", {})
+                except Exception:
+                    pass
+                lit = await self._execute_literature_search(question)
+                return {
+                    "question": question,
+                    "answer": lit or "",
+                    "confidence": "medium" if lit else "low",
+                    "citations": "",
+                    "query_metadata": {"tool": "literature_search"}
+                }
+            # Stage B: code_interpreter (no context yet; pass empty context)
+            if router_decision.tool == "code_interpreter":
+                try:
+                    self.tracer.emit("router.code_interpreter.start", {})
+                except Exception:
+                    pass
+                ci = await self._execute_code_interpreter(question, GenomicContext([], [], {}, 0.0))
+                return {
+                    "question": question,
+                    "answer": ci or "",
+                    "confidence": "medium" if ci else "low",
+                    "citations": "",
+                    "query_metadata": {"tool": "code_interpreter"}
+                }
             # Stage B: similarity_search via LanceDB (by_id only)
             if router_decision.tool == "similarity_search":
                 params = router_decision.params or {}

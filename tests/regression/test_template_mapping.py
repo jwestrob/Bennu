@@ -39,3 +39,12 @@ def test_map_pathway():
 def test_no_mapping():
     assert mapper.map_question_to_template("how many genomes?") is None
 
+
+def test_map_genome_id():
+    tpl = mapper.map_question_to_template("list proteins from genome:PLM0_123")
+    assert tpl == ("proteins_by_genome", {"genome_id": "genome:PLM0_123"})
+
+
+def test_map_contig_id():
+    tpl = mapper.map_question_to_template("genes on contig:contig_42")
+    assert tpl == ("genes_on_contig", {"contig": "contig:contig_42"})
