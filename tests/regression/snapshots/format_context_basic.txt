@@ -1,0 +1,8 @@
+=== STRUCTURED RESULTS ===
+{'protein_id': 'protein:ABC123', 'genome_id': 'genome:G1', 'kegg': ['K20469']}
+{'protein_id': 'protein:XYZ789', 'genome_id': 'genome:G2', 'kegg': ['K00001']}
+
+=== ANALYSIS METADATA ===
+analysis_type: FUNCTIONAL_ANNOTATION
+tool_used: database_query
+template: protein_by_id

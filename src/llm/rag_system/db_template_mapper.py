@@ -3,6 +3,10 @@ from __future__ import annotations
 import re
 from typing import Optional, Tuple, Dict
 import os
+try:
+    from .policy_engine import get_policy_engine  # type: ignore
+except Exception:  # pragma: no cover
+    get_policy_engine = None  # type: ignore
 
 
 def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str]]]:
@@ -63,8 +67,19 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
 
 
 def _default_limit() -> int:
-    try:
-        val = int(os.getenv("AGENT_DEFAULT_DB_LIMIT", "100"))
-    except Exception:
-        val = 100
+    # Prefer policy engine if available
+    pe_limit = None
+    if get_policy_engine is not None:
+        try:
+            pe = get_policy_engine()
+            pe_limit = int(pe.get_max_results("database_query"))
+        except Exception:
+            pe_limit = None
+    if pe_limit is not None:
+        val = pe_limit
+    else:
+        try:
+            val = int(os.getenv("AGENT_DEFAULT_DB_LIMIT", "100"))
+        except Exception:
+            val = 100
     return max(1, min(val, 5000))
