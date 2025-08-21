@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Optional, Tuple, Dict
+import os
 
 
 def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str]]]:
@@ -20,28 +21,41 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
     # KEGG KO: Kxxxxx
     m = re.search(r"\bK(\d{5})\b", q)
     if m:
-        return "proteins_with_ko", {"ko": f"K{m.group(1)}"}
+        return "proteins_with_ko", {"ko": f"K{m.group(1)}", "limit": str(_default_limit())}
 
     # CAZy: GH/PL/CE digits
     m = re.search(r"\b(GH|PL|CE)(\d+)\b", q, re.IGNORECASE)
     if m:
         fam = f"{m.group(1).upper()}{m.group(2)}"
-        return "cazy_family", {"family": fam}
+        return "cazy_family", {"family": fam, "limit": str(_default_limit())}
 
     # KEGG pathway map: mapxxxxx
     m = re.search(r"\bmap(\d{5})\b", q, re.IGNORECASE)
     if m:
-        return "pathway_membership", {"pathway": f"map{m.group(1)}"}
+        return "pathway_membership", {"pathway": f"map{m.group(1)}", "limit": str(_default_limit())}
+
+    # PFAM accession PFxxxxx (5 digits)
+    m = re.search(r"\bpf\d{5}\b", q, re.IGNORECASE)
+    if m:
+        return "proteins_with_pfam", {"pfam": m.group(0).upper(), "limit": str(_default_limit())}
 
     # Genome by ID: explicit genome:<id>
     m = re.search(r"\bgenome:([A-Za-z0-9:_\-\.]+)\b", q)
     if m:
         gid = m.group(0)  # already includes 'genome:' prefix
-        return "proteins_by_genome", {"genome_id": gid}
+        return "proteins_by_genome", {"genome_id": gid, "limit": str(_default_limit())}
 
     # Genes on contig: explicit contig:<id>
     m = re.search(r"\bcontig:([A-Za-z0-9:_\-\.]+)\b", q)
     if m:
-        return "genes_on_contig", {"contig": m.group(0)}
+        return "genes_on_contig", {"contig": m.group(0), "limit": str(_default_limit())}
 
     return None
+
+
+def _default_limit() -> int:
+    try:
+        val = int(os.getenv("AGENT_DEFAULT_DB_LIMIT", "100"))
+    except Exception:
+        val = 100
+    return max(1, min(val, 5000))

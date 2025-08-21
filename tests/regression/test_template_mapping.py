@@ -23,17 +23,29 @@ def test_map_protein_by_id():
 
 def test_map_ko():
     tpl = mapper.map_question_to_template("list K20469 proteins")
-    assert tpl == ("proteins_with_ko", {"ko": "K20469"})
+    assert tpl is not None
+    name, slots = tpl
+    assert name == "proteins_with_ko"
+    assert slots.get("ko") == "K20469"
+    assert int(slots.get("limit", "0")) > 0
 
 
 def test_map_cazy():
     tpl = mapper.map_question_to_template("find GH13 family members")
-    assert tpl == ("cazy_family", {"family": "GH13"})
+    assert tpl is not None
+    name, slots = tpl
+    assert name == "cazy_family"
+    assert slots.get("family") == "GH13"
+    assert int(slots.get("limit", "0")) > 0
 
 
 def test_map_pathway():
     tpl = mapper.map_question_to_template("proteins in map00500")
-    assert tpl == ("pathway_membership", {"pathway": "map00500"})
+    assert tpl is not None
+    name, slots = tpl
+    assert name == "pathway_membership"
+    assert slots.get("pathway") == "map00500"
+    assert int(slots.get("limit", "0")) > 0
 
 
 def test_no_mapping():
@@ -42,9 +54,17 @@ def test_no_mapping():
 
 def test_map_genome_id():
     tpl = mapper.map_question_to_template("list proteins from genome:PLM0_123")
-    assert tpl == ("proteins_by_genome", {"genome_id": "genome:PLM0_123"})
+    assert tpl is not None
+    name, slots = tpl
+    assert name == "proteins_by_genome"
+    assert slots.get("genome_id") == "genome:PLM0_123"
+    assert int(slots.get("limit", "0")) > 0
 
 
 def test_map_contig_id():
     tpl = mapper.map_question_to_template("genes on contig:contig_42")
-    assert tpl == ("genes_on_contig", {"contig": "contig:contig_42"})
+    assert tpl is not None
+    name, slots = tpl
+    assert name == "genes_on_contig"
+    assert slots.get("contig") == "contig:contig_42"
+    assert int(slots.get("limit", "0")) > 0
