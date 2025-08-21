@@ -79,6 +79,8 @@ flowchart TD
 - [ ] T7: Observability and evaluation
   - Step: Wire Langfuse/LangSmith; add router regression set; snapshot tests; metrics export.
   - Acceptance: CI job `router_eval` passes; dashboards show traces for each state.
+  - Progress:
+    - [x] Internal lightweight tracing added; structured router events persisted to JSONL when enabled via `AGENT_TRACING`.
 
 - [ ] T8: ESM2/LanceDB hardening + batch kNN
   - Step: Dimension assertion; batch API with deterministic merges; filters honored.
@@ -279,6 +281,7 @@ GDS usage policy:
 - 2025-08-21 09:57:11Z — Added typed toolcall schemas and validators at `src/llm/rag_system/agent/tools/{schemas.py,validate.py}` (no cardinality).
 - 2025-08-21 10:08:53Z — Wired Stage A router into traditional path; validate whole_genome_reader toolcalls; removed redundant spatial branch in `core.py`.
 - 2025-08-21 10:12:42Z — Implemented Stage B LLM router with strict schema validation + single repair attempt; integrated into two-stage router; core logs non-spatial router decisions.
+- 2025-08-21 10:15:26Z — Added lightweight tracing (`src/llm/rag_system/tracing.py`) and instrumented Stage A/B router to emit structured events. Enable via `AGENT_TRACING=jsonl:logs/agent_traces.jsonl`.
 
 ## Open Questions
 
