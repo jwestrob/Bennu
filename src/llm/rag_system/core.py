@@ -49,6 +49,7 @@ from .query_validator import QueryValidator
 from .router import get_router
 from .agent.tools.validate import validate_toolcall
 from .tracing import get_tracer
+from .context.scope import GenomeScope
 
 logger = logging.getLogger(__name__)
 
@@ -396,10 +397,11 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 spatial_results = await reader.read_full_genomic_context(question)
 
                 if spatial_results and 'genomic_data' in spatial_results:
+                    scope = GenomeScope(genome_id="*", contig_ids=tuple(), coordinate_window=(0, 0))
                     context = GenomicContext(
                         structured_data=spatial_results['genomic_data'],
                         semantic_data=[],
-                        metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader'},
+                        metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader', 'genome_scope': scope.__dict__},
                         query_time=0.0,
                         compressed_context=""
                     )

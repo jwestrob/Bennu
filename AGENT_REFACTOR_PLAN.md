@@ -92,6 +92,7 @@ flowchart TD
   - Acceptance: All toolcalls carry a scope; unit tests enforce immutability.
   - Progress:
     - [x] `GenomeScope` dataclass added. Initial propagation hooks in core (foundation for threading scope through tools).
+    - [ ] Thread scope through all tool invocations and attach to metadata consistently (WGR already set; DB to follow via slots or metadata).
 
 - [ ] T7: Observability and evaluation
   - Step: Wire Langfuse/LangSmith; add router regression set; snapshot tests; metrics export.

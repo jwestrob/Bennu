@@ -111,7 +111,11 @@ def compile_query(name: str, slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]
     text = _read(name)
     # Optionally append LIMIT if provided and not already present
     limit = slots.get("limit")
-    if isinstance(limit, int) and limit > 0 and "LIMIT" not in text.upper():
+    try:
+        limit_int = int(limit) if limit is not None else None
+    except Exception:
+        limit_int = None
+    if isinstance(limit_int, int) and limit_int > 0 and "LIMIT" not in text.upper():
         text = text.rstrip().rstrip(";") + "\nLIMIT $limit;\n"
     # Use parameterized execution via Neo4j; slots are params directly.
     return text, slots
