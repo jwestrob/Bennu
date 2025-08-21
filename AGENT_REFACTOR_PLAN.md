@@ -74,6 +74,10 @@ flowchart TD
 - [ ] T5: Cypher template library
   - Step: Add `kg/cypher_templates/*.cypher` with named templates and slot specs; compiler fills params; validator runs post-compile.
   - Acceptance: 0 free-form Cypher from LLM; all queries derive from templates.
+  - Progress:
+    - [x] Templates added: `protein_by_id`, `proteins_with_ko`, `neighbors_by_window`, `pathway_membership`, `cazy_family`, `count_by_label` (label enum guarded).
+    - [x] Safe compiler/registry created; parameterized execution through Neo4j.
+    - [x] Stage B `database_query` wired to execute templates and synthesize.
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.
@@ -286,6 +290,7 @@ GDS usage policy:
 - 2025-08-21 10:12:42Z — Implemented Stage B LLM router with strict schema validation + single repair attempt; integrated into two-stage router; core logs non-spatial router decisions.
 - 2025-08-21 10:15:26Z — Added lightweight tracing (`src/llm/rag_system/tracing.py`) and instrumented Stage A/B router to emit structured events. Enable via `AGENT_TRACING=jsonl:logs/agent_traces.jsonl`.
 - 2025-08-21 10:20:13Z — Quarantined legacy selectors by default (set `AGENT_ENABLE_LEGACY_SELECTORS=1` to re-enable). Gated TaskGraph exports off by default. Enabled JSONL tracing by default and instrumented pipeline start/plan.
+- 2025-08-21 10:24:21Z — Added Cypher template library (`src/llm/kg/cypher_templates`) and safe compiler/registry; wired Stage B `database_query` to execute named templates via Neo4j with parameters; short-circuits to synthesis.
 
 ## Open Questions
 

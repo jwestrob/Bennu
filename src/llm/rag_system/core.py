@@ -418,6 +418,38 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         "citations": "",
                         "query_metadata": {"analysis_type": "SPATIAL_GENOMIC", "tool_used": "whole_genome_reader"}
                     }
+            # Stage B: database_query via templates
+            if router_decision.tool == "database_query":
+                params = router_decision.params or {}
+                template = params.get("template")
+                slots = params.get("slots", {})
+                if template:
+                    try:
+                        self.tracer.emit("router.db_template.start", {"template": template})
+                    except Exception:
+                        pass
+                    # Execute template safely via processor
+                    db_result = await self.neo4j_processor.execute_named_template(template, slots)
+                    # Convert to GenomicContext and synthesize
+                    context = GenomicContext(
+                        structured_data=db_result.results,
+                        semantic_data=[],
+                        metadata={
+                            'analysis_type': 'FUNCTIONAL_ANNOTATION',
+                            'tool_used': 'database_query',
+                            'template': template,
+                            'result_count': db_result.metadata.get('result_count', 0)
+                        },
+                        query_time=db_result.execution_time,
+                        compressed_context=""
+                    )
+                    formatted_context = self._format_context(context)
+                    return await self._synthesize_answer(
+                        question,
+                        formatted_context,
+                        query_type=f"template:{template}",
+                        analysis_type="functional_annotation",
+                    )
         except Exception as e:
             logger.error(f"Stage A/B routing failed or not applicable: {e}")
 

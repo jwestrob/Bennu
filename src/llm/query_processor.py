@@ -19,6 +19,7 @@ from rich.console import Console
 from .config import LLMConfig
 from .task_repair_agent import TaskRepairAgent
 from .repair_types import RepairResult
+from .kg.cypher_templates.registry import compile_query
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -200,6 +201,28 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             logger.error(f"❌ Query failed with error: {e}")
             logger.error(f"📝 Full failing query: {repr(cypher)}")
             raise
+
+    async def execute_named_template(self, name: str, slots: Dict[str, Any]) -> QueryResult:
+        """Compile a named query template and execute with parameters safely."""
+        import time
+        start_time = time.time()
+        cypher, params = compile_query(name, slots or {})
+        try:
+            with self.driver.session() as session:
+                result = session.run(cypher, params)
+                rows = [dict(record) for record in result]
+        except Exception as e:
+            logger.error(f"❌ Template '{name}' execution failed: {e}")
+            raise
+
+        execution_time = time.time() - start_time
+        return QueryResult(
+            source="neo4j",
+            query_type=f"template:{name}",
+            results=rows,
+            metadata={"template": name, "slots": slots, "cypher": cypher, "result_count": len(rows)},
+            execution_time=execution_time,
+        )
     
     def _extract_first_query(self, cypher: str) -> str:
         """Extract the first valid Cypher query from potentially multiple queries."""
