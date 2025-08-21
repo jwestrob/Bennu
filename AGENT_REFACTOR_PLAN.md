@@ -271,6 +271,8 @@ GDS usage policy:
 ## Changelog (auto-appended)
 
 - 2025-08-21 09:48:41Z — Run started.
+- 2025-08-21 09:49:52Z — Created branch `feat/agent-router-typed`.
+- 2025-08-21 09:49:52Z — Committed initial plan seed.
 
 ## Open Questions
 
@@ -278,4 +280,3 @@ GDS usage policy:
 - Final module boundaries/names for router/FSM (`agent/router/two_stage.py`, `agent/fsm/action_graph.py`)?
 - Scope seeding: where `GenomeScope` is set (front door vs Stage A)?
 - Minimum template set for initial pass; which queries first?
-
