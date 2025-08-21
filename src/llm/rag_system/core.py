@@ -473,7 +473,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     "answer": lit or "",
                     "confidence": "medium" if lit else "low",
                     "citations": "",
-                    "query_metadata": {"tool": "literature_search"}
+                    "query_metadata": {"tool": "literature_search", "genome_scope": None}
                 }
             # Stage B: code_interpreter (no context yet; pass empty context)
             if router_decision.tool == "code_interpreter":
@@ -487,7 +487,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     "answer": ci or "",
                     "confidence": "medium" if ci else "low",
                     "citations": "",
-                    "query_metadata": {"tool": "code_interpreter"}
+                    "query_metadata": {"tool": "code_interpreter", "genome_scope": None}
                 }
             # Stage B: similarity_search via LanceDB (by_id only)
             if router_decision.tool == "similarity_search":
@@ -510,6 +510,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             'tool_used': 'similarity_search',
                             'mode': mode,
                             'k': k,
+                            'genome_scope': None,
                         },
                         query_time=sim.execution_time,
                         compressed_context=""

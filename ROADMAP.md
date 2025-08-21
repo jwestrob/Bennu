@@ -259,3 +259,11 @@ Gatekeeping:
 - Comparative genomics: synteny, HGT, pan-genome analyses at the agent layer
 - Additional annotation databases: TIGRFAMs, COG/eggNOG, TCDB, MEROPS
 - Smarter cost routing and caching policies per query type
+
+## Strict Modes and Flags (Operational)
+
+- FSM (AGENT_FSM_STRICT=1): FSM-governed agent loop is the only execution path; legacy loop retained only behind a safety flag.
+- DB templates-only (AGENT_DB_TEMPLATES_ONLY=1): All DB queries must use named templates; free-form auto-query disabled.
+- Default DB limit: policy engine controls max results for database_query; `AGENT_DEFAULT_DB_LIMIT` is a fallback (clamped 1–5000).
+- GDS wrappers (AGENT_ENABLE_GDS=1): Curated GDS endpoints via backend wrappers only; no CALL is ever exposed to the LLM.
+- Tracing: JSONL default; MultiTracer can include Langfuse/LangSmith stubs when env set.
