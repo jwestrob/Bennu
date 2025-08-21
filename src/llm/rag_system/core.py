@@ -6,6 +6,7 @@ Restored from backup with modular organization.
 
 import logging
 from typing import List, Dict, Any, Optional
+import os
 import asyncio
 
 try:
@@ -28,7 +29,14 @@ from .dspy_signatures import NEO4J_SCHEMA
 from .utils import setup_debug_logging, GenomicContext
 from .log_formatter import setup_enhanced_logging
 from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
-from .task_management import TaskGraph, Task, TaskType, TaskStatus
+# Legacy TaskGraph types gated behind flag to enable quarantine without breakage
+if os.getenv("AGENT_ENABLE_LEGACY_TASKGRAPH", "1") == "1":
+    try:
+        from .task_management import TaskGraph, Task, TaskType, TaskStatus  # type: ignore
+    except Exception:  # pragma: no cover
+        TaskGraph = Task = TaskType = TaskStatus = None  # type: ignore
+else:
+    TaskGraph = Task = TaskType = TaskStatus = None  # type: ignore
 from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
 from .genome_selection import UnifiedGenomeSelector
