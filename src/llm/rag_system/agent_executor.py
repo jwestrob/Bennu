@@ -18,6 +18,7 @@ import time
 import ast
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
+import os
 
 try:
     import dspy
@@ -198,6 +199,9 @@ class UnifiedAgentExecutor:
         self._fsm = FSM()
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
+        # Optional strict FSM mode: prefer FSM-governed workflow to avoid oscillations
+        if os.getenv("AGENT_FSM_STRICT", "0") == "1":
+            return await self._execute_agent_workflow_fsm(question, selected_genome)
         # Store current user question for hierarchical analysis context
         self.current_user_question = question
         """
@@ -364,6 +368,132 @@ class UnifiedAgentExecutor:
             logger.error(f"❌ Agent execution failed: {str(e)}")
             total_time = time.time() - start_time
             
+            return AgentExecutionResult(
+                question=question,
+                success=False,
+                steps=steps,
+                final_answer=f"Agent execution failed: {str(e)}",
+                confidence="low",
+                citations="",
+                total_execution_time=total_time,
+                total_steps=len(steps),
+                tools_used=tools_used,
+                error=str(e)
+            )
+
+    async def _execute_agent_workflow_fsm(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
+        """FSM-governed agent workflow with typed transitions and strict cycle control."""
+        self.current_user_question = question
+        logger.info(f"🚀 Starting FSM agent workflow for: {question[:100]}...")
+        start_time = time.time()
+        steps: List[AgentStep] = []
+        current_findings = f"Analyzing question: {question}"
+        tools_used: List[str] = []
+        # Reset FSM state
+        self._fsm.state = State.PLAN
+        if self.note_keeper:
+            self.note_keeper.set_session_context(question, "unified_agent_fsm")
+        try:
+            for step_number in range(1, self.max_steps + 1):
+                logger.info(f"🔄 FSM Agent step {step_number}/{self.max_steps}")
+                # Decision must occur at DECIDE or PLAN
+                if self._fsm.state in (State.DB, State.SIM, State.GENOME):
+                    # Should not happen at start of loop; force ACCUM->DECIDE
+                    try:
+                        self._fsm.transition(State.ACCUM)
+                        self._fsm.transition(State.DECIDE)
+                    except Exception as fsm_err:
+                        logger.error(f"FSM correction before decision: {fsm_err}")
+
+                decision = await self._make_agent_decision(
+                    question=question,
+                    steps=steps,
+                    current_findings=current_findings
+                )
+
+                if decision.exploration_complete and decision.next_action == "synthesize":
+                    try:
+                        if self._fsm.state == State.ACCUM:
+                            self._fsm.transition(State.DECIDE)
+                        if self._fsm.state in (State.PLAN, State.DECIDE):
+                            self._fsm.transition(State.SYN)
+                    except Exception as fsm_err:
+                        logger.error(f"FSM synthesize transition warning: {fsm_err}")
+                    break
+
+                # DECIDE -> PLAN
+                try:
+                    if self._fsm.state == State.DECIDE:
+                        self._fsm.transition(State.PLAN)
+                except Exception as fsm_err:
+                    logger.error(f"FSM DECIDE->PLAN warning: {fsm_err}")
+
+                # PLAN -> tool state
+                try:
+                    if decision.next_action == "database_query" and self._fsm.state == State.PLAN:
+                        self._fsm.transition(State.DB)
+                    elif decision.next_action == "similarity_search" and self._fsm.state == State.PLAN:
+                        self._fsm.transition(State.SIM)
+                    elif decision.next_action == "whole_genome_reader" and self._fsm.state == State.PLAN:
+                        self._fsm.transition(State.GENOME)
+                except Exception as fsm_err:
+                    logger.error(f"FSM PLAN->tool warning: {fsm_err}")
+
+                # Execute step
+                step_result = await self._execute_agent_step(
+                    step_number=step_number,
+                    tool_name=decision.next_action,
+                    tool_parameters=decision.tool_parameters,
+                    reasoning=decision.biological_reasoning,
+                    selected_genome=selected_genome
+                )
+                steps.append(step_result)
+                self._update_previous_step_data(steps)
+                self._save_task_debug_data(step_result, step_number)
+                if self.note_keeper and step_result.success:
+                    self._save_agent_step_as_note(step_result, question)
+                if step_result.tool_name and step_result.tool_name not in tools_used:
+                    tools_used.append(step_result.tool_name)
+                elif step_result.tool_name is None and "database_query" not in tools_used:
+                    tools_used.append("database_query")
+                if step_result.success and step_result.result:
+                    result_summary = self._summarize_step_result(step_result)
+                    current_findings += f"\n\nStep {step_number} findings: {result_summary}"
+                else:
+                    current_findings += f"\n\nStep {step_number} failed: {step_result.error or 'Unknown error'}"
+                logger.info(f"✅ FSM Step {step_number} completed: {step_result.tool_name or 'database_query'}")
+
+                # Post-exec transitions
+                try:
+                    if self._fsm.state in (State.DB, State.SIM, State.GENOME):
+                        self._fsm.transition(State.ACCUM)
+                    if self._fsm.state == State.ACCUM:
+                        self._fsm.transition(State.DECIDE)
+                except Exception as fsm_err:
+                    logger.error(f"FSM post-exec warning: {fsm_err}")
+
+            # Final synthesis
+            logger.info("📊 Running final reporting synthesis with all notes (FSM mode)")
+            final_answer, confidence, citations = await self._run_reporting_synthesis(
+                question=question,
+                steps=steps,
+                current_findings=current_findings
+            )
+            total_time = time.time() - start_time
+            return AgentExecutionResult(
+                question=question,
+                success=True,
+                steps=steps,
+                final_answer=final_answer,
+                confidence=confidence,
+                citations=citations,
+                total_execution_time=total_time,
+                total_steps=len(steps),
+                tools_used=tools_used
+            )
+        except Exception as e:
+            logger.error(f"❌ FSM agent execution failed: {str(e)}")
+            total_time = time.time() - start_time
             return AgentExecutionResult(
                 question=question,
                 success=False,

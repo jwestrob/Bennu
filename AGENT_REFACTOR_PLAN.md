@@ -298,6 +298,7 @@ GDS usage policy:
 - 2025-08-21 10:27:56Z — Implemented Stage B `similarity_search` (by_id) with deterministic ordering and filters; by_sequence not supported at runtime.
 - 2025-08-21 10:36:47Z — Added runtime ESM2 embedder wrapper (mirrors pipeline manifest) and wired by_sequence similarity with dimension assertion; surfaces clear error if dependencies are missing.
 - 2025-08-21 10:55:24Z — Implemented typed FSM and minimal enforcement in `UnifiedAgentExecutor`; enforced strict template-only DB queries in agent path.
+- 2025-08-21 10:59:40Z — Added FSM-governed runner behind `AGENT_FSM_STRICT=1` in `UnifiedAgentExecutor` to avoid oscillations without disrupting defaults.
 
 ### BLOCKER: similarity_search by_sequence
 
