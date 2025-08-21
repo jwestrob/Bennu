@@ -31,6 +31,13 @@ class TwoStageRouter:
         q = (question or "").lower()
         spatial_markers = ("genome", "contig", "locus", "neighborhood", "operon", "coordinates")
         if any(tok in q for tok in spatial_markers):
-            return RouterDecision(tool="whole_genome_reader", params={})
+            # Deterministic defaults for Stage A spatial routing
+            return RouterDecision(
+                tool="whole_genome_reader",
+                params={
+                    "window_bp": 20000,
+                    "loci_limit": 2000,
+                },
+                reasoning="StageA: spatial markers detected; forcing whole_genome_reader with defaults",
+            )
         return RouterDecision(tool="database_query", params={})
-

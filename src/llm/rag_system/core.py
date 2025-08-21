@@ -46,6 +46,8 @@ from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
 from .query_validator import QueryValidator
 # Old genome_selector.py replaced by unified genome_selection.py
+from .router import get_router
+from .agent.tools.validate import validate_toolcall
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         # Initialize new intelligent components
         self.intelligent_router = IntelligentRouter()
+        self.router = get_router()
         self.genome_selector = UnifiedGenomeSelector(self.neo4j_processor)
         self.context_compressor = ContextCompressor()
         self.genome_context_extractor = GenomeContextExtractor()
@@ -364,6 +367,46 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
     async def _execute_traditional_query(self, question: str, routing_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute traditional single-step query with enhanced genome scoping and compression."""
         console.print("📋 [dim]Using traditional query path[/dim]")
+
+        # Stage A deterministic guardrail via unified router
+        try:
+            decision = self.router.route(question)
+            if decision.tool == "whole_genome_reader":
+                toolcall = {"tool": decision.tool, "params": decision.params}
+                ok, errs = validate_toolcall(toolcall)
+                if not ok:
+                    raise ValueError(f"StageA whole_genome_reader toolcall invalid: {'; '.join(errs)}")
+
+                console.print("🧬 [bold cyan]Stage A routed to whole_genome_reader[/bold cyan]")
+                from .external_tools import WholeGenomeReader
+                reader = WholeGenomeReader(self.neo4j_processor)
+                spatial_results = await reader.read_full_genomic_context(question)
+
+                if spatial_results and 'genomic_data' in spatial_results:
+                    context = GenomicContext(
+                        structured_data=spatial_results['genomic_data'],
+                        semantic_data=[],
+                        metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader'},
+                        query_time=0.0,
+                        compressed_context=""
+                    )
+                    formatted_context = self._format_spatial_context(context)
+                    return await self._synthesize_answer(
+                        question,
+                        formatted_context,
+                        query_type="SPATIAL_GENOMIC",
+                        analysis_type="spatial_genomic",
+                    )
+                else:
+                    return {
+                        "question": question,
+                        "answer": "No spatial genomic data retrieved.",
+                        "confidence": "low",
+                        "citations": "",
+                        "query_metadata": {"analysis_type": "SPATIAL_GENOMIC", "tool_used": "whole_genome_reader"}
+                    }
+        except Exception as e:
+            logger.error(f"Stage A routing failed or not applicable: {e}")
         
         # Step 1: Classify the query type using model allocation (o3 for biological reasoning)
         def classification_call(module):
@@ -379,35 +422,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         # Step 1.5: Determine analysis type for biological context
         analysis_type = self._determine_analysis_type(question)
         
-        # Step 1.6: Handle SPATIAL_GENOMIC analysis with tool selection
-        if analysis_type == "SPATIAL_GENOMIC":
-            console.print("🧬 [bold cyan]Spatial genomic analysis detected - using whole_genome_reader tool[/bold cyan]")
-            try:
-                from .external_tools import WholeGenomeReader
-                reader = WholeGenomeReader(self.neo4j_processor)
-                
-                # Execute the whole genome reading for spatial analysis
-                spatial_results = await reader.read_full_genomic_context(question)
-                
-                if spatial_results and 'genomic_data' in spatial_results:
-                    # Format the spatial results into a context object
-                    context = GenomicContext(
-                        structured_data=spatial_results['genomic_data'],
-                        semantic_data=[],
-                        metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader'},
-                        query_time=0.0,
-                        compressed_context=""
-                    )
-                    
-                    # Skip to synthesis step with spatial context
-                    formatted_context = self._format_spatial_context(context)
-                    return await self._synthesize_answer(question, formatted_context, classification.query_type, analysis_type)
-                else:
-                    console.print("⚠️ [yellow]Whole genome reader returned no results, falling back to standard query[/yellow]")
-                    
-            except Exception as e:
-                logger.error(f"Spatial genomic analysis failed: {e}")
-                console.print(f"⚠️ [yellow]Spatial analysis error, falling back to standard query: {e}[/yellow]")
+        # Step 1.6: Stage A handled spatial routing already; proceed with standard flow
         
         if classification is None:
             logger.warning("Model allocation failed for classification, falling back to default")
