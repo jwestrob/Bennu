@@ -11,6 +11,7 @@ except Exception:  # pragma: no cover - optional dependency
 from ..agent.tools.validate import validate_toolcall, make_repair_prompt
 from ..agent.tools.schemas import TOOLCALL_JSON_SCHEMA
 from ..memory.model_allocation import get_model_allocator
+from ..tracing import get_tracer
 from .signatures import ToolRoute, ToolRouteRepair  # type: ignore
 from .two_stage import RouterDecision
 
@@ -28,6 +29,7 @@ class LLMRouter:
         if not DSPY_AVAILABLE:
             logger.warning("LLMRouter initialized without DSPy; will raise if used.")
         self.model_allocator = get_model_allocator()
+        self._tracer = get_tracer()
 
     def _predict_route(self, question: str, context: Optional[str]) -> Dict[str, Any]:
         def predict_call(module):
@@ -51,7 +53,12 @@ class LLMRouter:
         except Exception:
             # Keep raw; validation will fail and trigger repair
             pass
-        return {"tool": tool, "params": params}
+        obj = {"tool": tool, "params": params}
+        try:
+            self._tracer.emit("router.stage_b.raw", {"route": obj})
+        except Exception:
+            pass
+        return obj
 
     def _repair(self, bad_obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         instruction = make_repair_prompt(bad_obj, ["schema validation failed"])  # brief; real errors included earlier
@@ -90,6 +97,10 @@ class LLMRouter:
         ok, errs = validate_toolcall(raw)
         if not ok:
             logger.error(f"Stage B route invalid: {'; '.join(errs)}. Attempting repair.")
+            try:
+                self._tracer.emit("router.stage_b.invalid", {"errors": errs, "bad": raw})
+            except Exception:
+                pass
             # Single repair attempt
             repaired = self._repair(raw)
             if not repaired:
@@ -98,6 +109,9 @@ class LLMRouter:
             if not ok2:
                 raise ValueError(f"Stage B repair still invalid: {'; '.join(errs2)}")
             raw = repaired
+        try:
+            self._tracer.emit("router.stage_b.decision", {"route": raw})
+        except Exception:
+            pass
 
         return RouterDecision(tool=raw["tool"], params=raw["params"], reasoning="StageB: schema-valid toolcall")
-
