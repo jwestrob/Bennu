@@ -210,3 +210,7 @@ notebooks/
 env/*
 !env/environment.yml
 .aider*
+
+# Bundles
+bundle/
+*.zip
