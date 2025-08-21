@@ -291,6 +291,15 @@ GDS usage policy:
 - 2025-08-21 10:15:26Z — Added lightweight tracing (`src/llm/rag_system/tracing.py`) and instrumented Stage A/B router to emit structured events. Enable via `AGENT_TRACING=jsonl:logs/agent_traces.jsonl`.
 - 2025-08-21 10:20:13Z — Quarantined legacy selectors by default (set `AGENT_ENABLE_LEGACY_SELECTORS=1` to re-enable). Gated TaskGraph exports off by default. Enabled JSONL tracing by default and instrumented pipeline start/plan.
 - 2025-08-21 10:24:21Z — Added Cypher template library (`src/llm/kg/cypher_templates`) and safe compiler/registry; wired Stage B `database_query` to execute named templates via Neo4j with parameters; short-circuits to synthesis.
+- 2025-08-21 10:27:56Z — Implemented Stage B `similarity_search` (by_id) with deterministic ordering and filters; by_sequence not supported at runtime.
+
+### BLOCKER: similarity_search by_sequence
+
+- When: 2025-08-21 10:27:56Z
+- Context: Stage B router can emit `similarity_search` with `mode=by_sequence` requiring runtime embedding.
+- Failure: No runtime ESM2 embedding function wired in pipeline to produce vectors from raw sequence.
+- Stack: core -> lancedb_processor.execute_similarity(mode='by_sequence') → NotImplementedError.
+- Proposed Fix: Add a backend embedder wrapper (HF ESM2) with fixed model + deterministic config; assert LanceDB dim matches; expose as curated tool behind policy. Wire `execute_similarity` to call embedder for `by_sequence`.
 
 ## Open Questions
 

@@ -662,16 +662,68 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
         # Convert cosine distance to cosine similarity
         # Cosine distance = 1 - cosine similarity, so similarity = 1 - distance
         # This gives proper values in range [-1, 1] where 1 = identical
-        return [
-            {
+        items = []
+        for _, row in results.iterrows():
+            items.append({
                 "protein_id": row['protein_id'],
                 "genome_id": row['genome_id'],
                 "sequence_length": row['sequence_length'],
                 "distance": row['_distance'],
-                "similarity": float(1.0 - row['_distance'])  # Cosine distance to cosine similarity
-            }
-            for _, row in results.iterrows()
-        ]
+                "similarity": float(1.0 - row['_distance']),
+            })
+        return self._deterministic_sort(items)
+
+    def _deterministic_sort(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Deterministic ordering: similarity desc, length asc, id asc."""
+        return sorted(items, key=lambda r: (-r.get("similarity", 0.0), r.get("sequence_length", 0), r.get("protein_id", "")))
+
+    def _apply_filters(self, items: List[Dict[str, Any]], filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not filters:
+            return items
+        out: List[Dict[str, Any]] = []
+        genome_filter = filters.get("genome_id")
+        if isinstance(genome_filter, str):
+            genome_allowed = {genome_filter}
+        elif isinstance(genome_filter, list):
+            genome_allowed = set([str(x) for x in genome_filter])
+        else:
+            genome_allowed = None
+        min_len = filters.get("min_length")
+        max_len = filters.get("max_length")
+        for r in items:
+            if genome_allowed is not None and r.get("genome_id") not in genome_allowed:
+                continue
+            ln = r.get("sequence_length")
+            if min_len is not None and isinstance(ln, (int, float)) and ln < min_len:
+                continue
+            if max_len is not None and isinstance(ln, (int, float)) and ln > max_len:
+                continue
+            out.append(r)
+        return out
+
+    async def execute_similarity(self, mode: str, k: int, *, protein_id: Optional[str] = None, sequence: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> QueryResult:
+        """Execute similarity search with deterministic ordering and optional filters."""
+        import time
+        start = time.time()
+        if mode == "by_id":
+            base = await self._find_similar_by_id(protein_id or "", limit=max(1, int(k)))
+        elif mode == "by_sequence":
+            # BLOCKER: embedding generation for raw sequence is not wired in runtime pipeline
+            raise NotImplementedError("similarity_search by_sequence is not supported at runtime (no embedder)")
+        else:
+            raise ValueError(f"Unknown similarity mode: {mode}")
+
+        filtered = self._apply_filters(base, filters)
+        ordered = self._deterministic_sort(filtered)
+        topk = ordered[: max(1, int(k))]
+        elapsed = time.time() - start
+        return QueryResult(
+            source="lancedb",
+            query_type=f"similarity:{mode}",
+            results=topk,
+            metadata={"k": k, "filters": filters or {}, "result_count": len(topk)},
+            execution_time=elapsed,
+        )
     
     async def _lookup_protein(self, protein_id: str) -> List[Dict[str, Any]]:
         """Look up a specific protein by ID."""

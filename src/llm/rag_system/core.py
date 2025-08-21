@@ -450,6 +450,47 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         query_type=f"template:{template}",
                         analysis_type="functional_annotation",
                     )
+            # Stage B: similarity_search via LanceDB (by_id only)
+            if router_decision.tool == "similarity_search":
+                params = router_decision.params or {}
+                mode = params.get("mode", "by_id")
+                k = int(params.get("k", 10))
+                filters = params.get("filters", {})
+                if mode == "by_id":
+                    protein_id = params.get("id")
+                    try:
+                        self.tracer.emit("router.similarity.start", {"mode": mode, "k": k})
+                    except Exception:
+                        pass
+                    sim = await self.lancedb_processor.execute_similarity(mode, k, protein_id=protein_id, filters=filters)
+                    context = GenomicContext(
+                        structured_data=sim.results,
+                        semantic_data=[],
+                        metadata={
+                            'analysis_type': 'SIMILARITY_SEARCH',
+                            'tool_used': 'similarity_search',
+                            'mode': mode,
+                            'k': k,
+                        },
+                        query_time=sim.execution_time,
+                        compressed_context=""
+                    )
+                    formatted_context = self._format_context(context)
+                    return await self._synthesize_answer(
+                        question,
+                        formatted_context,
+                        query_type=f"similarity:{mode}",
+                        analysis_type="functional_annotation",
+                    )
+                else:
+                    # by_sequence not supported in runtime without embedder
+                    return {
+                        "question": question,
+                        "answer": "Similarity by raw sequence is not yet supported in runtime.",
+                        "confidence": "low",
+                        "citations": "",
+                        "error": "similarity_by_sequence_not_supported"
+                    }
         except Exception as e:
             logger.error(f"Stage A/B routing failed or not applicable: {e}")
 
