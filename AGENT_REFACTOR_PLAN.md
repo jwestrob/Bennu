@@ -70,6 +70,9 @@ flowchart TD
 - [ ] T4: ActionGraph state machine
   - Step: Replace loop with typed FSM; encode legal transitions; enforce max_depth/timeout from policy.
   - Acceptance: No oscillation; traces show one of the enumerated paths only.
+  - Progress:
+    - [x] FSM added with states/transitions; minimal enforcement integrated in `UnifiedAgentExecutor`.
+    - [ ] Replace loop fully with FSM runner (planned follow-up).
 
 - [ ] T5: Cypher template library
   - Step: Add `kg/cypher_templates/*.cypher` with named templates and slot specs; compiler fills params; validator runs post-compile.
@@ -78,6 +81,7 @@ flowchart TD
     - [x] Templates added: `protein_by_id`, `proteins_with_ko`, `neighbors_by_window`, `pathway_membership`, `cazy_family`, `count_by_label` (label enum guarded).
     - [x] Safe compiler/registry created; parameterized execution through Neo4j.
     - [x] Stage B `database_query` wired to execute templates and synthesize.
+    - [x] Agent path `database_query` now strict-template only in `UnifiedAgentExecutor`.
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.
@@ -293,6 +297,7 @@ GDS usage policy:
 - 2025-08-21 10:24:21Z — Added Cypher template library (`src/llm/kg/cypher_templates`) and safe compiler/registry; wired Stage B `database_query` to execute named templates via Neo4j with parameters; short-circuits to synthesis.
 - 2025-08-21 10:27:56Z — Implemented Stage B `similarity_search` (by_id) with deterministic ordering and filters; by_sequence not supported at runtime.
 - 2025-08-21 10:36:47Z — Added runtime ESM2 embedder wrapper (mirrors pipeline manifest) and wired by_sequence similarity with dimension assertion; surfaces clear error if dependencies are missing.
+- 2025-08-21 10:55:24Z — Implemented typed FSM and minimal enforcement in `UnifiedAgentExecutor`; enforced strict template-only DB queries in agent path.
 
 ### BLOCKER: similarity_search by_sequence
 

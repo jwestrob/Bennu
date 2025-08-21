@@ -29,6 +29,7 @@ from .external_tools import AVAILABLE_TOOLS, TOOL_CAPABILITIES
 from .memory import NoteKeeper, get_model_allocator
 from .memory.tool_result_cache import ToolResultCache
 from .utils import safe_log_data
+from .fsm.action_graph import FSM, State
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,8 @@ class UnifiedAgentExecutor:
         # (no need to initialize here, will use model_allocator.create_context_managed_call)
         
         logger.info("🤖 UnifiedAgentExecutor initialized - dynamic tool chaining enabled")
+        # Initialize FSM for typed transitions
+        self._fsm = FSM()
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
         # Store current user question for hierarchical analysis context
@@ -234,11 +237,41 @@ class UnifiedAgentExecutor:
                 )
                 
                 if decision.exploration_complete and decision.next_action == "synthesize":
+                    # FSM DECIDE -> SYN (best-effort; initial step may still be PLAN)
+                    try:
+                        if self._fsm.state == State.ACCUM:
+                            self._fsm.transition(State.DECIDE)
+                        if self._fsm.state == State.DECIDE:
+                            self._fsm.transition(State.SYN)
+                    except Exception as fsm_err:
+                        logger.error(f"FSM synthesize transition warning: {fsm_err}")
                     logger.info("🎯 Agent decided to synthesize final answer")
                     break
                 
                 # Allow multiple consecutive tool calls - agent can use code_interpreter multiple times
                 
+                # Execute the chosen tool (FSM enforced transitions)
+                # If continuing after a step, ensure DECIDE -> PLAN
+                try:
+                    if self._fsm.state == State.DECIDE:
+                        self._fsm.transition(State.PLAN)
+                except Exception as fsm_err:
+                    logger.error(f"FSM DECIDE->PLAN warning: {fsm_err}")
+
+                # PLAN -> {DB|SIM|GENOME}
+                try:
+                    if decision.next_action == "database_query":
+                        if self._fsm.state == State.PLAN:
+                            self._fsm.transition(State.DB)
+                    elif decision.next_action == "similarity_search":
+                        if self._fsm.state == State.PLAN:
+                            self._fsm.transition(State.SIM)
+                    elif decision.next_action == "whole_genome_reader":
+                        if self._fsm.state == State.PLAN:
+                            self._fsm.transition(State.GENOME)
+                except Exception as fsm_err:
+                    logger.error(f"FSM PLAN->tool warning: {fsm_err}")
+
                 # Execute the chosen tool
                 step_result = await self._execute_agent_step(
                     step_number=step_number,
@@ -247,6 +280,15 @@ class UnifiedAgentExecutor:
                     reasoning=decision.biological_reasoning,
                     selected_genome=selected_genome
                 )
+
+                # Post-exec: {DB|SIM|GENOME} -> ACCUM -> DECIDE
+                try:
+                    if self._fsm.state in (State.DB, State.SIM, State.GENOME):
+                        self._fsm.transition(State.ACCUM)
+                    if self._fsm.state == State.ACCUM:
+                        self._fsm.transition(State.DECIDE)
+                except Exception as fsm_err:
+                    logger.error(f"FSM post-exec warning: {fsm_err}")
                 
                 steps.append(step_result)
                 
@@ -456,13 +498,15 @@ class UnifiedAgentExecutor:
         )
     
     async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
-        """Execute database query using existing processors."""
-        # Extract query intent from parameters
-        description = params.get("description", params.get("query", "General database search"))
-        
-        # Use existing query processing logic from core.py
-        # This will generate appropriate Cypher queries and execute them
-        return await self._execute_traditional_query_logic(description)
+        """Execute database query via STRICT template path only."""
+        template = params.get("template")
+        slots = params.get("slots", {})
+        if not template:
+            raise ValueError("database_query requires 'template' and 'slots' (strict mode)")
+        # Execute template safely through Neo4j processor
+        result = await self.rag_system.neo4j_processor.execute_named_template(template, slots)
+        # Return table rows as the step result
+        return result.results
     
     async def _execute_whole_genome_reader(self, params: Dict[str, Any]) -> Any:
         """Execute hierarchical genomic analysis instead of raw data dumping."""
