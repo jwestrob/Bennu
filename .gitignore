@@ -4,6 +4,31 @@ dbCAN*
 
 rag_context_debug.json
 
+# Large data and binary artifacts
+*.fna
+*.faa
+*.fa
+*.fasta
+*.fastq
+*.gz
+*.bz2
+*.xz
+# HMM pressed indices
+*.h3m
+*.h3i
+*.h3f
+*.h3p
+# RDF/TTL dumps
+*.ttl
+*.rdf
+# Embedding/index artifacts
+*.idx
+*.npy
+*.npz
+*.parquet
+# Workflow/cache dirs
+.nextflow/
+
 # Byte-compiled / optimized / DLL files
 *.py[cod]
 *$py.class
