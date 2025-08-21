@@ -60,6 +60,8 @@ flowchart TD
   - Steps:
     - [x] Implement Stage A guardrail (pure rules); Stage B LLM router (single place).
     - Log router_input/decision/params/results into tracing.
+  - Notes:
+    - Stage B implemented with strict schema validation and one repair attempt. Core currently logs non-spatial router decisions; full tracing to be added.
   - Acceptance: Regression set: ≥95% correct tool selection; deterministic across seeds.
 
 - [ ] T4: ActionGraph state machine
@@ -276,6 +278,7 @@ GDS usage policy:
 - 2025-08-21 09:57:11Z — Added unified router skeleton (`src/llm/rag_system/router`) and feature flags: `AGENT_ENABLE_LEGACY_TASKGRAPH`, `AGENT_DISABLE_LEGACY_SELECTORS` (default off) to prepare T1 quarantine.
 - 2025-08-21 09:57:11Z — Added typed toolcall schemas and validators at `src/llm/rag_system/agent/tools/{schemas.py,validate.py}` (no cardinality).
 - 2025-08-21 10:08:53Z — Wired Stage A router into traditional path; validate whole_genome_reader toolcalls; removed redundant spatial branch in `core.py`.
+- 2025-08-21 10:12:42Z — Implemented Stage B LLM router with strict schema validation + single repair attempt; integrated into two-stage router; core logs non-spatial router decisions.
 
 ## Open Questions
 
