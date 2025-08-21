@@ -9,6 +9,13 @@ from typing import Dict, Any, Optional, List
 import asyncio
 import json
 from .whole_genome_reader import read_complete_genome_spatial, read_all_genomes_spatial
+from .tool_schemas import (
+    ToolResultEnvelope,
+    LiteratureArticleModel,
+    CodeInterpreterResultModel,
+    GenomeSelectorResultModel,
+)
+from dataclasses import is_dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +36,7 @@ def get_genome_reading_stats():
         "api_call_reduction": f"{cache_hit_rate:.1f}% fewer API calls"
     }
 
-async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool = False, rag_system=None, **kwargs) -> str:
+async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool = False, rag_system=None, **kwargs) -> Dict[str, Any]:
     """
     Read genome(s) in spatial order for comprehensive operon and prophage analysis.
     
@@ -80,7 +87,14 @@ async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool 
         if cache_key in _genome_reading_cache:
             _cache_hits += 1
             logger.info(f"📚 Cache hit for genome reading (key: {cache_key[:8]}...) - saved genome read!")
-            return _genome_reading_cache[cache_key]
+            cached = _genome_reading_cache[cache_key]
+            if isinstance(cached, dict):
+                return cached
+            return ToolResultEnvelope(
+                tool_name="whole_genome_reader",
+                success=True,
+                display_text=str(cached),
+            ).dict()
         
         _cache_misses += 1
         logger.info(f"💾 Cache miss - reading genome data (key: {cache_key[:8]}...) - performing full read")
@@ -101,21 +115,47 @@ async def whole_genome_reader_tool(genome_id: str = None, global_analysis: bool 
             
             # Note: Hard-coded discovery logic removed - LLM will analyze raw spatial data
             
-            # Cache the successful result
-            _genome_reading_cache[cache_key] = result["tool_output"]
-            
-            return result["tool_output"]
+            # Wrap in envelope and cache
+            structured: List[Dict[str, Any]] = []
+            raw_ctx = result.get("raw_context")
+            if raw_ctx is not None:
+                try:
+                    if is_dataclass(raw_ctx):
+                        structured.append(asdict(raw_ctx))
+                    else:
+                        structured.append(raw_ctx.__dict__)
+                except Exception:
+                    pass
+
+            envelope = ToolResultEnvelope(
+                tool_name="whole_genome_reader",
+                success=True,
+                summary=result.get("summary"),
+                display_text=result.get("tool_output"),
+                structured_data=structured or None,
+            ).dict()
+
+            _genome_reading_cache[cache_key] = envelope
+            return envelope
         else:
             logger.error(f"❌ Failed to read genome(s): {result['error']}")
             error_msg = f"Genome reading failed: {result['error']}"
             # Don't cache errors
-            return error_msg
+            return ToolResultEnvelope(
+                tool_name="whole_genome_reader",
+                success=False,
+                message=error_msg,
+            ).dict()
             
     except Exception as e:
         logger.error(f"Whole genome reader tool failed: {e}")
-        return f"Genome reading tool error: {str(e)}"
+        return ToolResultEnvelope(
+            tool_name="whole_genome_reader",
+            success=False,
+            message=str(e),
+        ).dict()
 
-async def genome_selector_tool(query: str, rag_system, **kwargs) -> str:
+async def genome_selector_tool(query: str, rag_system, **kwargs) -> Dict[str, Any]:
     """
     Agent tool for intelligent genome selection when needed.
     
@@ -134,16 +174,37 @@ async def genome_selector_tool(query: str, rag_system, **kwargs) -> str:
         selection_result = await rag_system.genome_selector.select_genome(query)
         
         if selection_result.success:
-            return f"Selected genome: {selection_result.selected_genome} (confidence: {selection_result.match_score:.2f}, reason: {selection_result.match_reason})"
+            disp = f"Selected genome: {selection_result.selected_genome} (confidence: {selection_result.match_score:.2f}, reason: {selection_result.match_reason})"
+            env = ToolResultEnvelope(
+                tool_name="genome_selector",
+                success=True,
+                display_text=disp,
+                structured_data=[{
+                    "selected_genome": selection_result.selected_genome,
+                    "match_score": selection_result.match_score,
+                    "match_reason": selection_result.match_reason,
+                    "available_genomes": selection_result.available_genomes,
+                }],
+            ).dict()
+            return env
         else:
             available_info = f" Available genomes: {', '.join(selection_result.available_genomes[:5])}..." if selection_result.available_genomes else ""
-            return f"Genome selection failed: {selection_result.error_message}.{available_info}"
+            env = ToolResultEnvelope(
+                tool_name="genome_selector",
+                success=False,
+                message=f"Genome selection failed: {selection_result.error_message}.{available_info}",
+            ).dict()
+            return env
             
     except Exception as e:
         logger.error(f"Genome selector tool failed: {e}")
-        return f"Genome selection tool error: {str(e)}"
+        return ToolResultEnvelope(
+            tool_name="genome_selector",
+            success=False,
+            message=str(e),
+        ).dict()
 
-def literature_search(query: str, email: str, **kwargs) -> str:
+def literature_search(query: str, email: str, **kwargs) -> Dict[str, Any]:
     """
     Search PubMed for relevant literature using Biopython.
     
@@ -180,7 +241,12 @@ def literature_search(query: str, email: str, **kwargs) -> str:
         search_handle.close()
         
         if not search_results["IdList"]:
-            return f"No PubMed results found for query: {query}"
+            return ToolResultEnvelope(
+                tool_name="literature_search",
+                success=True,
+                display_text=f"No PubMed results found for query: {query}",
+                structured_data=[],
+            ).dict()
         
         # Fetch detailed information
         id_list = search_results["IdList"]
@@ -200,9 +266,10 @@ def literature_search(query: str, email: str, **kwargs) -> str:
             return f"Error parsing PubMed results: {e}"
         
         # Format results
-        formatted_results = []
+        formatted_results: List[str] = []
         formatted_results.append(f"PubMed Search Results for: {query}")
-        formatted_results.append(f"Found {len(id_list)} articles\\n")
+        formatted_results.append(f"Found {len(id_list)} articles\n")
+        articles: List[Dict[str, Any]] = []
         
         for i, article in enumerate(fetch_results['PubmedArticle'], 1):
             try:
@@ -262,18 +329,39 @@ def literature_search(query: str, email: str, **kwargs) -> str:
                 ]
                 
                 formatted_results.extend(article_entry)
+                articles.append(LiteratureArticleModel(
+                    pmid=str(pmid),
+                    title=str(title),
+                    authors=str(author_str) if author_str else None,
+                    journal=str(journal) if journal else None,
+                    year=str(year) if year else None,
+                    abstract=str(abstract) if abstract else None,
+                ).dict())
                 
             except Exception as e:
                 logger.warning(f"Error formatting article {i}: {e}")
                 formatted_results.append(f"[{i}] Error formatting article: {e}\\n")
         
-        return "\\n".join(formatted_results)
+        return ToolResultEnvelope(
+            tool_name="literature_search",
+            success=True,
+            display_text="\n".join(formatted_results),
+            structured_data=articles,
+        ).dict()
         
     except ImportError:
-        return "Literature search requires Biopython (pip install biopython)"
+        return ToolResultEnvelope(
+            tool_name="literature_search",
+            success=False,
+            message="Literature search requires Biopython (pip install biopython)",
+        ).dict()
     except Exception as e:
         logger.error(f"Literature search failed: {e}")
-        return f"Literature search failed: {e}"
+        return ToolResultEnvelope(
+            tool_name="literature_search",
+            success=False,
+            message=f"Literature search failed: {e}",
+        ).dict()
 
 async def code_interpreter_tool(code: str, session_id: str = None, timeout: int = 30, **kwargs) -> Dict[str, Any]:
     """
@@ -325,44 +413,54 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
                     if 'stdout' in result:
                         result['output'] = result['stdout']
                 
-                return result
+                env = ToolResultEnvelope(
+                    tool_name="code_interpreter",
+                    success=bool(result.get('success', False)),
+                    display_text=result.get('output') or result.get('stdout'),
+                    structured_data=[CodeInterpreterResultModel(**{
+                        'session_id': result.get('session_id'),
+                        'success': bool(result.get('success', False)),
+                        'stdout': result.get('stdout'),
+                        'stderr': result.get('stderr'),
+                        'output': result.get('output'),
+                        'error': result.get('error'),
+                        'execution_time': result.get('execution_time'),
+                    }).dict()],
+                ).dict()
+                return env
             else:
                 error_msg = f"Code interpreter service error: {response.status_code}"
                 logger.error(error_msg)
-                return {
-                    "success": False,
-                    "output": "",
-                    "error": error_msg,
-                    "execution_time": 0.0
-                }
+                return ToolResultEnvelope(
+                    tool_name="code_interpreter",
+                    success=False,
+                    message=error_msg,
+                ).dict()
                 
     except httpx.ConnectError:
         error_msg = "Code interpreter service not available - is the container running?"
         logger.error(error_msg)
-        return {
-            "success": False,
-            "output": "",
-            "error": error_msg,
-            "execution_time": 0.0
-        }
+        return ToolResultEnvelope(
+            tool_name="code_interpreter",
+            success=False,
+            message=error_msg,
+        ).dict()
     except httpx.TimeoutException:
         error_msg = f"Code execution timed out after {timeout} seconds"
         logger.error(error_msg)
-        return {
-            "success": False,
-            "output": "",
-            "error": error_msg,
-            "execution_time": timeout
-        }
+        return ToolResultEnvelope(
+            tool_name="code_interpreter",
+            success=False,
+            message=error_msg,
+        ).dict()
     except Exception as e:
         error_msg = f"Code interpreter error: {e}"
         logger.error(error_msg)
-        return {
-            "success": False,
-            "output": "",
-            "error": error_msg,
-            "execution_time": 0.0
-        }
+        return ToolResultEnvelope(
+            tool_name="code_interpreter",
+            success=False,
+            message=error_msg,
+        ).dict()
 
 def report_synthesis_tool(description: str, original_question: str = None, **kwargs) -> Dict[str, Any]:
     """
@@ -381,14 +479,17 @@ def report_synthesis_tool(description: str, original_question: str = None, **kwa
     """
     logger.info(f"🔍 Report synthesis task: {description}")
     
-    return {
-        "tool_name": "report_synthesis",
-        "task_type": "synthesis",
-        "description": description,
-        "original_question": original_question,
-        "status": "synthesis_required",
-        "message": "Task requires synthesis of session results rather than database query"
-    }
+    return ToolResultEnvelope(
+        tool_name="report_synthesis",
+        success=True,
+        message="Task requires synthesis of session results rather than database query",
+        summary={
+            "task_type": "synthesis",
+            "description": description,
+            "original_question": original_question,
+            "status": "synthesis_required",
+        },
+    ).dict()
 
 # Tool registry for agentic workflows
 AVAILABLE_TOOLS = {
@@ -569,6 +670,7 @@ def list_available_tools() -> Dict[str, str]:
 async def check_code_interpreter_health(base_url: str = 'http://localhost:8000') -> bool:
     """Check if code interpreter service is healthy."""
     try:
+        import httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{base_url}/health")
             return response.status_code == 200

@@ -135,7 +135,15 @@ class RDFToCSVConverter:
             stats["nodes"][node_type] = len(node_ids)
             console.print(f"  ✓ {filename}: {len(node_ids):,} nodes")
         
-        # Write relationship CSV files
+        # Optionally write adjacency relationships (NEXT) derived from gene nodes
+        try:
+            next_count = self._write_next_relationships()
+            if next_count is not None:
+                stats["relationships"]["NEXT"] = next_count
+        except Exception as e:
+            logger.warning(f"NEXT adjacency generation skipped: {e}")
+
+        # Write relationship CSV files from RDF triples
         console.print("Writing relationship CSV files...")
         rels_by_type = defaultdict(list)
         for from_id, rel_type, to_id in self.relationships:
@@ -154,6 +162,56 @@ class RDFToCSVConverter:
             console.print(f"  ✓ {filename}: {len(rels):,} relationships")
         
         return stats
+
+    def _write_next_relationships(self) -> int:
+        """Derive and write NEXT relationships from Gene nodes using contig/coordinates.
+
+        Output: next_relationships.csv with ':START_ID,:END_ID,contig,delta:long,same_strand:boolean'
+        """
+        # Collect gene records from internal node store
+        genes_by_contig = defaultdict(list)
+        for node_id, node_type in self.node_types.items():
+            if node_type != 'Gene':
+                continue
+            props = self.nodes.get(node_id, {})
+            contig = props.get('contig')
+            start = props.get('startCoordinate')
+            end = props.get('endCoordinate')
+            if contig is None or start is None or end is None:
+                continue
+            try:
+                start_i = int(start)
+                end_i = int(end)
+            except Exception:
+                continue
+            genes_by_contig[contig].append({
+                'id': node_id,
+                'start': start_i,
+                'end': end_i,
+                'strand': props.get('strand')
+            })
+
+        if not genes_by_contig:
+            return 0
+
+        out_path = self.output_dir / 'next_relationships.csv'
+        console.print(f"Writing NEXT adjacency to {out_path}")
+        total = 0
+        with open(out_path, 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow([':START_ID', ':END_ID', 'contig', 'delta:long', 'same_strand:boolean'])
+            for contig, genes in genes_by_contig.items():
+                genes.sort(key=lambda g: g['start'])
+                for i in range(len(genes) - 1):
+                    a = genes[i]
+                    b = genes[i + 1]
+                    delta = int(b['start']) - int(a['end'])
+                    sa = str(a.get('strand')) if a.get('strand') is not None else ''
+                    sb = str(b.get('strand')) if b.get('strand') is not None else ''
+                    same = sa != '' and sb != '' and sa == sb
+                    w.writerow([a['id'], b['id'], contig, delta, str(same).lower()])
+                    total += 1
+        return total
     
     def _uri_to_id(self, uri: str) -> str:
         """Convert URI to readable ID, preserving namespace for nodes to avoid conflicts."""

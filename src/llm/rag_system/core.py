@@ -719,8 +719,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             # Execute search
             result = literature_search(question, email, max_results=max_results)
-            logger.info(f"Literature search completed: {len(result)} characters")
-            return result
+            # Handle envelope format
+            if isinstance(result, dict):
+                display = result.get("display_text") or ""
+            else:
+                display = str(result)
+            logger.info(f"Literature search completed: {len(display)} characters")
+            return display
             
         except Exception as e:
             logger.error(f"Literature search failed: {e}")
@@ -739,13 +744,17 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             # Execute code
             result = await code_interpreter_tool(analysis_code)
-            
-            if result.get("success"):
-                logger.info("Code interpreter execution completed successfully")
-                return result.get("output", "")
-            else:
-                logger.warning(f"Code interpreter execution failed: {result.get('error', 'Unknown error')}")
-                return None
+            if isinstance(result, dict):
+                success = bool(result.get("success"))
+                display = result.get("display_text") or result.get("output") or ""
+                if success:
+                    logger.info("Code interpreter execution completed successfully")
+                    return display
+                else:
+                    logger.warning(f"Code interpreter execution failed: {result.get('message', result.get('error', 'Unknown error'))}")
+                    return None
+            # Fallback
+            return None
                 
         except Exception as e:
             logger.error(f"Code interpreter execution failed: {e}")

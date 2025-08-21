@@ -4,7 +4,8 @@
 
 ### Core System
 - **`src/llm/rag_system/core.py`** - Main GenomicRAG class, system orchestrator
-- **`src/llm/rag_system.py`** - Backward compatibility imports from modular structure
+- ⚠️ `src/llm/rag_system.py` is a compatibility shim. Prefer importing from the modular paths
+  (e.g., `llm.rag_system.core`, `llm.rag_system.context_processing`).
 
 ### Query Processing  
 - **`src/llm/query_processor.py`** - Neo4j, LanceDB, and Hybrid query processors

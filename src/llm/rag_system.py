@@ -3,6 +3,10 @@
 Genomic RAG System - Modular Architecture
 This file provides backward compatibility by importing from the new modular structure.
 
+DEPRECATION NOTICE:
+- This module is a compatibility shim. Prefer importing directly from the modular
+  implementation, e.g. `from llm.rag_system.core import GenomicRAG`.
+
 The actual implementation has been split into:
 - core.py: Main GenomicRAG class
 - context_processing.py: Context retrieval and formatting
@@ -10,6 +14,16 @@ The actual implementation has been split into:
 - code_enhancement.py: Code interpreter enhancement
 - utils.py: Shared utilities and constants
 """
+
+import warnings as _warnings
+
+# Emit a deprecation warning when this shim is imported
+_warnings.warn(
+    "llm.rag_system is a compatibility shim; import from llm.rag_system.core, "
+    "llm.rag_system.context_processing, etc.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 # Import from the new modular structure for backward compatibility
 from .rag_system.core import GenomicRAG

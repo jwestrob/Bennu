@@ -72,11 +72,12 @@ class Neo4jBulkLoader:
         start_time = time.time()
         
         with Progress(console=console) as progress:
-            task = progress.add_task("Bulk importing to Neo4j...", total=6)
+            task = progress.add_task("Bulk importing to Neo4j...", total=7)
             
             # Step 1: Validate CSV files
             progress.update(task, description="Validating CSV files...")
             csv_files = self._validate_csv_files()
+            has_next_rel_csv = any('next_relationships.csv' in f.name.lower() for f in csv_files)
             progress.advance(task)
             
             # Step 2: Stop Neo4j
@@ -103,6 +104,15 @@ class Neo4jBulkLoader:
             progress.update(task, description="Creating constraints/indexes...")
             self._create_constraints_and_indexes()
             progress.advance(task)
+
+            # Step 7: Precompute genomic neighbor edges
+            if has_next_rel_csv:
+                progress.update(task, description="Skipping neighbor precompute (NEXT CSV present)...")
+                progress.advance(task)
+            else:
+                progress.update(task, description="Precomputing genomic neighbor edges...")
+                self._precompute_neighbor_edges()
+                progress.advance(task)
         
         total_time = time.time() - start_time
         
@@ -236,35 +246,137 @@ class Neo4jBulkLoader:
         return {"import_output": result.stdout}
     
     def _create_constraints_and_indexes(self):
-        """Create constraints and indexes after import."""
-        # Import Neo4j driver for post-import setup
+        """Create constraints and indexes after import (integrated, idempotent)."""
         try:
             from neo4j import GraphDatabase
         except ImportError:
-            console.print("[yellow]Warning: neo4j driver not available, skipping constraints[/yellow]")
+            console.print("[yellow]Warning: neo4j driver not available, skipping constraints/indexes[/yellow]")
             return
-        
-        driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "your_new_password"))
-        
-        constraints = [
+
+        # Read connection from environment
+        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        user = os.getenv("NEO4J_USER", "neo4j")
+        password = os.getenv("NEO4J_PASSWORD", "password")
+
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+
+        statements = [
+            # Uniqueness constraints on core IDs
             "CREATE CONSTRAINT genome_id IF NOT EXISTS FOR (g:Genome) REQUIRE g.id IS UNIQUE",
-            "CREATE CONSTRAINT protein_id IF NOT EXISTS FOR (p:Protein) REQUIRE p.id IS UNIQUE", 
+            "CREATE CONSTRAINT genome_genomeId IF NOT EXISTS FOR (g:Genome) REQUIRE g.genomeId IS UNIQUE",
             "CREATE CONSTRAINT gene_id IF NOT EXISTS FOR (g:Gene) REQUIRE g.id IS UNIQUE",
+            "CREATE CONSTRAINT protein_id IF NOT EXISTS FOR (p:Protein) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT domain_id IF NOT EXISTS FOR (d:Domain) REQUIRE d.id IS UNIQUE",
             "CREATE CONSTRAINT domain_annotation_id IF NOT EXISTS FOR (da:DomainAnnotation) REQUIRE da.id IS UNIQUE",
-            "CREATE CONSTRAINT kegg_id IF NOT EXISTS FOR (k:KEGGOrtholog) REQUIRE k.id IS UNIQUE"
+            "CREATE CONSTRAINT kegg_id IF NOT EXISTS FOR (k:KEGGOrtholog) REQUIRE k.id IS UNIQUE",
+            "CREATE CONSTRAINT pathway_id IF NOT EXISTS FOR (pw:Pathway) REQUIRE pw.id IS UNIQUE",
+            "CREATE CONSTRAINT bgc_id IF NOT EXISTS FOR (b:Bgc) REQUIRE b.id IS UNIQUE",
+            # Composite index for spatial gene scans
+            "CREATE INDEX gene_contig_coords IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.startCoordinate, g.endCoordinate)",
+            # Helpful single-property indexes
+            "CREATE INDEX protein_name IF NOT EXISTS FOR (p:Protein) ON (p.name)",
+            "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",
+            "CREATE INDEX kegg_desc IF NOT EXISTS FOR (k:KEGGOrtholog) ON (k.description)",
+            # Full-text indexes (optional)
+            "CREATE FULLTEXT INDEX proteinText IF NOT EXISTS FOR (p:Protein) ON EACH [p.name, p.description]",
+            "CREATE FULLTEXT INDEX domainText IF NOT EXISTS FOR (d:Domain) ON EACH [d.id, d.name, d.description]",
+            "CREATE FULLTEXT INDEX keggText IF NOT EXISTS FOR (k:KEGGOrtholog) ON EACH [k.id, k.description]",
+            "CREATE FULLTEXT INDEX pathwayText IF NOT EXISTS FOR (pw:Pathway) ON EACH [pw.id, pw.name, pw.description]",
         ]
-        
+
         with driver.session() as session:
-            for constraint in constraints:
+            for stmt in statements:
                 try:
-                    session.run(constraint)
-                    console.print(f"✓ Created constraint")
+                    session.run(stmt)
                 except Exception as e:
+                    # Most errors are benign (exists) due to IF NOT EXISTS
                     if "already exists" not in str(e):
-                        console.print(f"⚠️  Constraint error: {e}")
-        
+                        console.print(f"[yellow]Index/constraint warning: {e}[/yellow]")
+
         driver.close()
+
+    def _precompute_neighbor_edges(self, batch_size: int = 2000):
+        """Precompute genomic NEXT edges efficiently by streaming per contig.
+
+        Performance-oriented approach:
+        - Only create :NEXT edges (use incoming :NEXT for previous traversal)
+        - Set properties: {contig, delta, same_strand}
+        - Stream genes per contig ordered by startCoordinate, compute pairs client-side
+        - UNWIND pairs in batches to MERGE relationships
+        """
+        try:
+            from neo4j import GraphDatabase
+        except ImportError:
+            console.print("[yellow]Warning: neo4j driver not available, skipping neighbor precompute[/yellow]")
+            return
+
+        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        user = os.getenv("NEO4J_USER", "neo4j")
+        password = os.getenv("NEO4J_PASSWORD", "password")
+
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+
+        # Queries
+        list_contigs = (
+            "MATCH (g:Gene) WHERE g.contig IS NOT NULL RETURN DISTINCT g.contig AS contig ORDER BY contig"
+        )
+        genes_for_contig = (
+            "MATCH (g:Gene {contig: $contig}) "
+            "WHERE g.startCoordinate IS NOT NULL AND g.endCoordinate IS NOT NULL "
+            "RETURN g.id AS id, g.startCoordinate AS start, g.endCoordinate AS end, g.strand AS strand "
+            "ORDER BY g.startCoordinate"
+        )
+        create_next_batch = (
+            "UNWIND $pairs AS row "
+            "MATCH (a:Gene {id: row.a}) MATCH (b:Gene {id: row.b}) "
+            "MERGE (a)-[r:NEXT]->(b) "
+            "SET r.contig = $contig, r.delta = row.delta, r.same_strand = row.same_strand"
+        )
+
+        total_pairs = 0
+        with driver.session() as session:
+            # Get contigs
+            contigs = [rec["contig"] for rec in session.run(list_contigs)]
+            console.print(f"Found {len(contigs)} contigs to link with NEXT edges")
+
+            for idx, contig in enumerate(contigs, 1):
+                # Fetch genes ordered by start
+                records = list(session.run(genes_for_contig, contig=contig))
+                n = len(records)
+                if n < 2:
+                    continue
+
+                # Build adjacency pairs for this contig
+                pairs = []
+                try:
+                    for i in range(n - 1):
+                        a = records[i]
+                        b = records[i + 1]
+                        a_end = int(a["end"]) if a["end"] is not None else 0
+                        b_start = int(b["start"]) if b["start"] is not None else a_end
+                        same_strand = str(a["strand"]) == str(b["strand"]) if a["strand"] is not None and b["strand"] is not None else False
+                        pairs.append({
+                            "a": a["id"],
+                            "b": b["id"],
+                            "delta": int(b_start) - int(a_end),
+                            "same_strand": bool(same_strand),
+                        })
+                except Exception as e:
+                    console.print(f"[yellow]Skipping contig {contig} due to data error: {e}[/yellow]")
+                    continue
+
+                total_pairs += len(pairs)
+
+                # Write in batches
+                for j in range(0, len(pairs), batch_size):
+                    chunk = pairs[j:j + batch_size]
+                    session.run(create_next_batch, pairs=chunk, contig=contig)
+
+                if idx % 50 == 0:
+                    console.print(f"  Linked {idx}/{len(contigs)} contigs so far...")
+
+        driver.close()
+        console.print(f"[green]✓ Created/merged ~{total_pairs:,} NEXT edges[/green]")
 
 
 def main():

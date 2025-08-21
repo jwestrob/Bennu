@@ -12,8 +12,8 @@ This roadmap focuses on improving the agent system and knowledge graph (KG) stac
 
 ## Immediate High-Impact Actions
 
-1) Neo4j constraints and indexes for fast queries (see Cypher section below)
-2) Precompute `:NEXT` edges for spatial scans within contigs
+1) Neo4j constraints and indexes for fast queries (integrated into loader) — DONE
+2) Precompute `:NEXT` edges via CSV and bulk import for spatial scans — DONE
 3) Tight JSON schemas for tool I/O + synthesis guardrails with citations
 4) Agent eval harness with small curated task set and metrics
 5) DSPy compile loop + GEPA search for key signatures (start with classifier and DB query generator)
@@ -21,22 +21,39 @@ This roadmap focuses on improving the agent system and knowledge graph (KG) stac
 
 ## Knowledge Graph Performance Plan
 
-1) Constraints and Indexes (Neo4j 5.x syntax)
+1) Constraints and Indexes (Neo4j 5.x syntax, integrated)
 - Uniqueness:
   - `CREATE CONSTRAINT genome_id IF NOT EXISTS FOR (g:Genome) REQUIRE g.id IS UNIQUE;`
+  - `CREATE CONSTRAINT genome_genomeId IF NOT EXISTS FOR (g:Genome) REQUIRE g.genomeId IS UNIQUE;`
   - `CREATE CONSTRAINT gene_id IF NOT EXISTS FOR (g:Gene) REQUIRE g.id IS UNIQUE;`
   - `CREATE CONSTRAINT protein_id IF NOT EXISTS FOR (p:Protein) REQUIRE p.id IS UNIQUE;`
+  - `CREATE CONSTRAINT pathway_id IF NOT EXISTS FOR (pw:Pathway) REQUIRE pw.id IS UNIQUE;`
+  - `CREATE CONSTRAINT bgc_id IF NOT EXISTS FOR (b:Bgc) REQUIRE b.id IS UNIQUE;`
 - Composite for spatial queries:
-  - `CREATE INDEX gene_contig_coords IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.start, g.end);`
+  - `CREATE INDEX gene_contig_coords IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.startCoordinate, g.endCoordinate);`
 - Full-text (optional, for name/desc lookups):
   - `CREATE FULLTEXT INDEX proteinText IF NOT EXISTS FOR (p:Protein) ON EACH [p.name, p.description];`
-  - `CREATE FULLTEXT INDEX pfamText IF NOT EXISTS FOR (d:PFAM) ON EACH [d.id, d.name];`
-  - `CREATE FULLTEXT INDEX keggText IF NOT EXISTS FOR (k:KEGG) ON EACH [k.id, k.name];`
+  - `CREATE FULLTEXT INDEX domainText IF NOT EXISTS FOR (d:Domain) ON EACH [d.id, d.name, d.description];`
+  - `CREATE FULLTEXT INDEX keggText IF NOT EXISTS FOR (k:KEGGOrtholog) ON EACH [k.id, k.description];`
+  - `CREATE FULLTEXT INDEX pathwayText IF NOT EXISTS FOR (pw:Pathway) ON EACH [pw.id, pw.name, pw.description];`
+ - Helpful single-property indexes (cheap, improves filters):
+  - `CREATE INDEX protein_name IF NOT EXISTS FOR (p:Protein) ON (p.name);`
+  - `CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name);`
+  - `CREATE INDEX kegg_desc IF NOT EXISTS FOR (k:KEGGOrtholog) ON (k.description);`
 
-2) Precomputed Spatial Edges
-- Within each contig, create `(:Gene)-[:NEXT {delta:int}]->(:Gene)` edges to enable O(steps) neighborhood/operon traversals without variable-length scans.
-- Batch job sketch:
-  - For each contig: sort genes by `start`; connect consecutive genes with `:NEXT` and `delta = next.start - this.end` (or 0 if overlapping).
+2) Precomputed Spatial Edges (performance-optimized)
+- Create only `(:Gene)-[:NEXT {contig,delta,same_strand}]->(:Gene)` per contig.
+- Use incoming `[:NEXT]` to traverse backwards (no separate `:PREV`).
+- Filter by `same_strand` property instead of separate `_SAME_STRAND` edges.
+- Delta semantics: `delta > 0` intergenic distance; `delta < 0` overlap length.
+
+Integration (two paths):
+- CSV path (primary):
+  - `src/build_kg/rdf_to_csv_converter.py` emits `next_relationships.csv` during Stage 07
+  - `src/build_kg/neo4j_bulk_loader.py` detects this file and skips any post-load precompute
+  - Optional non-destructive loader: `scripts/neo4j/load_next_from_csv.cypher` to load with `CALL { … } IN TRANSACTIONS`
+- Fallback (rare): Streaming per-contig postload in `Neo4jBulkLoader._precompute_neighbor_edges()`
+  - Not recommended for large graphs; retained for completeness
 
 3) Materialized Rollups
 - Precompute `(:Genome)-[:HAS_PATHWAY]->(:Pathway)` via KOs (and counts) to accelerate presence/absence queries.
@@ -160,12 +177,74 @@ Gatekeeping:
 
 ## Suggested Implementation Order
 
-1) Add Neo4j constraints/indexes; create Cypher script in `scripts/neo4j/`
+1) Add Neo4j constraints/indexes (integrated in `src/build_kg/neo4j_bulk_loader.py` Step 6)
 2) Add strict Pydantic schemas for tool I/O and citation-required synthesis
 3) Implement eval harness skeleton with 5 exemplar tasks and metrics
-4) Add precompute job for `:NEXT` edges and pathway rollups
+4) Add precompute job for `:NEXT`/`:PREV` edges (integrated in loader Step 7) and pathway rollups
 5) Add DSPy compile loop + GEPA layer for 2 key signatures (classifier, DB query generator)
 6) Tune LanceDB index and add two-stage retrieval
+
+## Pydantic Schema Coverage (Concrete Plan)
+
+- New file: `src/llm/rag_system/tool_schemas.py`
+  - `ToolResultEnvelope`: standard wrapper for all tool outputs
+    - Fields: `tool_name, success, version, tool_result_id, summary, message, display_text, structured_data, references, timings, token_usage`
+  - Genomic context models (replace or convert from dataclasses):
+    - `GeneContextModel`, `ContigContextModel`, `GenomeContextModel` (omit `hypothetical_count`)
+  - Tool-specific models:
+    - `LiteratureArticleModel`, `DatabaseQueryResultModel`, `CodeInterpreterResultModel`, `GenomeSelectorResultModel`
+  - Synthesis input guardrails:
+    - `Claim`, `SynthesisInput` (requires evidence IDs for each claim)
+
+- Integration points:
+  - `src/llm/rag_system/external_tools.py`
+    - Wrap all tool returns in `ToolResultEnvelope`; IMPLEMENTED for whole_genome_reader, genome_selector, literature_search, code_interpreter, report_synthesis.
+    - Provide `display_text` for backwards-compatible consumption; include `structured_data` with typed payloads where applicable.
+  - `src/llm/rag_system/task_executor.py`
+    - Validate envelopes on receipt (non-fatal logging on failure); persist returned `.dict()` in `completed_results`. IMPLEMENTED.
+    - For synthesis tasks, construct `SynthesisInput` and enforce non-empty `evidence_ids`.
+  - `src/llm/rag_system/whole_genome_reader.py`
+    - Convert dataclasses → Pydantic (or add converters) when producing `structured_data`.
+    - Remove `hypothetical_count` from structured outputs (keep textual mention in `display_text` if helpful).
+  - `src/llm/rag_system/memory/progressive_synthesizer.py`
+    - Enforce citation checks: fail synthesis if any claim lacks `tool_result_id` or known node IDs.
+  - `src/llm/rag_system/core.py`
+    - Updated helper paths to consume `display_text` from envelopes for literature/code tools so integrated context remains string-based. IMPLEMENTED.
+
+## Status Snapshot
+
+- CSV-based adjacency generation and bulk load integrated; tested on existing `genes.csv` (writes ~189k edges in ~2s; DB load in seconds).
+- Loader now idempotently creates all constraints/indexes and skips precompute when `next_relationships.csv` is present.
+- Tool outputs standardized via `ToolResultEnvelope` with typed `structured_data` where applicable.
+- Core and executor adapted to envelope flow while preserving existing context text.
+
+## Quick Test Commands
+
+- Build NEXT CSV from Stage 07 outputs:
+  - `python -m src.build_kg.csv_neighbors --csv-dir data/stage07_kg/csv`
+- Non-destructive load into Neo4j (Homebrew install):
+  - `cp data/stage07_kg/csv/next_relationships.csv /opt/homebrew/opt/neo4j/libexec/import/`
+  - `cypher-shell -u neo4j -p "$NEO4J_PASSWORD" -f scripts/neo4j/load_next_from_csv.cypher`
+- Verify:
+  - `cypher-shell -u neo4j -p "$NEO4J_PASSWORD" "MATCH ()-[:NEXT]->() RETURN count(*) AS edges"`
+
+## Near-Term Next Steps
+
+- Synthesis guardrails: enforce citations using `SynthesisInput` with `evidence_ids` per claim; add verifier pass.
+- Eval harness: scaffold `src/tests/agent_bench/` with 5 exemplar tasks and metrics; wire for DSPy + GEPA loop.
+- Hygiene: complete removal of `hypothetical_count` in structured outputs; rename `quick_switch_to_o3` → `quick_switch_to_gpt5`.
+- Vector search: tune HNSW/IVF and implement two-stage filtering for common classes.
+
+- Testing:
+  - Unit tests per tool to validate envelope shape and presence of `tool_result_id`.
+  - Verifier tests to enforce claim-citation contract before synthesis.
+
+## Pipeline Integration (No External Cypher Required)
+
+- Post-import steps integrated into `Neo4jBulkLoader.bulk_import()`:
+  - Step 6: Constraints + Indexes (`_create_constraints_and_indexes`) using env vars `NEO4J_URI/USER/PASSWORD`.
+  - Step 7: Neighbor edge precompute (`_precompute_neighbor_edges`).
+- Scripts under `scripts/neo4j/` are kept as references, but the pipeline now owns post-load tuning.
 
 ## Open TODOs (Repo Hygiene)
 
@@ -180,4 +259,3 @@ Gatekeeping:
 - Comparative genomics: synteny, HGT, pan-genome analyses at the agent layer
 - Additional annotation databases: TIGRFAMs, COG/eggNOG, TCDB, MEROPS
 - Smarter cost routing and caching policies per query type
-

@@ -461,17 +461,42 @@ class TaskExecutor:
         else:
             result = tool_function(**tool_args)
         
+        # Validate tool result envelope if present
+        try:
+            if isinstance(result, dict) and {"tool_name", "success"}.issubset(result.keys()):
+                from .tool_schemas import ToolResultEnvelope  # Local import to avoid cycles at module load
+                _ = ToolResultEnvelope.model_validate(result)
+        except Exception as e:
+            logger.warning(f"Tool result envelope validation failed: {e}")
+
         # SPECIAL HANDLING: If this is a report synthesis tool that returned "synthesis_required",
         # trigger the actual synthesis process instead of just returning the signal
-        if (task.tool_name == "report_synthesis" and 
-            isinstance(result, dict) and 
-            result.get("status") == "synthesis_required"):
+        if (
+            task.tool_name == "report_synthesis"
+            and isinstance(result, dict)
+            and (
+                result.get("status") == "synthesis_required"
+                or (
+                    isinstance(result.get("summary"), dict)
+                    and result["summary"].get("status") == "synthesis_required"
+                )
+            )
+        ):
             
             logger.info("🔍 Report synthesis tool triggered - executing actual synthesis")
             
             # Get the original question and task description
-            original_question = result.get("original_question", task.description)
-            description = result.get("description", task.description)
+            # Support both legacy dict and envelope with summary
+            original_question = (
+                result.get("original_question")
+                or (result.get("summary", {}) or {}).get("original_question")
+                or task.description
+            )
+            description = (
+                result.get("description")
+                or (result.get("summary", {}) or {}).get("description")
+                or task.description
+            )
             
             # Trigger synthesis using the progressive synthesizer
             try:

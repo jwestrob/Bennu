@@ -13,6 +13,10 @@ When processing large genomic datasets, the system can generate contexts that ex
 
 ## Architecture
 
+Note: The canonical implementation lives at `src/llm/rag_system/context_compression.py`.
+A legacy module `src/llm/context_compression.py` may exist for backward compatibility
+and will be removed in a future cleanup.
+
 ### Compression Levels
 
 - **LIGHT** (10-20% reduction): Preserves most details, minor formatting cleanup
