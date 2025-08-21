@@ -218,3 +218,4 @@ bundle/
 # Large embeddings/data
 GlobDB/
 GlobDB/plm_embeddings/
+# Large data and bundles
