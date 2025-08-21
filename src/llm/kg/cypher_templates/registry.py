@@ -83,6 +83,16 @@ SPECS: Dict[str, TemplateSpec] = {
         required={"ko": str},
         optional={},
     ),
+    "count_proteins_with_pfam": TemplateSpec(
+        filename="count_proteins_with_pfam.cypher",
+        required={"pfam": str},
+        optional={},
+    ),
+    "count_proteins_in_pathway": TemplateSpec(
+        filename="count_proteins_in_pathway.cypher",
+        required={"pathway": str},
+        optional={},
+    ),
 }
 
 

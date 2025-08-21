@@ -49,7 +49,7 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
 
     # PFAM accession PFxxxxx (5 digits)
     m = re.search(r"\bpf\d{5}\b", q, re.IGNORECASE)
-    if m:
+    if m and not re.search(r"\bcount\s+pf\d{5}\b", q, re.IGNORECASE):
         return "proteins_with_pfam", {"pfam": m.group(0).upper(), "limit": _default_limit()}
 
     # Genome by ID: explicit genome:<id>

@@ -86,13 +86,14 @@ flowchart TD
     - [x] Expanded templates: `proteins_by_genome`, `genes_on_contig`, `proteins_with_pfam`, `count_proteins_with_ko`.
     - [x] Disabled auto-query free-form path in Neo4jQueryProcessor; require templates.
     - [x] Default `limit` injected from policy engine when missing.
+    - [x] Added new count templates: `count_proteins_with_pfam`, `count_proteins_in_pathway`; mapper recognizes patterns (count PFxxxxx, count proteins in mapxxxxx).
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.
   - Acceptance: All toolcalls carry a scope; unit tests enforce immutability.
   - Progress:
     - [x] `GenomeScope` dataclass added. Initial propagation hooks in core (foundation for threading scope through tools).
-    - [ ] Thread scope through all tool invocations and attach to metadata consistently (WGR already set; DB to follow via slots or metadata).
+    - [ ] Thread scope through all tool invocations and attach to metadata consistently (WGR set; DB to follow via slots or metadata).
 
 - [ ] T7: Observability and evaluation
   - Step: Wire Langfuse/LangSmith; add router regression set; snapshot tests; metrics export.
@@ -100,12 +101,14 @@ flowchart TD
   - Progress:
     - [x] Internal lightweight tracing added; structured router events persisted to JSONL when enabled via `AGENT_TRACING`.
     - [x] MultiTracer scaffolding for Langfuse/LangSmith via env vars (no external deps), combined with JSONL tracing.
+    - [ ] Add high-level router decision event for literature/code paths.
 
 - [ ] T8: ESM2/LanceDB hardening + batch kNN
   - Step: Dimension assertion; batch API with deterministic merges; filters honored.
   - Acceptance: Unit tests for dim mismatch; batch returns stable ordering; perf within budget.
   - Progress:
     - [x] Optional manifest dimension logging; added deterministic `execute_similarity_batch`.
+    - [ ] Add dimension assert in CI harness (out of runtime path).
 
 ## Test Plan & Benchmarks
 
