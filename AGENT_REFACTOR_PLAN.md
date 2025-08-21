@@ -49,6 +49,9 @@ flowchart TD
 - [ ] T1: Quarantine & remove legacy planners/selectors
   - Step: Identify and delete/disable legacy task planner/executor and duplicate tool selectors; leave a feature flag for instant rollback.
   - Acceptance: Only one router module remains importable; CI passes.
+  - Progress:
+    - [x] Legacy selectors disabled by default via `AGENT_ENABLE_LEGACY_SELECTORS` (set to 1 to re-enable).
+    - [x] TaskGraph exports gated off by default via `AGENT_ENABLE_LEGACY_TASKGRAPH` (set to 1 to re-enable).
 
 - [ ] T2: Introduce typed toolcall schemas & validators
   - Steps:
@@ -282,6 +285,7 @@ GDS usage policy:
 - 2025-08-21 10:08:53Z — Wired Stage A router into traditional path; validate whole_genome_reader toolcalls; removed redundant spatial branch in `core.py`.
 - 2025-08-21 10:12:42Z — Implemented Stage B LLM router with strict schema validation + single repair attempt; integrated into two-stage router; core logs non-spatial router decisions.
 - 2025-08-21 10:15:26Z — Added lightweight tracing (`src/llm/rag_system/tracing.py`) and instrumented Stage A/B router to emit structured events. Enable via `AGENT_TRACING=jsonl:logs/agent_traces.jsonl`.
+- 2025-08-21 10:20:13Z — Quarantined legacy selectors by default (set `AGENT_ENABLE_LEGACY_SELECTORS=1` to re-enable). Gated TaskGraph exports off by default. Enabled JSONL tracing by default and instrumented pipeline start/plan.
 
 ## Open Questions
 
