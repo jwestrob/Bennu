@@ -7,7 +7,8 @@ What’s covered:
 - Cypher template compilation and slot validation (no free-form Cypher)
 - Tracing JSONL emission
 - Schema validator strictness (reject unknown fields)
- - Router regression scaffold: JSON set exercises Stage A detection and template mapping without LLM
+- Router regression scaffold: JSON set exercises Stage A detection and template mapping without LLM
+ - Snapshot scaffold for synthesis formatting (skips if package import constrained)
 
 How to run (fast set):
 - Single test example:
@@ -15,6 +16,7 @@ How to run (fast set):
 - Run a file:
   - `pytest -q tests/regression/test_templates.py`
   - `pytest -q tests/regression/test_router_regression.py`
+  - `pytest -q tests/regression/test_synthesis_snapshot.py`
 
 Notes:
 - No APOC/GDS calls are used in these tests.

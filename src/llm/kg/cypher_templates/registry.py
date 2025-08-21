@@ -97,6 +97,9 @@ def validate_slots(name: str, slots: Dict[str, Any]) -> None:
             raise ValueError(f"Slot '{key}' must be of type {typ.__name__}")
     for key in slots:
         if key not in spec.required and key not in spec.optional:
+            # Allow a universal optional 'limit' slot for deterministic caps
+            if key == "limit":
+                continue
             raise ValueError(f"Unknown slot '{key}' for template '{name}'")
 
 

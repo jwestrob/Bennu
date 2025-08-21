@@ -64,3 +64,10 @@ def test_compile_proteins_with_pfam():
 def test_compile_count_proteins_with_ko():
     cypher, params = compile_query("count_proteins_with_ko", {"ko": "K20469"})
     assert "$ko" in cypher and params == {"ko": "K20469"}
+
+
+
+def test_limit_injection_when_provided():
+    cypher, params = compile_query("proteins_with_ko", {"ko": "K20469", "limit": 50})
+    assert "LIMIT $limit" in cypher
+    assert params["limit"] == 50

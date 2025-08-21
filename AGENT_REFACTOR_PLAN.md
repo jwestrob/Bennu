@@ -307,6 +307,7 @@ GDS usage policy:
 - 2025-08-21 11:24:13Z — Expanded template library: proteins_by_genome, genes_on_contig, proteins_with_pfam, count_proteins_with_ko; added compile tests.
 - 2025-08-21 11:29:30Z — Added router regression scaffold (`tests/regression/router_regression_set.json` + test) using Stage A detection + template mapping; extended mapper for genome/contig.
 - 2025-08-21 11:35:27Z — Added default limit propagation (`AGENT_DEFAULT_DB_LIMIT`, default 100) to mapper; extended PFAM mapping; expanded router regression to 10 prompts.
+- 2025-08-21 11:53:17Z — Policy-aware limits for DB templates (reads policy engine before env); injected default limit in Stage B DB path; added LIMIT compile test; added snapshot scaffold for synthesis formatting.
 
 ### BLOCKER: similarity_search by_sequence
 

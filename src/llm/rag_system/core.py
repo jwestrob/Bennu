@@ -423,6 +423,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 params = router_decision.params or {}
                 template = params.get("template")
                 slots = params.get("slots", {})
+                # Inject default limit if not provided
+                if isinstance(slots, dict) and "limit" not in slots:
+                    try:
+                        slots["limit"] = int(self.policy_engine.get_max_results("database_query"))
+                    except Exception:
+                        slots["limit"] = 100
                 if template:
                     try:
                         self.tracer.emit("router.db_template.start", {"template": template})
