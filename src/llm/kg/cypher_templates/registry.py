@@ -31,6 +31,49 @@ def _compile_count_by_label(slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
     return cypher, {}
 
 
+def _compile_gene_neighbors_k(slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    gene_id = slots.get("gene_id")
+    if not isinstance(gene_id, str):
+        raise ValueError("gene_neighbors_k: 'gene_id' must be str")
+    try:
+        k = int(slots.get("k", 1))
+    except Exception:
+        k = 1
+    limit = slots.get("limit")
+    # Embed k directly into the pattern length; param for id/limit only
+    cypher = (
+        f"MATCH (g:Gene {{id:$gene_id}}) "
+        f"CALL {{ WITH g MATCH p=(g)-[:NEXT*..{k}]-(n:Gene) RETURN DISTINCT n }} "
+        "RETURN n ORDER BY n.start"
+    )
+    # Let compiler append LIMIT later if provided
+    params = {"gene_id": gene_id}
+    if limit is not None:
+        params["limit"] = limit
+    return cypher, params
+
+
+def _compile_protein_neighbors_k(slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    protein_id = slots.get("protein_id")
+    if not isinstance(protein_id, str):
+        raise ValueError("protein_neighbors_k: 'protein_id' must be str")
+    try:
+        k = int(slots.get("k", 1))
+    except Exception:
+        k = 1
+    limit = slots.get("limit")
+    cypher = (
+        "MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(g:Gene) "
+        f"CALL {{ WITH g MATCH pth=(g)-[:NEXT*..{k}]-(ng:Gene) RETURN DISTINCT ng }} "
+        "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng) "
+        "WITH DISTINCT np WHERE np IS NOT NULL RETURN np as protein"
+    )
+    params = {"protein_id": protein_id}
+    if limit is not None:
+        params["limit"] = limit
+    return cypher, params
+
+
 SPECS: Dict[str, TemplateSpec] = {
     "protein_by_id": TemplateSpec(
         filename="protein_by_id.cypher",
@@ -62,6 +105,18 @@ SPECS: Dict[str, TemplateSpec] = {
         required={"label": str},
         optional={},
         compiler=_compile_count_by_label,
+    ),
+    "gene_neighbors_k": TemplateSpec(
+        filename=None,
+        required={"gene_id": str},
+        optional={"k": int, "limit": int},
+        compiler=_compile_gene_neighbors_k,
+    ),
+    "protein_neighbors_k": TemplateSpec(
+        filename=None,
+        required={"protein_id": str},
+        optional={"k": int, "limit": int},
+        compiler=_compile_protein_neighbors_k,
     ),
     "proteins_by_genome": TemplateSpec(
         filename="proteins_by_genome.cypher",

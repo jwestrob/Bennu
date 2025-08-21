@@ -87,6 +87,7 @@ flowchart TD
     - [x] Disabled auto-query free-form path in Neo4jQueryProcessor; require templates.
     - [x] Default `limit` injected from policy engine when missing.
     - [x] Added new count templates: `count_proteins_with_pfam`, `count_proteins_in_pathway`; mapper recognizes patterns (count PFxxxxx, count proteins in mapxxxxx).
+    - [x] Added adjacency compilers: `gene_neighbors_k`, `protein_neighbors_k`; mapper recognizes neighbors of gene/protein with optional k.
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.

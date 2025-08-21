@@ -63,6 +63,19 @@ def map_question_to_template(question: str) -> Optional[Tuple[str, Dict[str, str
     if m:
         return "genes_on_contig", {"contig": m.group(0), "limit": _default_limit()}
 
+    # Adjacency: neighbors of gene:<id> (optional k)
+    m = re.search(r"neighbors\s+of\s+gene:([A-Za-z0-9:_\-\.]+)(?:\s+k\s*=\s*(\d+))?", q)
+    if m:
+        gene_id = f"gene:{m.group(1)}" if not m.group(1).startswith("gene:") else m.group(1)
+        k = int(m.group(2)) if m.group(2) else 1
+        return "gene_neighbors_k", {"gene_id": gene_id, "k": k, "limit": _default_limit()}
+
+    # Adjacency: neighbors of protein:<id> (optional k)
+    m = re.search(r"neighbors\s+of\s+protein:([A-Za-z0-9:_\-\.]+)(?:\s+k\s*=\s*(\d+))?", q)
+    if m:
+        protein_id = f"protein:{m.group(1)}" if not m.group(1).startswith("protein:") else m.group(1)
+        k = int(m.group(2)) if m.group(2) else 1
+        return "protein_neighbors_k", {"protein_id": protein_id, "k": k, "limit": _default_limit()}
     return None
 
 
