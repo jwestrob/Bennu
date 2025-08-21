@@ -27,7 +27,7 @@ flowchart TD
   B -- force --> T1[whole_genome_reader|database_query|similarity_search]
   B -- allow --> C[Stage B LLM Router (typed)]
   C -->|toolcall(schema-valid)| D[ActionGraph]
-  D --> DB[DB Query] --> ACC[Accumulate] --> DEC{Decide]
+  D --> DB[DB Query] --> ACC[Accumulate] --> DEC{Decide}
   D --> SIM[ESM2 kNN (LanceDB)]
   D --> WGR[Whole Genome Reader]
   DEC -->|more| A2[Plan]
