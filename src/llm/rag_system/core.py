@@ -370,9 +370,9 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
 
         # Stage A deterministic guardrail via unified router
         try:
-            decision = self.router.route(question)
-            if decision.tool == "whole_genome_reader":
-                toolcall = {"tool": decision.tool, "params": decision.params}
+            router_decision = self.router.route(question)
+            if router_decision.tool == "whole_genome_reader":
+                toolcall = {"tool": router_decision.tool, "params": router_decision.params}
                 ok, errs = validate_toolcall(toolcall)
                 if not ok:
                     raise ValueError(f"StageA whole_genome_reader toolcall invalid: {'; '.join(errs)}")
@@ -406,7 +406,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         "query_metadata": {"analysis_type": "SPATIAL_GENOMIC", "tool_used": "whole_genome_reader"}
                     }
         except Exception as e:
-            logger.error(f"Stage A routing failed or not applicable: {e}")
+            logger.error(f"Stage A/B routing failed or not applicable: {e}")
+
+        # If router suggested something else, log suggestion for tracing
+        try:
+            if 'router_decision' in locals() and router_decision and router_decision.tool != "whole_genome_reader":
+                console.print(f"🧭 [dim]Router suggests: {router_decision.tool}[/dim]")
+        except Exception:
+            pass
         
         # Step 1: Classify the query type using model allocation (o3 for biological reasoning)
         def classification_call(module):
