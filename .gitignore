@@ -214,3 +214,7 @@ env/*
 # Bundles
 bundle/
 *.zip
+
+# Large embeddings/data
+GlobDB/
+GlobDB/plm_embeddings/
