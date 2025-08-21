@@ -84,20 +84,27 @@ flowchart TD
     - [x] Agent path `database_query` now strict-template only in `UnifiedAgentExecutor`.
     - [x] Traditional path strict mode added (env `AGENT_DB_TEMPLATES_ONLY=1`): maps question to templates (protein_by_id, proteins_with_ko, cazy_family, pathway_membership); bypasses free-form Cypher.
     - [x] Expanded templates: `proteins_by_genome`, `genes_on_contig`, `proteins_with_pfam`, `count_proteins_with_ko`.
+    - [x] Disabled auto-query free-form path in Neo4jQueryProcessor; require templates.
+    - [x] Default `limit` injected from policy engine when missing.
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.
   - Acceptance: All toolcalls carry a scope; unit tests enforce immutability.
+  - Progress:
+    - [x] `GenomeScope` dataclass added. Initial propagation hooks in core (foundation for threading scope through tools).
 
 - [ ] T7: Observability and evaluation
   - Step: Wire Langfuse/LangSmith; add router regression set; snapshot tests; metrics export.
   - Acceptance: CI job `router_eval` passes; dashboards show traces for each state.
   - Progress:
     - [x] Internal lightweight tracing added; structured router events persisted to JSONL when enabled via `AGENT_TRACING`.
+    - [x] MultiTracer scaffolding for Langfuse/LangSmith via env vars (no external deps), combined with JSONL tracing.
 
 - [ ] T8: ESM2/LanceDB hardening + batch kNN
   - Step: Dimension assertion; batch API with deterministic merges; filters honored.
   - Acceptance: Unit tests for dim mismatch; batch returns stable ordering; perf within budget.
+  - Progress:
+    - [x] Optional manifest dimension logging; added deterministic `execute_similarity_batch`.
 
 ## Test Plan & Benchmarks
 

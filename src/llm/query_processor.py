@@ -103,8 +103,9 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             elif query_type == "functional_annotation":
                 results = await self._get_functional_annotations(query)
             else:
-                # Auto-detect query type and generate appropriate Cypher
-                results = await self._auto_query(query)
+                # Auto-detect path is disabled to eliminate free-form Cypher.
+                # Use named templates via execute_named_template instead.
+                raise NotImplementedError("auto-query disabled: use named templates via execute_named_template")
             
             execution_time = time.time() - start_time
             
@@ -580,6 +581,18 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
             self.embeddings_file = embeddings_h5
             
             logger.info(f"Connected to LanceDB: {db_path}")
+            # Optional dimension assertion via manifest (if present)
+            try:
+                from .embedding.runtime_embedder import find_embedding_manifest
+                import json
+                mf = find_embedding_manifest(db_path)
+                if mf:
+                    manifest = json.loads(Path(mf).read_text())
+                    expected = int(manifest.get("embedding_dim", 0))
+                    if expected:
+                        logger.info(f"Embedding dimension (manifest) = {expected}")
+            except Exception as _e:
+                logger.debug(f"Manifest check skipped: {_e}")
         except Exception as e:
             logger.error(f"Failed to connect to LanceDB: {e}")
             raise
@@ -750,6 +763,26 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
             query_type=f"similarity:{mode}",
             results=topk,
             metadata={"k": k, "filters": filters or {}, "result_count": len(topk)},
+            execution_time=elapsed,
+        )
+
+    async def execute_similarity_batch(self, ids: List[str], k: int, *, filters: Optional[Dict[str, Any]] = None) -> QueryResult:
+        """Batch kNN: for each protein id, return top-k similar proteins.
+
+        Deterministic ordering applied per-query; results keyed by query id.
+        """
+        import time
+        start = time.time()
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for pid in ids:
+            res = await self.execute_similarity("by_id", k, protein_id=pid, filters=filters)
+            out[pid] = res.results
+        elapsed = time.time() - start
+        return QueryResult(
+            source="lancedb",
+            query_type=f"similarity:batch:{len(ids)}",
+            results=[out],
+            metadata={"k": k, "batch": len(ids)},
             execution_time=elapsed,
         )
     

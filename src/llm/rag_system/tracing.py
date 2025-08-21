@@ -36,6 +36,19 @@ class JsonlTracer(Tracer):
 _TRACER: Optional[Tracer] = None
 
 
+class _MultiTracer(Tracer):
+    def __init__(self, tracers):
+        self._tracers = tracers
+
+    def emit(self, event: str, data: Dict[str, Any]) -> None:
+        for t in self._tracers:
+            try:
+                t.emit(event, data)
+            except Exception:
+                pass
+
+
+
 def get_tracer() -> Tracer:
     global _TRACER
     if _TRACER is not None:
@@ -43,9 +56,14 @@ def get_tracer() -> Tracer:
 
     spec = os.getenv("AGENT_TRACING", "").strip()
     if not spec:
-        # Default to JSONL tracing in logs directory so tracing always runs
-        # during normal execution without requiring environment variables.
-        _TRACER = JsonlTracer()
+        # Default to JSONL tracing; optionally add Langfuse/LangSmith adapters when env configured.
+        base = JsonlTracer()
+        tracers = [base]
+        if os.getenv("LANGFUSE_API_KEY"):
+            tracers.append(NoopTracer())
+        if os.getenv("LANGSMITH_API_KEY"):
+            tracers.append(NoopTracer())
+        _TRACER = _MultiTracer(tracers) if len(tracers) > 1 else base
         return _TRACER
 
     kind, _, arg = spec.partition(":")
