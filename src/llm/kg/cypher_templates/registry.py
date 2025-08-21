@@ -63,6 +63,26 @@ SPECS: Dict[str, TemplateSpec] = {
         optional={},
         compiler=_compile_count_by_label,
     ),
+    "proteins_by_genome": TemplateSpec(
+        filename="proteins_by_genome.cypher",
+        required={"genome_id": str},
+        optional={},
+    ),
+    "genes_on_contig": TemplateSpec(
+        filename="genes_on_contig.cypher",
+        required={"contig": str},
+        optional={},
+    ),
+    "proteins_with_pfam": TemplateSpec(
+        filename="proteins_with_pfam.cypher",
+        required={"pfam": str},
+        optional={},
+    ),
+    "count_proteins_with_ko": TemplateSpec(
+        filename="count_proteins_with_ko.cypher",
+        required={"ko": str},
+        optional={},
+    ),
 }
 
 
@@ -88,4 +108,3 @@ def compile_query(name: str, slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]
     text = _read(name)
     # Use parameterized execution via Neo4j; slots are params directly.
     return text, slots
-

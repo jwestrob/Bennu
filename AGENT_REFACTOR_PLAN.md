@@ -83,6 +83,7 @@ flowchart TD
     - [x] Stage B `database_query` wired to execute templates and synthesize.
     - [x] Agent path `database_query` now strict-template only in `UnifiedAgentExecutor`.
     - [x] Traditional path strict mode added (env `AGENT_DB_TEMPLATES_ONLY=1`): maps question to templates (protein_by_id, proteins_with_ko, cazy_family, pathway_membership); bypasses free-form Cypher.
+    - [x] Expanded templates: `proteins_by_genome`, `genes_on_contig`, `proteins_with_pfam`, `count_proteins_with_ko`.
 
 - [ ] T6: GenomeScope propagation
   - Step: Define immutable `GenomeScope` object; thread through processors; forbid overrides.
@@ -302,6 +303,8 @@ GDS usage policy:
 - 2025-08-21 10:59:40Z — Added FSM-governed runner behind `AGENT_FSM_STRICT=1` in `UnifiedAgentExecutor` to avoid oscillations without disrupting defaults.
 - 2025-08-21 11:03:53Z — Enabled FSM runner by default (set `AGENT_FSM_STRICT=0` to disable). Added strict traditional DB template mode (`AGENT_DB_TEMPLATES_ONLY=1` default) with heuristic mapping; blocks free-form LLM Cypher.
 - 2025-08-21 11:09:41Z — Added tests for FSM transitions and template mapping helper; kept tests fast and dependency-light.
+- 2025-08-21 11:18:47Z — Added strict traditional-path test with mocks; verifies template execution + synthesis; skips gracefully if package import is constrained.
+- 2025-08-21 11:24:13Z — Expanded template library: proteins_by_genome, genes_on_contig, proteins_with_pfam, count_proteins_with_ko; added compile tests.
 
 ### BLOCKER: similarity_search by_sequence
 

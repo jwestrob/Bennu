@@ -44,3 +44,23 @@ def test_unknown_slot_rejected():
 def test_missing_required_slot_rejected():
     with pytest.raises(ValueError):
         compile_query("protein_by_id", {})
+
+
+def test_compile_proteins_by_genome():
+    cypher, params = compile_query("proteins_by_genome", {"genome_id": "G1"})
+    assert "$genome_id" in cypher and params == {"genome_id": "G1"}
+
+
+def test_compile_genes_on_contig():
+    cypher, params = compile_query("genes_on_contig", {"contig": "contig_1"})
+    assert "$contig" in cypher and params == {"contig": "contig_1"}
+
+
+def test_compile_proteins_with_pfam():
+    cypher, params = compile_query("proteins_with_pfam", {"pfam": "PF00001"})
+    assert "$pfam" in cypher and params == {"pfam": "PF00001"}
+
+
+def test_compile_count_proteins_with_ko():
+    cypher, params = compile_query("count_proteins_with_ko", {"ko": "K20469"})
+    assert "$ko" in cypher and params == {"ko": "K20469"}
