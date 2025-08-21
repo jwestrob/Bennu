@@ -274,6 +274,7 @@ GDS usage policy:
 - 2025-08-21 09:49:52Z — Created branch `feat/agent-router-typed`.
 - 2025-08-21 09:49:52Z — Committed initial plan seed.
 - 2025-08-21 09:57:11Z — Added unified router skeleton (`src/llm/rag_system/router`) and feature flags: `AGENT_ENABLE_LEGACY_TASKGRAPH`, `AGENT_DISABLE_LEGACY_SELECTORS` (default off) to prepare T1 quarantine.
+- 2025-08-21 09:57:11Z — Added typed toolcall schemas and validators at `src/llm/rag_system/agent/tools/{schemas.py,validate.py}` (no cardinality).
 
 ## Open Questions
 
