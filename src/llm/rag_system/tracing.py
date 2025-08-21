@@ -43,7 +43,9 @@ def get_tracer() -> Tracer:
 
     spec = os.getenv("AGENT_TRACING", "").strip()
     if not spec:
-        _TRACER = NoopTracer()
+        # Default to JSONL tracing in logs directory so tracing always runs
+        # during normal execution without requiring environment variables.
+        _TRACER = JsonlTracer()
         return _TRACER
 
     kind, _, arg = spec.partition(":")
@@ -53,4 +55,3 @@ def get_tracer() -> Tracer:
     else:
         _TRACER = NoopTracer()
     return _TRACER
-

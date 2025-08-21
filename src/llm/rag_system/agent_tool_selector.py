@@ -28,12 +28,13 @@ from .task_management import Task, TaskType
 
 logger = logging.getLogger(__name__)
 
-# Quarantine gate: allow disabling legacy selectors to consolidate routing under
-# src/llm/rag_system/router. Default remains enabled to avoid breaking callers.
-if os.getenv("AGENT_DISABLE_LEGACY_SELECTORS", "0") == "1":
+# Quarantine gate: legacy selectors are DISABLED by default.
+# Re-enable by setting AGENT_ENABLE_LEGACY_SELECTORS=1 for rollback.
+if os.getenv("AGENT_ENABLE_LEGACY_SELECTORS", "0") != "1":
     raise ImportError(
-        "Legacy tool selectors are disabled (AGENT_DISABLE_LEGACY_SELECTORS=1). "
-        "Use src/llm/rag_system/router instead."
+        "Legacy tool selectors are quarantined by default. Set "
+        "AGENT_ENABLE_LEGACY_SELECTORS=1 to re-enable, or migrate to "
+        "src/llm/rag_system/router."
     )
 
 

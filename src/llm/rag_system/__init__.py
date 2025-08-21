@@ -12,7 +12,7 @@ from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, Ge
 from .router import get_router, TwoStageRouter, RouterDecision
 
 # Gate legacy TaskGraph exports behind a feature flag to aid quarantine.
-_LEGACY_TASKGRAPH = os.getenv("AGENT_ENABLE_LEGACY_TASKGRAPH", "1") == "1"
+_LEGACY_TASKGRAPH = os.getenv("AGENT_ENABLE_LEGACY_TASKGRAPH", "0") == "1"
 if _LEGACY_TASKGRAPH:
     try:
         from .task_management import Task, TaskGraph, TaskStatus, TaskType  # type: ignore

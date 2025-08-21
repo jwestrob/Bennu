@@ -48,6 +48,7 @@ from .query_validator import QueryValidator
 # Old genome_selector.py replaced by unified genome_selection.py
 from .router import get_router
 from .agent.tools.validate import validate_toolcall
+from .tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         # Initialize new intelligent components
         self.intelligent_router = IntelligentRouter()
         self.router = get_router()
+        self.tracer = get_tracer()
         self.genome_selector = UnifiedGenomeSelector(self.neo4j_processor)
         self.context_compressor = ContextCompressor()
         self.genome_context_extractor = GenomeContextExtractor()
@@ -260,6 +262,10 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         """
         try:
             console.print(f"🧬 [bold blue]Processing question:[/bold blue] {question}")
+            try:
+                self.tracer.emit("pipeline.start", {"question": question})
+            except Exception:
+                pass
             
             if not DSPY_AVAILABLE:
                 return {
@@ -292,6 +298,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 planning_result = self._run("agentic_planning", PlannerAgent, user_query=question)
             
             console.print(f"🎯 Planning decision: {'agentic' if planning_result.requires_planning else 'traditional'}")
+            try:
+                self.tracer.emit("pipeline.plan_decision", {
+                    "requires_planning": bool(planning_result.requires_planning),
+                    "reasoning": getattr(planning_result, 'reasoning', None),
+                })
+            except Exception:
+                pass
             console.print(f"💭 Reasoning: {planning_result.reasoning}")
             
             # Execute based on LLM's decision
