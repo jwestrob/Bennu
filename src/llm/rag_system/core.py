@@ -32,7 +32,7 @@ from .task_management import TaskGraph, Task, TaskType, TaskStatus
 from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
 from .genome_selection import UnifiedGenomeSelector
-from .context_compression import ContextCompressor
+from ..context_compression import ContextCompressor
 from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
 from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor

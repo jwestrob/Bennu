@@ -17,7 +17,7 @@ class DatabaseConfig(BaseModel):
     neo4j_uri: str = Field(default="bolt://localhost:7687", description="Neo4j connection URI")
     neo4j_user: str = Field(default="neo4j", description="Neo4j username")
     neo4j_password: str = Field(default="your_new_password", description="Neo4j password")
-    lancedb_path: str = Field(default="data/stage06_esm2/lancedb", description="LanceDB database path")
+    lancedb_path: str = Field(default="data/stage08_esm2/lancedb", description="LanceDB database path")
 
 
 class LLMConfig(BaseModel):

@@ -22,24 +22,6 @@ reports/baseline/flake8.txt:3647:src/llm/model_switcher.py:54:80: E501 line too 
 reports/baseline/flake8.txt:3648:src/llm/model_switcher.py:55:80: E501 line too long (87 > 79 characters)
 ---
 ---
-\n=== References to core_clean.py ===
-\n=== References to core_clean.py ===
-reports/analysis/orphan_refs.txt:25:\n=== References to core_clean.py ===
-reports/analysis/orphan_refs.txt:26:\n=== References to core_clean.py ===
----
----
-\n=== References to core_final.py ===
-\n=== References to core_final.py ===
-reports/analysis/orphan_refs.txt:31:\n=== References to core_final.py ===
-reports/analysis/orphan_refs.txt:32:\n=== References to core_final.py ===
----
----
-\n=== References to temp_core.py ===
-\n=== References to temp_core.py ===
-reports/analysis/orphan_refs.txt:37:\n=== References to temp_core.py ===
-reports/analysis/orphan_refs.txt:38:\n=== References to temp_core.py ===
----
----
 \n=== References to src/llm/context_compression.py ===
 \n=== References to src/llm/context_compression.py ===
 src/tests/test_context_compression.py:15:from llm.context_compression import ContextCompressor, CompressionLevel, GenomicDataCompressor

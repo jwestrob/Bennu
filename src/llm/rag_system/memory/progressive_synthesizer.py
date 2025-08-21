@@ -112,18 +112,18 @@ class ProgressiveSynthesizer:
             task_notes: List of TaskNote objects
             question: Original user question
             synthesis_mode: "guidance" for lightweight agent guidance or "report" for comprehensive final analysis
-            dspy_synthesizer: DEPRECATED - uses model allocation (kept for compatibility)
+            dspy_synthesizer: Legacy parameter (kept for compatibility; ignored)
             raw_data: Raw data from task execution (prioritized over task_notes)
-            rag_system: DEPRECATED - not used in Map-Reduce architecture
+            rag_system: Legacy parameter (not used in Map-Reduce architecture)
             
         Returns:
             Final comprehensive synthesis or brief guidance summary
         """
         # Warn about deprecated parameters
         if dspy_synthesizer is not None:
-            logger.warning("⚠️ dspy_synthesizer parameter is deprecated and will be ignored")
+            logger.info("ℹ️ dspy_synthesizer legacy parameter provided; it is ignored")
         if rag_system is not None:
-            logger.warning("⚠️ rag_system parameter is deprecated and will be ignored")
+            logger.info("ℹ️ rag_system legacy parameter provided; it is ignored")
         
         # HYBRID MODEL: Branch based on synthesis mode
         if synthesis_mode == "guidance":
