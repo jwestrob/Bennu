@@ -101,6 +101,12 @@ conda activate genome-kg
 
 # Install LLM dependencies
 pip install -r requirements-llm.txt
+
+Bioinformatics tools included in `env/environment.yml`:
+- mash, skani, pyhmmer, ete3, rdflib, lancedb, transformers, pytorch
+
+Verify tools are on PATH after activation:
+which quast.py; which prodigal; which dfast_qc; which mash; which skani
 ```
 
 ### Step 2: Database Setup
@@ -170,11 +176,13 @@ cp /path/to/your/genome.fasta data/raw/
 
 **Step 2: Run the Processing Pipeline**
 ```bash
-# Process all genomes (takes 10-30 minutes depending on size)
+# Process all genomes (threads default to `SYSTEM_JOBS` or CPU cores)
 python -m src.cli build
+# or limit threads for all stages
+python -m src.cli build -j 16
 
-# Optional: Resume from specific stage if interrupted
-python -m src.cli build --from-stage 4
+# Optional: Run a specific stage range (e.g., only Stage 7 Knowledge Graph)
+python -m src.cli build -f 7 -t 7
 ```
 
 **Step 3: Load Data into Neo4j**

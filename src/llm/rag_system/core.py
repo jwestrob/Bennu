@@ -30,7 +30,7 @@ from .utils import setup_debug_logging, GenomicContext
 from .log_formatter import setup_enhanced_logging
 from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
 # Legacy TaskGraph types gated behind flag to enable quarantine without breakage
-if os.getenv("AGENT_ENABLE_LEGACY_TASKGRAPH", "1") == "1":
+if os.getenv("AGENT_ENABLE_LEGACY_TASKGRAPH", "0") == "1":
     try:
         from .task_management import TaskGraph, Task, TaskType, TaskStatus  # type: ignore
     except Exception:  # pragma: no cover
@@ -392,14 +392,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     raise ValueError(f"StageA whole_genome_reader toolcall invalid: {'; '.join(errs)}")
 
                 console.print("🧬 [bold cyan]Stage A routed to whole_genome_reader[/bold cyan]")
-                from .external_tools import WholeGenomeReader
-                reader = WholeGenomeReader(self.neo4j_processor)
-                spatial_results = await reader.read_full_genomic_context(question)
+                # Use curated spatial reader (global by default if no specific genome provided)
+                from .whole_genome_reader import read_all_genomes_spatial
+                spatial_results = await read_all_genomes_spatial(self.neo4j_processor)
 
-                if spatial_results and 'genomic_data' in spatial_results:
+                if spatial_results and spatial_results.get('success') and spatial_results.get('genome_contexts'):
                     scope = GenomeScope(genome_id="*", contig_ids=tuple(), coordinate_window=(0, 0))
                     context = GenomicContext(
-                        structured_data=spatial_results['genomic_data'],
+                        structured_data=spatial_results['genome_contexts'],
                         semantic_data=[],
                         metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader', 'genome_scope': scope.__dict__},
                         query_time=0.0,
@@ -415,7 +415,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 else:
                     return {
                         "question": question,
-                        "answer": "No spatial genomic data retrieved.",
+                        "answer": spatial_results.get('tool_output') if isinstance(spatial_results, dict) else "No spatial genomic data retrieved.",
                         "confidence": "low",
                         "citations": "",
                         "query_metadata": {"analysis_type": "SPATIAL_GENOMIC", "tool_used": "whole_genome_reader"}
@@ -1383,6 +1383,21 @@ print("Data available: {data_summary}")
                 formatted_parts.append(f"{key}: {value}")
         
         return "\\n".join(formatted_parts)
+
+    def _derive_scope_from_slots(self, slots: Dict[str, Any]) -> Optional[GenomeScope]:
+        """Derive an immutable GenomeScope from DB template slots when possible."""
+        try:
+            if not isinstance(slots, dict):
+                return None
+            gid = slots.get("genome_id")
+            if isinstance(gid, str) and gid:
+                return GenomeScope(genome_id=str(gid), contig_ids=tuple(), coordinate_window=(0, 0))
+            contig = slots.get("contig")
+            if isinstance(contig, str) and contig:
+                return GenomeScope(genome_id="*", contig_ids=(str(contig),), coordinate_window=(0, 0))
+        except Exception:
+            pass
+        return None
     
     async def _synthesize_answer(self, question: str, formatted_context: str, query_type: str, analysis_type: str) -> Dict[str, Any]:
         """Synthesize answer from formatted context using appropriate model allocation."""

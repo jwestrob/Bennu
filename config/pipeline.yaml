@@ -3,7 +3,7 @@
 
 # Global Pipeline Settings
 pipeline:
-  default_threads: 4                    # src/cli.py:81
+  default_threads: 16                    # src/cli.py:81
   input_directory: "data/raw"           # src/cli.py:61  
   output_directory: "data"              # src/cli.py:66
   from_stage: 0                         # src/cli.py:71
@@ -27,7 +27,7 @@ quast:
 # Stage 2: DFAST_QC Taxonomy
 dfast_qc:
   threads_per_genome: 8                # src/cli.py:159, src/ingest/02_dfast_qc.py:377
-  max_workers: "min_threads_4"         # src/cli.py:160
+  max_workers: "min_threads_2"         # src/cli.py:160
   enable_completeness_contamination: false  # src/cli.py:161, src/ingest/02_dfast_qc.py:387
   completeness_threshold: 90           # src/ingest/02_dfast_qc.py:66
 
@@ -41,7 +41,7 @@ prodigal:
 
 # Stage 4: Astra Functional Annotation
 astra:
-  threads: 8                           # src/ingest/04_astra_scan.py:130
+  threads: 16                           # src/ingest/04_astra_scan.py:130
   databases: ["PFAM", "KOFAM"]         # src/cli.py:184, src/ingest/04_astra_scan.py:135
   use_cutoffs: true                    # src/cli.py:185, src/ingest/04_astra_scan.py:140
   search_strategies:
@@ -56,7 +56,7 @@ gecco:
 
 # Stage 5b: dbCAN CAZyme Annotation
 dbcan:
-  max_workers: 2                       # src/cli.py:204, src/ingest/dbcan_cazyme.py:330
+  max_workers: 4                       # src/cli.py:204, src/ingest/dbcan_cazyme.py:330
   threads_per_job: 4                   # src/cli.py:205, src/ingest/dbcan_cazyme.py:331
   database_path: "data/dbcan_db"       # src/ingest/dbcan_cazyme.py:90
   evalue_threshold: 1e-15              # src/ingest/dbcan_cazyme.py:332
@@ -67,7 +67,7 @@ dbcan:
 
 # Stage 6: Knowledge Graph Construction
 knowledge_graph:
-  batch_processing_workers: 4          # src/build_kg/ various files
+  batch_processing_workers: 16          # src/build_kg/ various files
   batch_size: 100                      # src/build_kg/ line 378
   sequence_db_batch_size: 1000         # src/build_kg/ line 124
   serialization_format: "turtle"      # src/build_kg/rdf_builder.py:837
@@ -80,7 +80,7 @@ esm2:
   batch_sizes:
     mps: 16                            # Apple Silicon, src/ingest/06_esm2_embeddings.py:407
     cuda: 32                           # NVIDIA GPU, src/ingest/06_esm2_embeddings.py:409  
-    cpu: 4                             # CPU fallback, src/ingest/06_esm2_embeddings.py:411
+    cpu: 16                             # CPU fallback, src/ingest/06_esm2_embeddings.py:411
   device_priority: ["mps", "cuda", "cpu"]  # src/ingest/06_esm2_embeddings.py:52-57
 
 # Database Configuration

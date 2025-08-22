@@ -1,8 +1,17 @@
+from dataclasses import dataclass
+
 try:
     import dspy  # type: ignore
     DSPY_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
     DSPY_AVAILABLE = False
+
+
+@dataclass
+class RouterDecision:
+    tool: str
+    params: dict
+    reasoning: str | None = None
 
 
 if DSPY_AVAILABLE:
@@ -24,4 +33,3 @@ if DSPY_AVAILABLE:
         bad = dspy.InputField()
         schema = dspy.InputField()
         json = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")
-

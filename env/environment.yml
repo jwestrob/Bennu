@@ -29,6 +29,8 @@ dependencies:
   - pyhmmer
   - biopython
   - ete3
+  - mash
+  - skani
 
   # --- Plotting & Visualization ---
   - matplotlib

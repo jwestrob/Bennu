@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Union
 from abc import ABC, abstractmethod
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 import numpy as np
 
 from neo4j import GraphDatabase
@@ -213,15 +214,9 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             with self.driver.session() as session:
                 result = session.run(cypher, params)
                 rows = [dict(record) for record in result]
-                except Exception as e:
+        except Exception as e:
             logger.error(f"❌ Template '{name}' execution failed: {e}")
             raise
-
-    def gds_k_step_neighborhood(self, start_label: str, start_id_key: str, start_id: str, k: int = 1) -> Dict[str, Any]:
-        """Curated GDS-like wrapper (no CALL), behind backend flag."""
-        from .rag_system.gds_wrappers import k_step_neighborhood  # type: ignore
-        with self.driver.session() as session:
-            return session.execute_write(lambda tx: k_step_neighborhood(tx, start_label, start_id_key, start_id, k))
 
         execution_time = time.time() - start_time
         return QueryResult(
@@ -231,6 +226,12 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             metadata={"template": name, "slots": slots, "cypher": cypher, "result_count": len(rows)},
             execution_time=execution_time,
         )
+
+    def gds_k_step_neighborhood(self, start_label: str, start_id_key: str, start_id: str, k: int = 1) -> Dict[str, Any]:
+        """Curated GDS-like wrapper (no CALL), behind backend flag."""
+        from .rag_system.gds_wrappers import k_step_neighborhood  # type: ignore
+        with self.driver.session() as session:
+            return session.execute_write(lambda tx: k_step_neighborhood(tx, start_label, start_id_key, start_id, k))
     
     def _extract_first_query(self, cypher: str) -> str:
         """Extract the first valid Cypher query from potentially multiple queries."""

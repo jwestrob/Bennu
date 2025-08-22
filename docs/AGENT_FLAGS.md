@@ -17,8 +17,13 @@
 - `LANGFUSE_API_KEY`, `LANGSMITH_API_KEY` (optional)
   - If set, MultiTracer adds stub adapters (no external deps) alongside JSONL tracing.
 
+- `AGENT_ENABLE_LEGACY_TASKGRAPH` (default: 0)
+  - When 1, exposes legacy TaskGraph types; otherwise fully disabled.
+
+- `AGENT_ENABLE_LEGACY_SELECTORS` (default: 0)
+  - When 1, enables legacy selectors behind the new router surface.
+
 ## Defaults Summary
 - FSM runner: ON
 - Templates-only DB: ON
 - WholeGenomeReader is unaffected by DB limit flags; use `window_bp`/`loci_limit` for WGR.
-

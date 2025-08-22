@@ -1,18 +1,11 @@
 import os
-from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import logging
 
 from .llm_router import LLMRouter
 from ..agent.tools.validate import validate_toolcall
 from ..tracing import get_tracer
-
-
-@dataclass
-class RouterDecision:
-    tool: str
-    params: Dict[str, Any]
-    reasoning: Optional[str] = None
+from .signatures import RouterDecision
 
 
 class TwoStageRouter:
@@ -23,7 +16,7 @@ class TwoStageRouter:
     """
 
     def __init__(self) -> None:
-        self._legacy_enabled = os.getenv("AGENT_ENABLE_LEGACY_SELECTORS", "1") == "1"
+        self._legacy_enabled = os.getenv("AGENT_ENABLE_LEGACY_SELECTORS", "0") == "1"
         self._llm = LLMRouter()
         self._log = logging.getLogger(__name__)
         self._tracer = get_tracer()

@@ -50,8 +50,8 @@ flowchart TD
   - Step: Identify and delete/disable legacy task planner/executor and duplicate tool selectors; leave a feature flag for instant rollback.
   - Acceptance: Only one router module remains importable; CI passes.
   - Progress:
-    - [x] Legacy selectors disabled by default via `AGENT_ENABLE_LEGACY_SELECTORS` (set to 1 to re-enable).
-    - [x] TaskGraph exports gated off by default via `AGENT_ENABLE_LEGACY_TASKGRAPH` (set to 1 to re-enable).
+    - [x] Legacy selectors disabled by default via `AGENT_ENABLE_LEGACY_SELECTORS=0` (set to 1 to re-enable).
+    - [x] TaskGraph exports gated off by default via `AGENT_ENABLE_LEGACY_TASKGRAPH=0` (set to 1 to re-enable).
 
 - [ ] T2: Introduce typed toolcall schemas & validators
   - Steps:
@@ -71,8 +71,8 @@ flowchart TD
   - Step: Replace loop with typed FSM; encode legal transitions; enforce max_depth/timeout from policy.
   - Acceptance: No oscillation; traces show one of the enumerated paths only.
   - Progress:
-    - [x] FSM added with states/transitions; minimal enforcement integrated in `UnifiedAgentExecutor`.
-    - [ ] Replace loop fully with FSM runner (planned follow-up).
+    - [x] FSM added with states/transitions; enforcement integrated in `UnifiedAgentExecutor`.
+    - [x] Replaced legacy loop with FSM runner; removed unreachable legacy loop code.
 
 - [ ] T5: Cypher template library
   - Step: Add `kg/cypher_templates/*.cypher` with named templates and slot specs; compiler fills params; validator runs post-compile.
@@ -320,6 +320,8 @@ GDS usage policy:
 - 2025-08-21 11:29:30Z — Added router regression scaffold (`tests/regression/router_regression_set.json` + test) using Stage A detection + template mapping; extended mapper for genome/contig.
 - 2025-08-21 11:35:27Z — Added default limit propagation (`AGENT_DEFAULT_DB_LIMIT`, default 100) to mapper; extended PFAM mapping; expanded router regression to 10 prompts.
 - 2025-08-21 11:53:17Z — Policy-aware limits for DB templates (reads policy engine before env); injected default limit in Stage B DB path; added LIMIT compile test; added snapshot scaffold for synthesis formatting.
+- 2025-08-21 12:24:00Z — Fixed `execute_named_template` return path; added `_derive_scope_from_slots`; Stage A WGR routed to `read_all_genomes_spatial`; extended toolcall template enums; legacy flags default-off; removed legacy agent loop; updated flags docs.
+- 2025-08-21 13:10:00Z — Pipeline hardening: fixed Stage 0 OptionInfo calls; added CLI `--threads` (defaults to `SYSTEM_JOBS` or CPU cores); Stage 2 (DFAST_QC) preserves PATH, adds `mash`/`skani` to env, caps workers and enforces 1 thread per worker; Stage 3 (Prodigal) auto-switches to `meta` for large inputs and uses dynamic timeouts; Stage 7 (KG builder) now uses streaming N-Triples by default, avoids in-graph SPARQL, and logs progress.
 
 ### BLOCKER: similarity_search by_sequence
 

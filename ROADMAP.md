@@ -1,5 +1,81 @@
 # Roadmap: Agent + Knowledge Graph Optimization
 
+## TL;DR / Status Snapshot
+
+- Execution Path: FSM runner is default-on (no free-form loops); legacy loop retained only behind safety flag.
+- Routing: Two-stage router (Stage A deterministic guardrail; Stage B LLM router with strict toolcall schema + single repair path).
+- DB Access: Templates-only policy enforced (auto-query disabled). Policy-driven default LIMITs applied when missing.
+- Scope: Immutable `GenomeScope` added; attached for WGR and DB (derived from slots). Non-DB tools carry explicit `genome_scope: None` today.
+- Templates: Core library + counts + adjacency (KO/CAZy/Pathway/PFAM lists + counts; genome/contig lists; gene/protein adjacency via :NEXT*..k).
+- Vector: Deterministic similarity (by_id, by_sequence); batch kNN available; optional manifest dimension logging.
+- Observability: JSONL tracing default; MultiTracer scaffolding for Langfuse/LangSmith via env.
+- GDS: Curated wrappers scaffolded (no CALL to the LLM) behind `AGENT_ENABLE_GDS=1`.
+
+See `docs/AGENT_FLAGS.md` for strict-mode defaults and environment flags.
+
+Recent pipeline improvements (performance and stability):
+- Stage 7 Knowledge Graph builder now streams N-Triples to disk by default, avoiding large in-memory strings and expensive in-graph SPARQL scans.
+- Stage 2 DFAST_QC preserves PATH (uses CONDA_PREFIX/bin), caps workers to the `--threads` budget, and enforces one thread per worker to prevent oversubscription.
+- Stage 3 Prodigal auto-switches to `meta` for large inputs and uses dynamic timeouts (override with `PRODIGAL_TIMEOUT_SECONDS`).
+- Build CLI `--threads/-j` defaults to `SYSTEM_JOBS` or CPU cores, and is respected across stages.
+
+## Strict Modes and Flags (Operational)
+
+- FSM (`AGENT_FSM_STRICT=1`): FSM-governed agent loop is the only execution path.
+- DB templates-only (`AGENT_DB_TEMPLATES_ONLY=1`): All DB queries use named templates; free-form auto-query disabled.
+- Default DB limit: policy engine controls max results for `database_query`; `AGENT_DEFAULT_DB_LIMIT` is a fallback (clamped 1–5000).
+- GDS wrappers (`AGENT_ENABLE_GDS=1`): Curated GDS via backend wrappers only; no CALL exposed to the LLM.
+- Tracing: JSONL default; `LANGFUSE_API_KEY`/`LANGSMITH_API_KEY` add stub adapters through MultiTracer.
+
+## Current Architecture (Concise)
+
+- Stage A: Deterministic guardrail → force WGR for spatial markers; inject WGR defaults; attach broad GenomeScope.
+- Stage B: Single LLM router → schema-valid toolcalls (DB/Sim/WGR/Code/Literature) with strict validation + one repair.
+- FSM: PLAN → {DB|SIM|GENOME} → ACCUM → DECIDE → {PLAN|SYN} with time/step bounds from policy.
+- DB: Template compiler + registry; parameterized Cypher only; LIMIT appended when provided.
+- Scope: Derived from DB slots (e.g., `genome_id`, `contig`) → attached in metadata; non-DB tools carry explicit `None` scope.
+
+## Template Library (At-a-Glance)
+
+- Lists: `protein_by_id`, `proteins_with_ko`, `pathway_membership`, `cazy_family`, `proteins_with_pfam`, `proteins_by_genome`, `genes_on_contig` (+ optional `limit`).
+- Counts: `count_by_label(Protein|Gene)`, `count_proteins_with_ko(ko)`, `count_proteins_with_pfam(pfam)`, `count_proteins_in_pathway(pathway)`.
+- Adjacency (safe compilers): `gene_neighbors_k(gene_id,k,limit)`, `protein_neighbors_k(protein_id,k,limit)` using `:NEXT*..k`.
+
+## Mapper Patterns (Examples)
+
+- protein:ID → `protein_by_id`
+- Kxxxxx → `proteins_with_ko(ko, limit)`; count Kxxxxx proteins → `count_proteins_with_ko(ko)` (takes precedence)
+- GH/PL/CE<digits> → `cazy_family(family, limit)`
+- mapxxxxx → `pathway_membership(pathway, limit)`; count proteins in mapxxxxx → `count_proteins_in_pathway(pathway)`
+- PFxxxxx → `proteins_with_pfam(pfam, limit)`; count PFxxxxx proteins → `count_proteins_with_pfam(pfam)`
+- genome:ID → `proteins_by_genome(genome_id, limit)`; contig:ID → `genes_on_contig(contig, limit)`
+- neighbors of gene:ID [k=N] → `gene_neighbors_k(gene_id,k,limit)`; neighbors of protein:ID [k=N] → `protein_neighbors_k(protein_id,k,limit)`
+
+## Data Limits Policy
+
+- Default DB LIMIT: `policy_engine.get_max_results('database_query')` preferred; fallback `AGENT_DEFAULT_DB_LIMIT` (100; 1–5000 clamp).
+- Stage B DB path injects LIMIT when missing; compiler appends `LIMIT $limit` only when no LIMIT exists.
+- WGR unaffected by DB limit; use `window_bp`/`loci_limit` for WGR control.
+
+## Observability & Vector Search
+
+- Tracing: per-step JSONL events for Stage B starts and decisions; MultiTracer stubs ready for Langfuse/LangSmith.
+- Similarity: deterministic by_id, by_sequence (embedder mirrors pipeline manifest), batch kNN available; optional manifest-dimension logging.
+
+## GDS Usage Policy
+
+- Never expose CALL to the LLM. Curated wrappers behind backend endpoints and `AGENT_ENABLE_GDS`.
+- Available wrappers: k-step neighborhood (Cypher subquery pattern), BGC community placeholder (precomputed count).
+
+## Immediate TODOs (Execution-Ready)
+
+- Scope: Thread `GenomeScope` through non-DB tool wrappers (literature/code/similarity) where applicable; keep non-overridable.
+- Router: Add high-level decision trace events for literature/code.
+- Templates: Add simple protein-neighbor window-based templates if needed; keep index-backed and bounded.
+- GDS: Wire minimal backend entrypoints (server/controller) to call curated wrappers; ensure flag-gated.
+- Cleanup: Remove dead legacy loop references; ensure FSM path is the only one exercised.
+- Docs: Expand README with a strict-modes quickstart and link to `docs/AGENT_FLAGS.md`.
+
 This roadmap focuses on improving the agent system and knowledge graph (KG) stack: query performance, reliability, and prompt optimization. The build pipeline is mostly stable and out of scope except where it affects KG/agent efficiency.
 
 ## Guiding Principles

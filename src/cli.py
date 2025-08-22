@@ -5,6 +5,7 @@ Main command-line interface for the genomic processing pipeline.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 import sys
@@ -80,9 +81,9 @@ def build(
         help="Stop pipeline at specific stage (0-8)"
     ),
     threads: int = typer.Option(
-        4,
+        int(os.getenv("SYSTEM_JOBS", os.cpu_count() or 4)),
         "--threads", "-j",
-        help="Number of threads to use"
+        help="Threads per task (default: SYSTEM_JOBS or CPU cores)"
     ),
     skip_tax: bool = typer.Option(
         False,
@@ -127,52 +128,70 @@ def build(
     stages = {
         0: {
             "name": "Input Preparation",
+            "outdir": output_dir / "stage00_prepared",
             "function": lambda: prepare_inputs(
                 input_dir=input_dir,
-                output_dir=output_dir / "stage00_prepared"
+                output_dir=output_dir / "stage00_prepared",
+                file_extensions=[".fasta", ".fa", ".fna"],
+                validate_format=True,
+                copy_files=False,
+                force=force,
             )
         },
         1: {
             "name": "QUAST Quality Assessment", 
+            "outdir": output_dir / "stage01_quast",
             "function": lambda: run_quast(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage01_quast",
                 max_workers=min(threads, 4),  # Limit parallel workers
                 threads_per_genome=1,
+                min_contig_length=500,
+                reference_genome=None,
                 force=force
             )
         },
         2: {
             "name": "DFAST_QC Taxonomy",
+            "outdir": output_dir / "stage02_dfast_qc",
             "function": lambda: run_dfast_qc(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage02_dfast_qc",
                 threads=threads,
+                max_workers=None,
                 enable_cc=False,
                 force=force
             )
         },
         3: {
             "name": "Prodigal Gene Prediction",
+            "outdir": output_dir / "stage03_prodigal",
             "function": lambda: run_prodigal(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage03_prodigal",
+                mode="single",
+                genetic_code=11,
+                min_gene_length=90,
                 max_workers=threads,
+                include_nucleotides=True,
                 force=force
             )
         },
         4: {
             "name": "Astra Functional Annotation",
+            "outdir": output_dir / "stage04_astra",
             "function": lambda: run_astra_scan(
                 input_dir=output_dir / "stage03_prodigal",
                 output_dir=output_dir / "stage04_astra",
                 threads=threads,
                 databases=["PFAM", "KOFAM"],
+                use_cutoffs=True,
                 force=force
             )
         },
         5: {
             "name": "GECCO BGC Detection",
+            "outdir": output_dir / "stage05_gecco",
             "function": lambda: run_gecco_analysis(
                 input_dir=output_dir / "stage00_prepared",
                 output_dir=output_dir / "stage05_gecco",
@@ -183,6 +202,7 @@ def build(
         },
         6: {
             "name": "dbCAN CAZyme Annotation",
+            "outdir": output_dir / "stage06_dbcan",
             "function": lambda: run_dbcan_analysis(
                 input_dir=output_dir / "stage03_prodigal" / "genomes" / "all_protein_symlinks",
                 output_dir=output_dir / "stage06_dbcan",
@@ -192,6 +212,7 @@ def build(
         },
         7: {
             "name": "Knowledge Graph Construction",
+            "outdir": output_dir / "stage07_kg",
             "function": lambda: build_knowledge_graph_with_extended_annotations(
                 stage03_dir=output_dir / "stage03_prodigal",
                 stage04_dir=output_dir / "stage04_astra",
@@ -203,6 +224,7 @@ def build(
         },
         8: {
             "name": "ESM2 Protein Embeddings",
+            "outdir": output_dir / "stage08_esm2",
             "function": lambda: run_esm2_embeddings(
                 stage03_dir=output_dir / "stage03_prodigal",
                 output_dir=output_dir / "stage08_esm2",
@@ -222,9 +244,9 @@ def build(
             stage = stages[stage_num]
             console.print(f"\n[bold green]Stage {stage_num}: {stage['name']}[/bold green]")
             
-            # TODO: Add stage output checking and skip logic
-            stage_output_dir = output_dir / f"stage{stage_num:02d}_{stage['name'].lower().replace(' ', '_').replace('/', '_')}"
-            if not force and stage_output_dir.exists():
+            # Skip stage if its output dir already exists and not forcing
+            stage_output_dir = stage.get("outdir")
+            if not force and stage_output_dir and stage_output_dir.exists():
                 console.print(f"[yellow]Stage {stage_num} output exists, skipping (use --force to overwrite)[/yellow]")
                 continue
             

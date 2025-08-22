@@ -12,8 +12,7 @@ from ..agent.tools.validate import validate_toolcall, make_repair_prompt
 from ..agent.tools.schemas import TOOLCALL_JSON_SCHEMA
 from ..memory.model_allocation import get_model_allocator
 from ..tracing import get_tracer
-from .signatures import ToolRoute, ToolRouteRepair  # type: ignore
-from .two_stage import RouterDecision
+from .signatures import ToolRoute, ToolRouteRepair, RouterDecision  # type: ignore
 
 
 logger = logging.getLogger(__name__)

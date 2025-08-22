@@ -23,6 +23,8 @@ The following tools need to be installed separately:
 - **quast**: `brew install quast` or install from source
 - **prodigal**: `brew install prodigal` or install from source  
 - **dfast_qc**: Install from source (already done in your setup)
+- **mash**: `conda install -c bioconda mash` (recommended in the same conda env)
+- **skani**: `conda install -c bioconda skani` (optional taxonomy tool; included in env)
 
 ### 3. Verify Installation
 
@@ -37,6 +39,8 @@ python -c "import pandas, numpy, rdflib, pyhmmer, Bio; print('Python packages OK
 which quast.py
 which prodigal
 which dfast_qc
+which mash
+which skani
 ```
 
 ## Docker Deployment

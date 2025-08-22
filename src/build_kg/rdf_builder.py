@@ -259,6 +259,8 @@ class GenomeKGBuilder:
     
     def __init__(self):
         self.graph = Graph()
+        # Lightweight index to avoid SPARQL scans at large scale
+        self._contig_to_genome: Dict[str, URIRef] = {}
         self._bind_namespaces()
         self._add_ontology_definitions()
     
@@ -356,6 +358,10 @@ class GenomeKGBuilder:
             # Add contig identifier
             if 'contig' in gene:
                 self.graph.add((gene_uri, KG.contig, Literal(gene['contig'])))
+                # Index contig→genome for fast lookups later (avoid SPARQL)
+                contig_id = str(gene['contig'])
+                if contig_id and contig_id not in self._contig_to_genome:
+                    self._contig_to_genome[contig_id] = genome_uri
             
             # Add genomic coordinates from prodigal
             if 'start' in gene and 'end' in gene:
@@ -397,6 +403,10 @@ class GenomeKGBuilder:
         
         logger.info(f"Added {len(gene_data)} gene-protein pairs with genomic coordinates")
         return protein_uris
+
+    def get_contig_to_genome_index(self) -> Dict[str, URIRef]:
+        """Return the internal contig→genome index built during gene loading."""
+        return self._contig_to_genome
     
     def add_pfam_domains(self, domains: List[Dict[str, Any]], 
                         protein_uris: Dict[str, URIRef]):
@@ -837,17 +847,17 @@ class GenomeKGBuilder:
     def save_graph(self, output_file: Path, format: str = 'turtle'):
         """Save the knowledge graph to file."""
         try:
-            # Serialize to string first, then write to file
-            serialized = self.graph.serialize(format=format)
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(serialized)
+            # Default to N-Triples for faster, streaming-friendly serialization
+            fmt = 'nt'
+            # Serialize directly to destination to avoid building large in-memory strings
+            self.graph.serialize(destination=str(output_file), format=fmt)
             
             triple_count = len(self.graph)
-            logger.info(f"Saved knowledge graph with {triple_count:,} triples to {output_file}")
+            logger.info(f"Saved knowledge graph with {triple_count:,} triples to {output_file} (format={fmt})")
             
             return {
                 "output_file": str(output_file),
-                "format": format,
+                "format": fmt,
                 "triple_count": triple_count,
                 "timestamp": datetime.now().isoformat()
             }
@@ -1141,9 +1151,9 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     bgc_stats = {'clusters': 0, 'genes': 0}
     if bgc_results:
         if genome_uris:
-            # Build efficient contig-to-genome mapping from existing graph relationships
-            logger.info("Building contig-to-genome index from existing protein-genome relationships...")
-            contig_to_genome = build_contig_to_genome_index_from_proteins(builder.graph, protein_uris)
+            # Use internal index built during gene loading (avoids expensive SPARQL over large graphs)
+            logger.info("Using internal contig-to-genome index from gene loading phase...")
+            contig_to_genome = builder.get_contig_to_genome_index()
             
             # Assign each BGC to its correct genome
             bgc_genome_assignments = assign_bgc_to_correct_genome(bgc_results, contig_to_genome)

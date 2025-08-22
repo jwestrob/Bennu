@@ -25,6 +25,14 @@ class DBQueryParams(BaseModel):
         "pathway_membership",
         "count_by_label",
         "cazy_family",
+        "proteins_by_genome",
+        "genes_on_contig",
+        "proteins_with_pfam",
+        "count_proteins_with_ko",
+        "count_proteins_with_pfam",
+        "count_proteins_in_pathway",
+        "gene_neighbors_k",
+        "protein_neighbors_k",
     ]
     slots: Dict[str, Any] = Field(default_factory=dict)
 
@@ -87,6 +95,14 @@ TOOLCALL_JSON_SCHEMA: Dict[str, Any] = {
                                 "pathway_membership",
                                 "count_by_label",
                                 "cazy_family",
+                                "proteins_by_genome",
+                                "genes_on_contig",
+                                "proteins_with_pfam",
+                                "count_proteins_with_ko",
+                                "count_proteins_with_pfam",
+                                "count_proteins_in_pathway",
+                                "gene_neighbors_k",
+                                "protein_neighbors_k",
                             ]
                         },
                         "slots": {"type": "object"},
@@ -125,4 +141,3 @@ TOOLCALL_JSON_SCHEMA: Dict[str, Any] = {
         },
     },
 }
-
