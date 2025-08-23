@@ -13,6 +13,8 @@ from ..agent.tools.schemas import TOOLCALL_JSON_SCHEMA
 from ..memory.model_allocation import get_model_allocator
 from ..tracing import get_tracer
 from .signatures import ToolRoute, ToolRouteRepair, RouterDecision  # type: ignore
+from ...kg.cypher_templates.registry import SPECS  # type: ignore
+import json as _json
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,35 @@ class LLMRouter:
 
     def _predict_route(self, question: str, context: Optional[str]) -> Dict[str, Any]:
         def predict_call(module):
-            return module(question=question, context=context or "")
+            # Provide optional hint fields as empty strings by default (non-breaking)
+            # Build a lightweight DB templates catalog for router awareness
+            try:
+                items = []
+                for name, spec in SPECS.items():
+                    items.append({
+                        "name": name,
+                        "required": list(spec.required.keys()),
+                        "optional": list(spec.optional.keys()),
+                    })
+                catalog = _json.dumps({"templates": items})
+            except Exception:
+                catalog = _json.dumps({"templates": []})
+            tool_costs = _json.dumps({
+                "database_query": "cheap",
+                "whole_genome_reader": "expensive",
+                "similarity_search": "moderate",
+                "code_interpreter": "moderate",
+                "literature_search": "moderate",
+                "synthesize": "cheap"
+            })
+            return module(
+                question=question,
+                context=context or "",
+                data_profile="",
+                policy_hints="",
+                db_templates_catalog=catalog,
+                tool_costs=tool_costs,
+            )
 
         result = self.model_allocator.create_context_managed_call(
             task_name="tool_routing",

@@ -17,6 +17,26 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 
 The user needs to be able to test pipeline commands, especially stage 7 builds and CSV generation, and agent queries without Claude Code timing out during long-running processes.
 
+## ✅ Recent Agent Architecture Updates (DB‑first, deterministic)
+
+- Templates-only DB access: all queries run via curated Cypher templates; free-form Cypher is disabled.
+- New tools:
+  - `annotation_discovery`: keyword-based PFAM + KOFAM search (case-insensitive), then union proteins via `proteins_with_pfams`/`proteins_with_kos`.
+  - `neighborhood_extractor`: DB-backed neighborhoods with three modes:
+    - Single seed: `protein_neighbors_k` (k-step) or default `protein_flanking_genes_5` (5 upstream + 5 downstream by contig order).
+    - Windowed: `neighbors_by_window` with contig+start+end.
+    - Batch: `protein_ids=[...]` per-seed neighborhoods in one call; auto-seeds from last DB result if seeds are not provided.
+  - Adds concise summary_table and advisory for very large batches.
+- New templates: `pfam_search`, `kofam_search`, `proteins_with_pfams`, `proteins_with_kos`, `protein_flanking_genes_5`, `gene_next_degree`, `contig_gene_index`.
+- Compiler normalization: scalar/singular params are normalized for list-based templates (e.g., `pfam`→`pfams=[...]`), and numeric coercions are applied where sensible.
+- DB query dedup: identical template+slot calls are cached per executor instance and marked `summary.deduplicated=true`.
+- Smoke test: `scripts/smoke_test_templates.py` compiles all templates and can run a safe subset (`--run`) against a dev DB to catch drift early.
+
+Notes for Claude Code:
+- Favor `annotation_discovery` → `neighborhood_extractor` (batch) → synthesis for functional queries.
+- Do not hardcode specific biology (e.g., integrase IDs); use the templates/tooling above.
+- Avoid redundant DB calls; rely on dedup and/or plan steps once.
+
 ## ✅ **FIXED: Intent Classification and Database Query Issues** 
 
 **Problem**: The dynamic agent system was incorrectly classifying complex discovery queries like "Find five loci with integrases and tell me about them" as `PRESENCE_ABSENCE` instead of `SPATIAL_NEIGHBORHOOD`, and had method name mismatches causing query failures.
@@ -203,6 +223,8 @@ The system uses **UnifiedAgentExecutor** with dynamic tool chaining:
 - **code_interpreter**: Statistical analysis, pattern detection, quantitative assessments
 - **database_query**: Direct Neo4j/LanceDB queries for specific lookups
 - **literature_search**: PubMed validation of novel findings
+ - **neighborhood_extractor**: DB-backed neighborhoods (single/batch/windowed)
+ - **annotation_discovery**: PFAM+KOFAM discovery + union protein fetch
 
 ## 🚨 CRITICAL PERFORMANCE OPTIMIZATION: Reference-Based Note Storage
 

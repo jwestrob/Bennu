@@ -16,7 +16,7 @@ class State(Enum):
 
 
 LEGAL: Dict[State, Tuple[State, ...]] = {
-    State.PLAN: (State.DB, State.SIM, State.GENOME),
+    State.PLAN: (State.DB, State.SIM, State.GENOME, State.SYN),
     State.DB: (State.ACCUM,),
     State.SIM: (State.ACCUM,),
     State.GENOME: (State.ACCUM,),
@@ -35,4 +35,3 @@ class FSM:
         if to not in allowed:
             raise ValueError(f"Illegal transition: {self.state.name} -> {to.name}")
         self.state = to
-

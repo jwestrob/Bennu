@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ConfigDict
 ToolName = Literal[
     "database_query",
     "whole_genome_reader",
+    "neighborhood_extractor",
     "similarity_search",
     "code_interpreter",
     "literature_search",
@@ -107,6 +108,19 @@ TOOLCALL_JSON_SCHEMA: Dict[str, Any] = {
                         },
                         "slots": {"type": "object"},
                     },
+                },
+                {
+                    "type": "object",
+                    "required": [],
+                    "additionalProperties": False,
+                    "properties": {
+                        "protein_id": {"type": "string"},
+                        "contig": {"type": "string"},
+                        "start": {"type": "integer"},
+                        "end": {"type": "integer"},
+                        "k": {"type": "integer", "minimum": 1, "maximum": 100},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 5000}
+                    }
                 },
                 {
                     "type": "object",

@@ -1,4 +1,3 @@
 MATCH (g:Gene {contig:$contig})
 RETURN g
-ORDER BY g.start;
-
+ORDER BY toInteger(g.startCoordinate);

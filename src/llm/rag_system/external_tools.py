@@ -491,12 +491,387 @@ def report_synthesis_tool(description: str, original_question: str = None, **kwa
         },
     ).dict()
 
+async def neighborhood_extractor_tool(
+    rag_system,
+    protein_id: Optional[str] = None,
+    contig: Optional[str] = None,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    k: Optional[int] = None,
+    limit: Optional[int] = None,
+    protein_ids: Optional[List[str]] = None,
+    seeds_limit: Optional[int] = 5,
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Extract local neighborhoods via curated DB templates (cheap, DB-backed).
+
+    Modes:
+    - protein_ids (list) -> per-seed flanking (or k-step) neighborhoods, aggregated
+    - protein_id (+ optional k, limit) -> 'protein_neighbors_k' (k) or flanking (default)
+    - contig + start + end (+ optional limit) -> 'neighbors_by_window'
+    """
+    try:
+        # Helper to detect placeholder protein IDs that won't exist in DB
+        def _is_placeholder_pid(pid: Optional[str]) -> bool:
+            if not pid:
+                return True
+            low = str(pid).lower()
+            # Placeholder heuristics: example/placeholder tokens only (no domain-specific assumptions)
+            if ("example" in low) or ("placeholder" in low) or ("sample" in low):
+                return True
+            return False
+
+        debug_info: Dict[str, Any] = {}
+
+        # Batch mode: explicit list of seeds
+        if protein_ids and isinstance(protein_ids, list):
+            seeds = [pid for pid in protein_ids if isinstance(pid, str) and not _is_placeholder_pid(pid)]
+            if seeds_limit:
+                try:
+                    seeds = seeds[: int(seeds_limit)]
+                except Exception:
+                    seeds = seeds[:5]
+            if not seeds:
+                return ToolResultEnvelope(
+                    tool_name="neighborhood_extractor",
+                    success=False,
+                    message="protein_ids provided but none valid",
+                ).dict()
+            aggregated: List[Dict[str, Any]] = []
+            total_rows = 0
+            for pid in seeds:
+                seed_debug = {"seed_protein_id": pid}
+                try:
+                    ctx = await rag_system.neo4j_processor.execute_named_template(
+                        "protein_gene_context", {"protein_id": pid}
+                    )
+                    if ctx.results:
+                        seed = ctx.results[0]
+                        seed_debug.update({
+                            "seed_gene_id": seed.get("gene_id"),
+                            "seed_contig": seed.get("contig"),
+                            "seed_start": seed.get("start"),
+                            "seed_end": seed.get("end"),
+                            "seed_strand": seed.get("strand"),
+                        })
+                        try:
+                            nxt = await rag_system.neo4j_processor.execute_named_template(
+                                "gene_next_degree", {"gene_id": seed.get("gene_id")}
+                            )
+                            if nxt.results:
+                                seed_debug["seed_next_degree"] = nxt.results[0].get("next_degree")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                if isinstance(k, int):
+                    name = "protein_neighbors_k"
+                    slots = {"protein_id": pid, "k": k}
+                    if isinstance(limit, int):
+                        slots["limit"] = limit
+                else:
+                    name = "protein_flanking_genes_5"
+                    slots = {"protein_id": pid}
+                qres = await rag_system.neo4j_processor.execute_named_template(name, slots)
+                rows = qres.results or []
+                if len(rows) == 0:
+                    try:
+                        contig = seed_debug.get("seed_contig")
+                        s0 = int(seed_debug.get("seed_start") or 0)
+                        e0 = int(seed_debug.get("seed_end") or 0)
+                        window = 10000
+                        start_w = max(0, s0 - window)
+                        end_w = e0 + window
+                        slots2 = {"contig": contig, "start": start_w, "end": end_w}
+                        if isinstance(limit, int):
+                            slots2["limit"] = limit
+                        q2 = await rag_system.neo4j_processor.execute_named_template("neighbors_by_window", slots2)
+                        rows = q2.results or []
+                        seed_debug["fallback"] = {"template": "neighbors_by_window", "slots": slots2, "row_count": len(rows)}
+                    except Exception:
+                        pass
+                aggregated.append({
+                    "seed_protein_id": pid,
+                    "template": name,
+                    "rows": rows,
+                    "debug": seed_debug,
+                })
+                total_rows += len(rows)
+
+            # Advisory for very large batches
+            try:
+                import os as _os
+                advisory_threshold = int(_os.getenv('NEIGHBORHOOD_BATCH_ADVISORY_SEEDS', '50'))
+            except Exception:
+                advisory_threshold = 50
+            advisory = None
+            if len(seeds) >= advisory_threshold:
+                advisory = {
+                    "type": "large_batch",
+                    "message": f"Processing {len(seeds)} seeds; consider narrowing or confirming batch."
+                }
+
+            # Summary table (seed → row_count)
+            summary_table = [{"seed": a["seed_protein_id"], "row_count": len(a["rows"]) } for a in aggregated]
+
+            return ToolResultEnvelope(
+                tool_name="neighborhood_extractor",
+                success=True,
+                display_text=f"batch_neighborhoods seeds={len(aggregated)} total_rows={total_rows}",
+                structured_data=aggregated,
+                summary={
+                    "mode": "batch",
+                    "seeds": [a["seed_protein_id"] for a in aggregated],
+                    "total_rows": total_rows,
+                    "summary_table": summary_table,
+                    "advisory": advisory,
+                },
+            ).dict()
+
+        if protein_id and not _is_placeholder_pid(protein_id):
+            # If caller specified k, use adjacency-expansion; otherwise return fixed 5 upstream/downstream by contig order
+            if isinstance(k, int):
+                name = "protein_neighbors_k"
+                slots = {"protein_id": protein_id, "k": k}
+                if isinstance(limit, int):
+                    slots["limit"] = limit
+            else:
+                name = "protein_flanking_genes_5"
+                slots = {"protein_id": protein_id}
+        elif contig and isinstance(start, int) and isinstance(end, int):
+            name = "neighbors_by_window"
+            slots = {"contig": contig, "start": int(start), "end": int(end)}
+            if isinstance(limit, int):
+                slots["limit"] = limit
+        else:
+            # Attempt auto-seeding from the most recent database_query result (session cache)
+            seeds: List[str] = []
+            try:
+                from pathlib import Path
+                import json, re
+                session_path = getattr(getattr(rag_system, 'note_keeper', None), 'session_path', None)
+                if session_path:
+                    tool_dir = Path(session_path) / 'tool_results'
+                    if tool_dir.exists():
+                        db_files = sorted(tool_dir.glob('db_*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+                        for f in db_files[:5]:
+                            data = json.loads(f.read_text())
+                            rows = (data.get('tool_result') or {}).get('structured_data') or []
+                            for row in rows:
+                                s = row.get('p') or row.get('protein') or ''
+                                m = re.search(r"'id':\s*'([^']+)'", str(s))
+                                if m:
+                                    pid = m.group(1)
+                                    if pid not in seeds and not _is_placeholder_pid(pid):
+                                        seeds.append(pid)
+                            if seeds:
+                                break
+            except Exception:
+                seeds = []
+
+            if seeds:
+                # Use batch path for up to seeds_limit proteins
+                try:
+                    limit_n = int(seeds_limit) if seeds_limit is not None else 5
+                except Exception:
+                    limit_n = 5
+                return await neighborhood_extractor_tool(
+                    rag_system=rag_system,
+                    protein_ids=seeds[:limit_n],
+                    k=k,
+                    limit=limit,
+                    seeds_limit=limit_n,
+                )
+            else:
+                return ToolResultEnvelope(
+                    tool_name="neighborhood_extractor",
+                    success=False,
+                    message=(
+                        "Provide either protein_id (optionally k, limit) OR contig+start+end (optionally limit). "
+                        "Hint: use a real protein id from prior database_query results; avoid placeholders."
+                    ),
+                ).dict()
+
+        # Always collect schema/context debug info for protein-based extractions
+        try:
+            if slots.get("protein_id"):
+                ctx = await rag_system.neo4j_processor.execute_named_template(
+                    "protein_gene_context", {"protein_id": slots["protein_id"]}
+                )
+                if ctx.results:
+                    seed = ctx.results[0]
+                    debug_info.update({
+                        "seed_protein_id": slots["protein_id"],
+                        "seed_gene_id": seed.get("gene_id"),
+                        "seed_contig": seed.get("contig"),
+                        "seed_start": seed.get("start"),
+                        "seed_end": seed.get("end"),
+                        "seed_strand": seed.get("strand"),
+                    })
+                    # NEXT degree
+                    try:
+                        nxt = await rag_system.neo4j_processor.execute_named_template(
+                            "gene_next_degree", {"gene_id": seed.get("gene_id")}
+                        )
+                        if nxt.results:
+                            debug_info["seed_next_degree"] = nxt.results[0].get("next_degree")
+                    except Exception:
+                        pass
+                    # Contig gene count + index
+                    try:
+                        gi = await rag_system.neo4j_processor.execute_named_template(
+                            "contig_gene_index", {"contig": seed.get("contig"), "gene_id": seed.get("gene_id")}
+                        )
+                        if gi.results:
+                            debug_info.update(gi.results[0])
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        logger.info(f"🧭 Neighborhood extractor executing template={name} slots={slots}")
+        qres = await rag_system.neo4j_processor.execute_named_template(name, slots)
+        rows = qres.results or []
+        try:
+            logger.info(f"🧭 Neighborhood result rows={len(rows)} debug={debug_info}")
+        except Exception:
+            pass
+
+        # Fallback: if no rows returned, try a coordinate window
+        if len(rows) == 0 and name in ("protein_neighbors_k", "protein_flanking_genes_5"):
+            try:
+                ctx = await rag_system.neo4j_processor.execute_named_template(
+                    "protein_gene_context", {"protein_id": slots["protein_id"]}
+                )
+                if ctx.results:
+                    contig = ctx.results[0].get("contig")
+                    s0 = int(ctx.results[0].get("start") or 0)
+                    e0 = int(ctx.results[0].get("end") or 0)
+                    # Use a generous ±10kb window
+                    window = 10000
+                    start_w = max(0, s0 - window)
+                    end_w = e0 + window
+                    slots2 = {"contig": contig, "start": start_w, "end": end_w}
+                    if isinstance(limit, int):
+                        slots2["limit"] = limit
+                    logger.info(f"🧭 Neighborhood fallback neighbors_by_window slots={slots2}")
+                    q2 = await rag_system.neo4j_processor.execute_named_template("neighbors_by_window", slots2)
+                    rows2 = q2.results or []
+                    logger.info(f"🧭 Neighborhood fallback rows={len(rows2)}")
+                    debug_info["fallback"] = {"template": "neighbors_by_window", "slots": slots2, "row_count": len(rows2)}
+                    return ToolResultEnvelope(
+                        tool_name="neighborhood_extractor",
+                        success=True,
+                        display_text=f"neighbors_by_window rows={len(rows2)}",
+                        structured_data=rows2,
+                        summary={"template": "neighbors_by_window", "slots": slots2, "row_count": len(rows2), "debug": debug_info},
+                    ).dict()
+            except Exception as _e:
+                # If fallback fails, proceed to return the original empty result
+                pass
+
+        return ToolResultEnvelope(
+            tool_name="neighborhood_extractor",
+            success=True,
+            display_text=f"{name} rows={len(rows)}",
+            structured_data=rows,
+            summary={"template": name, "slots": slots, "row_count": len(rows), "debug": debug_info},
+        ).dict()
+    except Exception as e:
+        logger.error(f"Neighborhood extractor failed: {e}")
+        return ToolResultEnvelope(
+            tool_name="neighborhood_extractor",
+            success=False,
+            message=str(e),
+        ).dict()
+
+async def annotation_discovery_tool(rag_system, keyword: Optional[str] = None, limit: int = 100, protein_limit: int = 100, **kwargs) -> Dict[str, Any]:
+    """
+    Discover candidate PFAM and KOFAM annotations matching a keyword, then fetch proteins annotated with any of them.
+
+    - Searches Domain (PFAM) and KEGGOrtholog for case-insensitive matches to 'keyword'.
+    - Unions proteins with any of those PFAMs or KOs.
+    - Returns deduplicated proteins and the list of candidate annotations used.
+    """
+    try:
+        if not keyword or not str(keyword).strip():
+            return ToolResultEnvelope(
+                tool_name="annotation_discovery",
+                success=False,
+                message="annotation_discovery requires a 'keyword' parameter (case-insensitive substring)",
+            ).dict()
+        kw = str(keyword).strip()
+        # Find candidate PFAMs
+        pfam_slots = {"q": kw, "limit": int(limit)}
+        pfam_res = await rag_system.neo4j_processor.execute_named_template("pfam_search", pfam_slots)
+        pfams = []
+        for r in pfam_res.results or []:
+            if r.get("pfam"):
+                pfams.append(r["pfam"])  # accession preferred
+            elif r.get("id"):
+                pfams.append(r["id"])   # fallback to id
+        pfams = list({x for x in pfams})
+
+        # Find candidate KOs
+        ko_slots = {"q": kw, "limit": int(limit)}
+        ko_res = await rag_system.neo4j_processor.execute_named_template("kofam_search", ko_slots)
+        kos = [r["id"] for r in (ko_res.results or []) if r.get("id")]
+        kos = list({x for x in kos})
+
+        proteins: Dict[str, Dict[str, Any]] = {}
+        # Fetch proteins by PFAMs
+        if pfams:
+            pfp = await rag_system.neo4j_processor.execute_named_template(
+                "proteins_with_pfams", {"pfams": pfams, "limit": int(protein_limit)}
+            )
+            for row in pfp.results or []:
+                p = row.get("p") or row.get("protein") or row
+                pid = p.get("id") if isinstance(p, dict) else None
+                if pid and pid not in proteins:
+                    proteins[pid] = row
+        # Fetch proteins by KOs
+        if kos:
+            pko = await rag_system.neo4j_processor.execute_named_template(
+                "proteins_with_kos", {"kos": kos, "limit": int(protein_limit)}
+            )
+            for row in pko.results or []:
+                p = row.get("p") or row.get("protein") or row
+                pid = p.get("id") if isinstance(p, dict) else None
+                if pid and pid not in proteins:
+                    proteins[pid] = row
+
+        summary = {
+            "keyword": kw,
+            "pfam_candidates": pfams,
+            "ko_candidates": kos,
+            "protein_count": len(proteins),
+        }
+
+        return ToolResultEnvelope(
+            tool_name="annotation_discovery",
+            success=True,
+            display_text=f"annotation_discovery proteins={len(proteins)} pfams={len(pfams)} kos={len(kos)}",
+            structured_data=list(proteins.values()),
+            summary=summary,
+        ).dict()
+    except Exception as e:
+        logger.error(f"annotation_discovery failed: {e}")
+        return ToolResultEnvelope(
+            tool_name="annotation_discovery",
+            success=False,
+            message=str(e),
+        ).dict()
+
 # Tool registry for agentic workflows
 AVAILABLE_TOOLS = {
     "literature_search": literature_search,
     "code_interpreter": code_interpreter_tool,
     "genome_selector": genome_selector_tool,
     "whole_genome_reader": whole_genome_reader_tool,
+    "neighborhood_extractor": neighborhood_extractor_tool,
+    "annotation_discovery": annotation_discovery_tool,
     "report_synthesis": report_synthesis_tool,
 }
 
@@ -506,33 +881,49 @@ TOOL_CAPABILITIES = {
         'description': 'Read complete genome(s) in spatial coordinate order for discovery-based genomic analysis',
         'when_to_use': [
             'Global prophage/phage discovery across ALL genomes',
-            'Operon identification requiring gene neighborhood context',
-            'Spatial analysis of hypothetical protein clusters',
+            'Operon identification requiring broad spatial context (small genomes)',
             'Cross-genome comparative spatial patterns',
-            'Queries asking to "find", "discover", "explore", "look through" genomic regions',
-            'Analysis requiring reading genes in genomic coordinate order',
-            'Any query about spatial organization, gene neighborhoods, or genomic context'
+            'Analysis requiring reading genes in genomic coordinate order'
         ],
         'when_NOT_to_use': [
             'Simple functional annotation lookups (use database_query)',
             'Counting specific protein types (use database_query)',
             'Direct database searches for known annotations',
-            'Questions with specific protein/gene IDs already identified'
+            'Questions with specific protein/gene IDs already identified',
+            'Neighborhood extraction around specific genes/proteins (use neighborhood_extractor)'
         ],
-        'biological_scope': 'global_discovery|spatial_analysis|neighborhood_context|prophage_discovery',
-        'query_indicators': ['find', 'discover', 'explore', 'prophage', 'phage', 'operon', 'spatial', 'across all genomes', 'through genomes'],
+        'biological_scope': 'global_discovery|spatial_analysis|prophage_discovery',
+        'query_indicators': ['prophage', 'phage', 'operon', 'spatial', 'across all genomes'],
         'biological_functions': [
             'spatial_genomic_analysis',
             'prophage_discovery',
             'operon_detection',
             'hypothetical_protein_clustering',
-            'genomic_coordinate_analysis',
-            'gene_neighborhood_analysis',
-            'spatial_pattern_recognition'
+            'genomic_coordinate_analysis'
         ],
         'input_types': ['genome_sequences', 'annotation_data', 'spatial_coordinates'],
         'output_types': ['spatial_clusters', 'prophage_candidates', 'operon_predictions', 'genomic_context'],
         'analysis_types': ['discovery', 'exploration', 'spatial', 'contextual']
+    },
+    'neighborhood_extractor': {
+        'description': 'Extract local gene/protein neighborhoods via curated DB templates',
+        'when_to_use': [
+            'Neighborhood context around specific integrase/functional candidates',
+            'Windowed neighborhoods on a contig when coordinates are known',
+            'Adjacency-based k-step neighborhoods from a seed gene/protein'
+        ],
+        'when_NOT_to_use': [
+            'Global spatial scans across large genomes (consider whole_genome_reader for small genomes)',
+        ],
+        'biological_scope': 'neighborhood_context|local_spatial_analysis',
+        'query_indicators': ['neighborhood', 'around', 'upstream', 'downstream', 'window', 'k-step'],
+        'biological_functions': [
+            'gene_neighborhood_analysis',
+            'local_spatial_context'
+        ],
+        'input_types': ['protein_id', 'protein_ids', 'contig+start+end'],
+        'output_types': ['genes', 'proteins'],
+        'analysis_types': ['contextual', 'local']
     },
     'code_interpreter': {
         'description': 'Execute Python code for statistical analysis and data visualization',
@@ -587,6 +978,20 @@ TOOL_CAPABILITIES = {
         'input_types': ['biological_queries', 'organism_names', 'taxonomic_terms'],
         'output_types': ['genome_selections', 'targeting_results', 'genome_matches'],
         'analysis_types': ['targeting', 'selection', 'filtering']
+    },
+    'annotation_discovery': {
+        'description': 'Discover candidate annotations (PFAM + KOFAM) matching a keyword and fetch proteins',
+        'when_to_use': [
+            'Need proteins via multiple annotation sources (PFAM/KOFAM)',
+            'Case-insensitive keyword search across PFAM/KOFAM catalogs',
+            'Union discovery across PFAM+KOFAM then neighborhood extraction'
+        ],
+        'biological_scope': 'annotation_lookup|functional_search',
+        'query_indicators': ['annotation keyword', 'functional term', 'domain or KO name'],
+        'biological_functions': ['annotation_discovery'],
+        'input_types': ['keyword'],
+        'output_types': ['proteins', 'annotation_candidates'],
+        'analysis_types': ['discovery']
     },
     'database_query': {
         'description': 'Direct Neo4j database queries for specific annotation lookups',

@@ -53,6 +53,29 @@ class TwoStageRouter:
                 pass
             return decision
 
+        # Stage A (discovery-first): If the question contains a plausible functional keyword,
+        # route once to annotation_discovery with that keyword to gather PFAM/KOFAM candidates.
+        try:
+            import re as _re
+            words = _re.findall(r"[A-Za-z][A-Za-z0-9_\-]{3,}", q)
+            stop = {"and","the","with","about","tell","find","loci","genes","five","which","that","this","these","those","within","around","across","from","into","for","near","gene","locus","loci","context","neighborhood"}
+            candidates = [w for w in words if w not in stop]
+            if candidates:
+                # Choose the longest candidate as a neutral keyword
+                keyword = sorted(candidates, key=len, reverse=True)[0]
+                decision = RouterDecision(
+                    tool="annotation_discovery",
+                    params={"keyword": keyword, "limit": 50, "protein_limit": 200},
+                    reasoning="StageA: functional keyword detected; running annotation_discovery once",
+                )
+                try:
+                    self._tracer.emit("router.stage_a.decision", {"route": {"tool": decision.tool, "params": decision.params}})
+                except Exception:
+                    pass
+                return decision
+        except Exception:
+            pass
+
         # Stage B: Single LLM router with strict schema validation
         try:
             self._tracer.emit("router.stage_b.start", {})

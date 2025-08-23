@@ -1,3 +1,2 @@
-MATCH (p:Protein)-[:HAS_KO]->(k:KO {id:$ko})
+MATCH (p:Protein)-[:HASFUNCTION]->(k:KEGGOrtholog {id:$ko})
 RETURN p;
-

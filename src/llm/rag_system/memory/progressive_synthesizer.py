@@ -526,7 +526,7 @@ class ProgressiveSynthesizer:
                 with open(debug_file, 'w') as f:
                     json.dump(debug_payload, f, indent=2, default=str)
                 
-                logger.info(f"🐛 DEBUG: Saved {stage_name} to {debug_file.name} ({debug_payload['data_size_chars']} chars)")
+                logger.debug(f"🐛 DEBUG: Saved {stage_name} to {debug_file.name} ({debug_payload['data_size_chars']} chars)")
                 
         except Exception as e:
             logger.warning(f"⚠️ Failed to save debug data for {stage_name}: {e}")

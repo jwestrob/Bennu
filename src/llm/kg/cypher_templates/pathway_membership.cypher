@@ -1,3 +1,2 @@
-MATCH (p:Protein)-[:IN_PATHWAY]->(pw:Pathway {id:$pathway})
-RETURN p;
-
+MATCH (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)-[:PARTICIPATESIN]->(pw:Pathway {id:$pathway})
+RETURN DISTINCT p;

@@ -1,3 +1,2 @@
-MATCH (p:Protein)-[:IN_PATHWAY]->(pw:Pathway {id:$pathway})
-RETURN count(p) AS count;
-
+MATCH (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)-[:PARTICIPATESIN]->(pw:Pathway {id:$pathway})
+RETURN count(DISTINCT p) AS count;

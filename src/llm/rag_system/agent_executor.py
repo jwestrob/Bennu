@@ -31,6 +31,8 @@ from .memory import NoteKeeper, get_model_allocator
 from .memory.tool_result_cache import ToolResultCache
 from .utils import safe_log_data
 from .fsm.action_graph import FSM, State
+from ..kg.cypher_templates.registry import SPECS  # type: ignore
+import json as _json
 
 logger = logging.getLogger(__name__)
 
@@ -66,54 +68,84 @@ class AgentExecutionResult:
 class AgentDecisionMaker(dspy.Signature if DSPY_AVAILABLE else object):
     """
     Intelligent agent that decides the next action based on current context.
-    
+
     The agent examines previous results and decides whether to:
     1. Use another tool to gather more information
     2. Synthesize the current results into a final answer
-    
+
     TOOL SELECTION CRITERIA:
-    
+
     Use 'database_query' for:
     - Initial exploration or specific lookups
     - Finding proteins, genes, pathways, or annotations
     - Counting or quantifying biological features
     - Answering questions with direct database matches
-    
+
     Use 'whole_genome_reader' for:
     - Spatial genomic analysis (prophage, operons, gene clusters)
     - Global discovery across all genomes
     - Questions requiring gene coordinate order
     - Neighborhood context and genomic organization
-    
+
     Use 'code_interpreter' for:
     - Statistical analysis of collected data
     - Pattern detection in large datasets
     - Visualization and plotting
     - Quantitative assessments after data collection
-    
+
     Use 'literature_search' for:
     - Recent research validation
     - Novel finding verification
     - Background information on discoveries
-    
+
     Use 'synthesize' action when:
     - Statistical analysis with comprehensive findings is complete (e.g., detailed protein/gene analysis with quantitative results)
     - Questions asking for comparison/distribution have been answered with descriptive statistics
     - Code interpreter has provided complete statistical breakdown with means, std deviations, and patterns
     - Database queries have retrieved necessary data AND code interpreter has analyzed it thoroughly
     - Ready to provide comprehensive answer based on completed analysis
+
+    Consider dataset scale (data_profile) and available budgets (budget_state). Prefer lower-cost actions that still make progress. If an action may be expensive, you may mark it as requiring approval.
     """
-    
+
     user_question = dspy.InputField(desc="Original user question with biological context")
     previous_steps = dspy.InputField(desc="Summary of previous tool executions and their results")
     available_tools = dspy.InputField(desc="Available tools with their capabilities and decision criteria")
     current_findings = dspy.InputField(desc="Current biological findings and data collected so far")
-    
+    # Optional, non-binding hints (kept generic; safe defaults provided by caller)
+    data_profile = dspy.InputField(desc="Summarized data scale/complexity (e.g., contigs/genes/estimated chunks); may be empty")
+    policy_hints = dspy.InputField(desc="Generic hints such as 'cheap-first', 'templates-only'; may be empty")
+    budget_state = dspy.InputField(desc="Token/time budget context; may be empty")
+    db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and slots; may be empty")
+    tool_costs = dspy.InputField(desc="JSON map of tool cost tags; may be empty")
+    functional_signatures_catalog = dspy.InputField(desc="JSON of optional functional signatures (e.g., PFAM/KOFAM); may be empty")
+    progress_state = dspy.InputField(desc="JSON progress indicators: candidates collected, loci built, last_row_count, zero_result_streak")
+
     next_action = dspy.OutputField(desc="Next action: tool name from available_tools or 'synthesize' to finish")
     tool_parameters = dspy.OutputField(desc="JSON parameters for the selected tool (empty object {} for synthesize)")
     biological_reasoning = dspy.OutputField(desc="Detailed biological reasoning for this decision based on current findings")
     confidence = dspy.OutputField(desc="Confidence level 0.0-1.0 in this decision")
     exploration_complete = dspy.OutputField(desc="true if comprehensive analysis is complete (statistical analysis done, patterns identified, question fully answered), false if more tools needed")
+    # Optional, non-binding outputs
+    requires_approval = dspy.OutputField(desc="true if the chosen action may require user approval; optional and advisory")
+    alternatives_json = dspy.OutputField(desc="Optional JSON array of alternative actions with brief justifications and cost/benefit notes")
+
+
+class DecisionParamRepair(dspy.Signature if DSPY_AVAILABLE else object):
+    """Repair invalid or missing tool parameters for a chosen action.
+
+    Provide ONLY a JSON object that matches the provided schema. Use the
+    db_templates_catalog to select valid template names when repairing
+    database_query parameters.
+    """
+
+    instruction = dspy.InputField(desc="Short instruction about the repair task")
+    tool_name = dspy.InputField(desc="Chosen tool name")
+    user_question = dspy.InputField(desc="Original user question")
+    bad = dspy.InputField(desc="Bad or missing tool parameters (JSON or text)")
+    db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and slots")
+    param_schema_json = dspy.InputField(desc="JSON schema for the expected parameters")
+    json = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")
 
 
 class AnalysisCodeGenerator(dspy.Signature if DSPY_AVAILABLE else object):
@@ -179,9 +211,13 @@ class UnifiedAgentExecutor:
         self.tools = {
             "database_query": self._execute_database_query,
             "whole_genome_reader": self._execute_whole_genome_reader,
+            "neighborhood_extractor": self._execute_neighborhood_extractor,
+            "annotation_discovery": self._execute_annotation_discovery,
             "code_interpreter": self._execute_code_interpreter,
             "literature_search": self._execute_literature_search
         }
+        # Dedup cache for database queries (template+slots signature → envelope)
+        self._db_dedup_cache: Dict[str, Any] = {}
         
         # Execution state
         self.max_steps = 8  # Prevent infinite loops
@@ -190,6 +226,14 @@ class UnifiedAgentExecutor:
         
         # Initialize data collection for code interpreter
         self._previous_step_data = {}
+        # Progress tracking for decisions (generic, non-hardcoded)
+        self._progress = {
+            "distinct_protein_ids": set(),
+            "loci_built": 0,
+            "last_row_count": 0,
+            "zero_result_streak": 0,
+            "last_query_signature": None,
+        }
         
         # Code generator will use model allocation system
         # (no need to initialize here, will use model_allocator.create_context_managed_call)
@@ -205,6 +249,8 @@ class UnifiedAgentExecutor:
     async def _execute_agent_workflow_fsm(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
         """FSM-governed agent workflow with typed transitions and strict cycle control."""
         self.current_user_question = question
+        # Stash selected genome for decision context (scale-aware hints)
+        self.selected_genome = selected_genome
         logger.info(f"🚀 Starting FSM agent workflow for: {question[:100]}...")
         start_time = time.time()
         steps: List[AgentStep] = []
@@ -270,6 +316,7 @@ class UnifiedAgentExecutor:
                 )
                 steps.append(step_result)
                 self._update_previous_step_data(steps)
+                self._update_progress(step_result)
                 self._save_task_debug_data(step_result, step_number)
                 if self.note_keeper and step_result.success:
                     self._save_agent_step_as_note(step_result, question)
@@ -351,16 +398,122 @@ class UnifiedAgentExecutor:
         else:
             steps_summary = "No previous steps - starting exploration"
         
-        # Prepare available tools information
-        available_tools_json = str(TOOL_CAPABILITIES)
+        # Prepare available tools information (structured JSON)
+        try:
+            available_tools_json = _json.dumps(TOOL_CAPABILITIES)
+        except Exception:
+            available_tools_json = str(TOOL_CAPABILITIES)
+
+        # Build a concise DB templates catalog (name, required, optional)
+        def _catalog_from_specs():
+            try:
+                items = []
+                for name, spec in SPECS.items():
+                    items.append({
+                        "name": name,
+                        "required": list(spec.required.keys()),
+                        "optional": list(spec.optional.keys()),
+                        "category": getattr(spec, 'category', 'general'),
+                        "returns": getattr(spec, 'returns', 'table'),
+                        "cost": getattr(spec, 'cost', 'cheap'),
+                        "slot_hints": getattr(spec, 'slot_hints', {}) or {},
+                    })
+                return _json.dumps({"templates": items})
+            except Exception:
+                return _json.dumps({"templates": []})
+
+        db_templates_catalog = _catalog_from_specs()
+
+        # Optional functional signatures catalog (external config; advisory only)
+        def _load_functional_signatures() -> str:
+            import os
+            from pathlib import Path
+            path = os.getenv("FUNCTIONAL_SIGNATURES_PATH", "config/functional_signatures.json")
+            p = Path(path)
+            if p.exists():
+                try:
+                    return p.read_text(encoding="utf-8")
+                except Exception:
+                    return _json.dumps({})
+            return _json.dumps({})
+
+        functional_signatures_catalog = _load_functional_signatures()
+
+        # Compute lightweight data profile (scale hints) if a genome was selected earlier in the workflow
+        data_profile = ""
+        try:
+            selected_genome = getattr(self, 'selected_genome', None)
+            if selected_genome and hasattr(self.rag_system, 'neo4j_processor') and self.rag_system.neo4j_processor.driver:
+                with self.rag_system.neo4j_processor.driver.session() as session:
+                    # Count genes for the selected genome
+                    gene_count = session.run(
+                        "MATCH (g:Gene)-[:BELONGSTOGENOME]->(gen:Genome {genomeId: $gid}) RETURN count(g) as c",
+                        gid=selected_genome,
+                    ).single().get("c", 0)
+                    # Approximate contig count via distinct gene.contig
+                    contig_count = session.run(
+                        "MATCH (g:Gene)-[:BELONGSTOGENOME]->(gen:Genome {genomeId: $gid}) RETURN count(DISTINCT g.contig) as c",
+                        gid=selected_genome,
+                    ).single().get("c", 0)
+                # Rough chunk estimate assuming ~100 genes per analysis chunk (heuristic only)
+                try:
+                    import math
+                    est_chunks = int(math.ceil((gene_count or 0) / 100.0))
+                except Exception:
+                    est_chunks = 0
+                data_profile = f"genome={selected_genome}; contigs={contig_count}; genes={gene_count}; est_chunks≈{est_chunks}"
+                # Stash in progress for later advisory checks
+                try:
+                    self._progress["est_chunks"] = est_chunks
+                except Exception:
+                    pass
+        except Exception as _e:
+            # Keep empty if any failure; hints are optional
+            data_profile = ""
+
+        # Generic policy/budget/tool-cost hints (non-binding)
+        policy_hints = "templates-only-db; prefer-cheap-first; actions-may-require-approval"
+        budget_state = "tokens_left=unknown; time_left=unknown; tool_budget=moderate"
+        tool_costs = _json.dumps({
+            "database_query": "cheap",
+            "whole_genome_reader": "expensive",
+            "similarity_search": "moderate",
+            "code_interpreter": "moderate",
+            "literature_search": "moderate",
+            "synthesize": "cheap"
+        })
         
         # Use model allocation for agent decisions (o3 for complex reasoning)
+        # Build progress_state JSON (advisory)
+        try:
+            progress_state = {
+                "candidates_collected": len(self._progress.get("distinct_protein_ids", set())),
+                "loci_built": int(self._progress.get("loci_built", 0)),
+                "last_row_count": int(self._progress.get("last_row_count", 0)),
+                "zero_result_streak": int(self._progress.get("zero_result_streak", 0)),
+            }
+            progress_state_json = _json.dumps(progress_state)
+        except Exception:
+            progress_state_json = _json.dumps({})
+
+        # Add dynamic hint for repeated no-op results
+        if self._progress.get("zero_result_streak", 0) >= 2:
+            policy_hints = policy_hints + "; no-op-repeat"
+
         def decision_call(module):
+            # Provide enriched, but non-binding, context to improve tool selection
             return module(
                 user_question=question,
                 previous_steps=steps_summary,
                 available_tools=available_tools_json,
-                current_findings=current_findings
+                current_findings=current_findings,
+                data_profile=data_profile,
+                policy_hints=policy_hints,
+                budget_state=budget_state,
+                db_templates_catalog=db_templates_catalog,
+                tool_costs=tool_costs,
+                functional_signatures_catalog=functional_signatures_catalog,
+                progress_state=progress_state_json,
             )
         
         logger.debug(f"🧠 Agent making decision for step {len(steps) + 1}")
@@ -372,13 +525,131 @@ class UnifiedAgentExecutor:
             query=question,
             task_context=f"Agent decision making for step {len(steps) + 1}"
         )
-        
+
         if result is None:
             raise Exception("Model allocation failed for agent decision")
-        
+
         logger.info(f"🧠 Agent decision: {result.next_action} (confidence: {result.confidence})")
         logger.debug(f"🎯 Reasoning: {result.biological_reasoning[:200]}...")
-        
+
+        # Advisory: mark WGR as requiring approval on large datasets based on est_chunks threshold (env-driven)
+        try:
+            import os as _os
+            threshold = int(_os.getenv("AGENT_WGR_APPROVAL_CHUNKS", "0"))  # 0 means disabled
+            est = int(self._progress.get("est_chunks", 0)) if isinstance(self._progress, dict) else 0
+            if result.next_action == "whole_genome_reader" and threshold > 0 and est >= threshold:
+                try:
+                    setattr(result, 'requires_approval', True)
+                    logger.info(f"⚠️ WGR on large dataset (est_chunks≈{est}) marked requires_approval (threshold={threshold})")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Attempt to repair or enrich tool parameters for strict tool schemas (non-binding, best-effort)
+        try:
+            next_action = getattr(result, 'next_action', '') or ''
+            params_text = getattr(result, 'tool_parameters', '') or ''
+            # Normalize to dict if JSON
+            try:
+                params_obj = _json.loads(params_text) if isinstance(params_text, str) and params_text.strip().startswith('{') else params_text
+            except Exception:
+                params_obj = {}
+
+            if next_action == 'database_query':
+                # Expect {'template': <str>, 'slots': {}}
+                need_repair = not isinstance(params_obj, dict) or 'template' not in params_obj or 'slots' not in params_obj or not isinstance(params_obj.get('slots'), dict)
+                if need_repair:
+                    schema = {
+                        "type": "object",
+                        "required": ["template", "slots"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "template": {"type": "string"},
+                            "slots": {"type": "object"}
+                        }
+                    }
+                    def repair_call(module):
+                        return module(
+                            instruction="Repair tool_parameters to match param_schema_json using db_templates_catalog.",
+                            tool_name=next_action,
+                            user_question=question,
+                            bad=params_text if isinstance(params_text, str) else _json.dumps(params_obj),
+                            db_templates_catalog=db_templates_catalog,
+                            param_schema_json=_json.dumps(schema)
+                        )
+                    fixed = self.model_allocator.create_context_managed_call(
+                        task_name="agent_decision_repair",
+                        signature_class=DecisionParamRepair,
+                        module_call_func=repair_call,
+                        query="agent_decision_repair",
+                        task_context="Agent decision parameter repair"
+                    )
+                    if fixed is not None:
+                        fixed_text = getattr(fixed, 'json', '') or ''
+                        try:
+                            fixed_obj = _json.loads(fixed_text)
+                            if isinstance(fixed_obj, dict) and 'template' in fixed_obj and 'slots' in fixed_obj:
+                                # Overwrite decision parameters with repaired JSON
+                                setattr(result, 'tool_parameters', _json.dumps(fixed_obj))
+                                logger.info("🔧 Repaired agent decision tool_parameters for database_query")
+                        except Exception:
+                            pass
+                # Secondary validation: try compiling the template; if it fails, perform one more repair with error context
+                try:
+                    from ..kg.cypher_templates.registry import compile_query  # type: ignore
+                    name = params_obj.get('template') if isinstance(params_obj, dict) else None
+                    slots = params_obj.get('slots') if isinstance(params_obj, dict) else None
+                    if isinstance(name, str) and isinstance(slots, dict):
+                        try:
+                            _cypher, _p = compile_query(name, slots)
+                        except Exception as comp_err:
+                            logger.warning(f"⚠️ Compile failed for template '{name}': {comp_err}. Attempting param repair with constraints.")
+                            def repair2_call(module):
+                                instruction = (
+                                    "Fix database_query parameters so that the template compiles.\n"
+                                    f"Current template: {name}\n"
+                                    f"Compile error: {str(comp_err)}\n"
+                                    "Use only templates/slots from db_templates_catalog; adjust slots accordingly."
+                                )
+                                return module(
+                                    instruction=instruction,
+                                    tool_name=next_action,
+                                    user_question=question,
+                                    bad=_json.dumps(params_obj),
+                                    db_templates_catalog=db_templates_catalog,
+                                    param_schema_json=_json.dumps({
+                                        "type": "object",
+                                        "required": ["template", "slots"],
+                                        "additionalProperties": False,
+                                        "properties": {"template": {"type": "string"}, "slots": {"type": "object"}},
+                                    }),
+                                )
+                            fixed2 = self.model_allocator.create_context_managed_call(
+                                task_name="agent_decision_repair",
+                                signature_class=DecisionParamRepair,
+                                module_call_func=repair2_call,
+                                query="agent_decision_repair2",
+                                task_context="Agent decision parameter repair (compile failure)"
+                            )
+                            if fixed2 is not None:
+                                fixed_text2 = getattr(fixed2, 'json', '') or ''
+                                try:
+                                    fixed_obj2 = _json.loads(fixed_text2)
+                                    if isinstance(fixed_obj2, dict) and 'template' in fixed_obj2 and 'slots' in fixed_obj2:
+                                        # Validate compile again
+                                        _cy2, _p2 = compile_query(fixed_obj2['template'], fixed_obj2['slots'])
+                                        setattr(result, 'tool_parameters', _json.dumps(fixed_obj2))
+                                        logger.info("🔧 Repaired agent decision tool_parameters after compile failure")
+                                except Exception:
+                                    pass
+                except Exception:
+                    # Ignore validation errors in preflight; downstream execution will still validate
+                    pass
+        except Exception as _e:
+            # Non-fatal; proceed with original decision
+            pass
+
         return result
     
     async def _execute_agent_step(self, step_number: int, tool_name: str, tool_parameters: str, 
@@ -449,15 +720,73 @@ class UnifiedAgentExecutor:
         )
     
     async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
-        """Execute database query via STRICT template path only."""
+        """Execute database query via STRICT template path only (envelope result)."""
+        from .tool_schemas import ToolResultEnvelope  # For shape reference only
+        from ..kg.cypher_templates.registry import SPECS  # type: ignore
+
         template = params.get("template")
         slots = params.get("slots", {})
         if not template:
             raise ValueError("database_query requires 'template' and 'slots' (strict mode)")
+        # Inject default limit for list-style templates when missing
+        try:
+            spec = SPECS.get(template)
+            if spec is not None:
+                returns = getattr(spec, 'returns', 'table')
+                # Heuristic: list-like templates that return gene/protein rows can be bounded by limit
+                if returns in ("protein", "gene") and isinstance(slots, dict) and "limit" not in slots:
+                    try:
+                        # Prefer policy engine if available
+                        default_limit = int(self.rag_system.policy_engine.get_max_results("database_query"))
+                    except Exception:
+                        import os as _os
+                        default_limit = int(_os.getenv("AGENT_DEFAULT_DB_LIMIT", "100"))
+                    slots["limit"] = max(1, min(default_limit, 5000))
+        except Exception:
+            pass
+        # Deduplicate identical template+slots within this executor instance
+        import json as _json
+        try:
+            sig = _json.dumps({"template": template, "slots": slots}, sort_keys=True)
+        except Exception:
+            sig = f"{template}|{str(sorted(slots.items()))}"
+        if sig in self._db_dedup_cache:
+            cached_env = self._db_dedup_cache[sig]
+            env = dict(cached_env)
+            env.setdefault("summary", {}).update({"deduplicated": True})
+            return env
+
         # Execute template safely through Neo4j processor
-        result = await self.rag_system.neo4j_processor.execute_named_template(template, slots)
-        # Return table rows as the step result
-        return result.results
+        qres = await self.rag_system.neo4j_processor.execute_named_template(template, slots)
+        rows = qres.results or []
+        row_count = len(rows)
+
+        # Build concise display text and structured envelope
+        display = f"template={template} rows={row_count}"
+        try:
+            logger.info(f"🔎 DB template executed: {template} slots={slots} rows={row_count}")
+        except Exception:
+            pass
+        envelope = {
+            "tool_name": "database_query",
+            "success": True,
+            "version": "1.0",
+            "display_text": display,
+            "structured_data": rows,
+            "summary": {
+                "template": template,
+                "slots": slots,
+                "row_count": row_count,
+                "debug": {
+                    "cypher": qres.metadata.get("cypher"),
+                    "execution_time_sec": qres.execution_time,
+                },
+            },
+            "references": [],
+        }
+        # Store in dedup cache and return
+        self._db_dedup_cache[sig] = envelope
+        return envelope
     
     async def _execute_whole_genome_reader(self, params: Dict[str, Any]) -> Any:
         """Execute hierarchical genomic analysis instead of raw data dumping."""
@@ -763,6 +1092,30 @@ class UnifiedAgentExecutor:
         result = literature_search(query, email, max_results=5)
         
         return result
+
+    async def _execute_neighborhood_extractor(self, params: Dict[str, Any]) -> Any:
+        """Execute DB-backed neighborhood extraction via curated templates."""
+        from .external_tools import neighborhood_extractor_tool
+        # Pass rag_system so the tool can execute DB templates
+        return await neighborhood_extractor_tool(
+            rag_system=self.rag_system,
+            protein_id=params.get("protein_id"),
+            contig=params.get("contig"),
+            start=params.get("start"),
+            end=params.get("end"),
+            k=params.get("k"),
+            limit=params.get("limit"),
+        )
+
+    async def _execute_annotation_discovery(self, params: Dict[str, Any]) -> Any:
+        """Execute integrated PFAM+KOFAM discovery for a keyword (default 'integrase')."""
+        from .external_tools import annotation_discovery_tool
+        return await annotation_discovery_tool(
+            rag_system=self.rag_system,
+            keyword=params.get("keyword") or params.get("q") or "integrase",
+            limit=int(params.get("limit", 100)),
+            protein_limit=int(params.get("protein_limit", 100)),
+        )
     
     async def _execute_traditional_query_logic(self, question: str) -> Any:
         """
@@ -1488,12 +1841,25 @@ analysis_results = {{
             
             # Handle database query results
             elif step.tool_name is None:  # database_query
-                if isinstance(step.result, list) and len(step.result) > 0:
+                # New envelope shape: dict with structured_data
+                if isinstance(step.result, dict) and 'structured_data' in step.result:
+                    rows = step.result.get('structured_data') or []
+                    if isinstance(rows, list) and rows:
+                        findings.append(f"Retrieved {len(rows)} database records")
+                        sample_size = min(3, len(rows))
+                        for record in rows[:sample_size]:
+                            if isinstance(record, dict):
+                                if "protein_id" in record or "gene_id" in record:
+                                    findings.append("Database results include protein/gene identifiers")
+                                    break
+                                if "ko_description" in record:
+                                    findings.append("Results include KEGG functional annotations")
+                                    break
+                # Legacy shape: direct list of rows
+                elif isinstance(step.result, list) and len(step.result) > 0:
                     findings.append(f"Retrieved {len(step.result)} database records")
-                    
-                    # Sample first few results to extract patterns
                     sample_size = min(3, len(step.result))
-                    for i, record in enumerate(step.result[:sample_size]):
+                    for record in step.result[:sample_size]:
                         if isinstance(record, dict):
                             if "protein_id" in record or "gene_id" in record:
                                 findings.append("Database results include protein/gene identifiers")
@@ -1599,7 +1965,60 @@ analysis_results = {{
             with open(debug_file, 'w') as f:
                 json.dump(debug_payload, f, indent=2, default=str)
             
-            logger.info(f"🐛 DEBUG: Saved task step {step_number} result to {debug_file.name} ({debug_payload['result_size_chars']} chars)")
+            logger.debug(f"🐛 DEBUG: Saved task step {step_number} result to {debug_file.name} ({debug_payload['result_size_chars']} chars)")
             
         except Exception as e:
             logger.warning(f"⚠️ Failed to save task debug data for step {step_number}: {e}")
+
+    def _update_progress(self, step: AgentStep) -> None:
+        """Update generic progress indicators from a completed step (non-hardcoded)."""
+        try:
+            prog = self._progress
+            if not isinstance(prog, dict):
+                return
+            # Database query path (tool_name None)
+            if step.tool_name is None:
+                rows = []
+                if isinstance(step.result, dict) and 'structured_data' in step.result:
+                    rows = step.result.get('structured_data') or []
+                elif isinstance(step.result, list):
+                    rows = step.result
+                row_count = len(rows) if isinstance(rows, list) else 0
+                prog["last_row_count"] = row_count
+
+                # Query signature from parameters
+                sig = None
+                try:
+                    if isinstance(step.tool_parameters, dict):
+                        if 'template' in step.tool_parameters and 'slots' in step.tool_parameters:
+                            sig = f"{step.tool_parameters['template']}|{_json.dumps(step.tool_parameters['slots'], sort_keys=True)}"
+                        else:
+                            sig = _json.dumps(step.tool_parameters, sort_keys=True)
+                    else:
+                        sig = str(step.tool_parameters)
+                except Exception:
+                    sig = None
+
+                last_sig = prog.get("last_query_signature")
+                if row_count == 0 and sig and sig == last_sig:
+                    prog["zero_result_streak"] = int(prog.get("zero_result_streak", 0)) + 1
+                else:
+                    prog["zero_result_streak"] = 0
+                if sig:
+                    prog["last_query_signature"] = sig
+
+                # Track distinct protein ids (if present generically)
+                if isinstance(rows, list):
+                    ids = [r.get('protein_id') for r in rows if isinstance(r, dict) and r.get('protein_id')]
+                    if ids and isinstance(prog.get("distinct_protein_ids"), set):
+                        prog["distinct_protein_ids"].update(ids)
+
+            elif step.tool_name == "neighborhood_extractor":
+                rows = []
+                if isinstance(step.result, dict) and 'structured_data' in step.result:
+                    rows = step.result.get('structured_data') or []
+                row_count = len(rows) if isinstance(rows, list) else 0
+                if row_count > 0:
+                    prog["loci_built"] = int(prog.get("loci_built", 0)) + 1
+        except Exception as e:
+            logger.debug(f"Progress update skipped: {e}")

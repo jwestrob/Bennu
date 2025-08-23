@@ -1,5 +1,4 @@
 MATCH (g:Gene {contig:$contig})
-WHERE g.start >= $start AND g.end <= $end
+WHERE toInteger(g.startCoordinate) >= $start AND toInteger(g.endCoordinate) <= $end
 RETURN g
-ORDER BY g.start;
-
+ORDER BY toInteger(g.startCoordinate);

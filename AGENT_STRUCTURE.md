@@ -1,192 +1,167 @@
-# Agent Architecture and Improvement Plan
+# Agent Architecture (Typed, Deterministic)
 
-This document explains the current agent architecture in this repository, how the pieces fit together, and concrete issues and improvements to consider. It’s based on a direct reading of the codebase (not aspirational docs), with file paths and key classes/functions referenced for clarity.
+This document reflects the current state of the GenomicRAG agent after the typed router + FSM refactor. It explains how components fit together and where strictness and determinism are enforced. References include concrete file paths to the implemented code.
 
 ## High‑Level Overview
 
-- Two execution modes coexist:
-  - Traditional RAG path: a single pass that classifies the question, plans retrieval, runs Cypher/semantic queries, optionally uses tools, then synthesizes an answer.
-  - Unified agent path: an agent loop that dynamically selects and chains tools over multiple steps, with periodic guidance synthesis and a final report.
-- Tool I/O is being standardized around Pydantic envelopes so tool outputs can be integrated consistently and cached.
-- DSPy signatures define planning, retrieval, and synthesis “contracts” and are used via a model allocation layer that chooses models per task.
-- Memory and progressive synthesis provide scalable accumulation of findings and token‑aware summarization.
+- Two-stage router + strict schemas:
+  - Stage A deterministic guardrail handles obvious intents (e.g., spatial → `whole_genome_reader`) with safe defaults.
+  - Stage B LLM router emits a single, strictly validated toolcall (Pydantic + JSON Schema), with one repair attempt.
+- FSM-governed agent loop: An `ActionGraph` finite state machine enforces legal transitions and prevents oscillations; enabled by default. Direct `PLAN → SYN` is allowed for end-of-loop synthesis.
+- Templates-only DB access: All Neo4j queries come from named, curated templates; free-form LLM Cypher generation is disabled in strict modes.
+- Immutable GenomeScope: Context is attached and propagated as an immutable scope across processors.
+- Observability: JSONL tracing is on by default with stubs for Langfuse/LangSmith.
+- Memory and progressive synthesis: Session notes, caching, and progressive synthesis remain for scalable summarization.
 
 ## Core Components
 
 - Orchestrator: `src/llm/rag_system/core.py`
-  - Class `GenomicRAG` is the main entry point (`ask()`), managing both execution modes and shared services.
-  - Initializes processors: `Neo4jQueryProcessor`, `LanceDBQueryProcessor`, `HybridQueryProcessor` (`src/llm/query_processor.py`).
-  - Configures DSPy and a model allocation layer (`memory/model_allocation.py`) to pick models per task (e.g., use o3 only for “agentic_planning” and “final_synthesis”).
-  - Traditional path: `QueryClassifier` → `ContextRetriever` (Cypher) → retrieval + optional tool runs (literature/code interpreter) → `GenomicAnswerer`.
-  - Agentic path: hands off to `UnifiedAgentExecutor` for multi‑step dynamic tool chaining and progressive synthesis; can fall back to traditional.
-  - Utilities: context formatting, compression gating, comparative query validation (e.g., avoid LIMIT 1 for cross‑genome queries), tool integration helpers, and genome scoping hooks.
+  - `GenomicRAG.ask()` is the entry point. It integrates the router, strict DB template mode, GenomeScope derivation, compression, and synthesis.
+  - Uses processors: `Neo4jQueryProcessor`, `LanceDBQueryProcessor`, `HybridQueryProcessor` (`src/llm/query_processor.py`).
+  - Integrates the unified router via `src/llm/rag_system/router/get_router()` and validates Stage A/B toolcalls with `agent/tools/validate.py`.
+  - Traditional path is now template-first: Stage B `database_query` runs `execute_named_template(...)`; a strict “templates-only” fast path can map NL questions → templates via `db_template_mapper.py`.
+  - GenomeScope: `src/llm/rag_system/context/scope.py` provides immutable scope; `_derive_scope_from_slots()` attaches scope where possible.
+  - Planning and answer generation still use DSPy signatures (`dspy_signatures.py`), but raw free-form Cypher generation is gated/disabled in strict modes.
 
-- DSPy Signatures: `src/llm/rag_system/dspy_signatures.py`
-  - `PlannerAgent`: decide traditional vs agentic.
-  - `QueryClassifier`, `ContextRetriever`: classify and generate Cypher (with strict formatting and domain rules such as CAZyme patterns, directional relationship hygiene).
-  - `GenomicAnswerer` (and summarizer/synthesizer signatures): produce final answers with biological rigor and citation requirements.
-  - File also documents an explicit Neo4j schema and “allowed” properties to constrain query generation.
+- Router (Two-Stage, Typed): `src/llm/rag_system/router/`
+  - `two_stage.py`: Stage A deterministic guardrail + Stage B LLM router orchestration; emits `RouterDecision`.
+  - `llm_router.py`: Single LLM router that predicts a toolcall; validates against `TOOLCALL_JSON_SCHEMA`; performs one repair via `ToolRouteRepair`.
+  - `signatures.py`: `ToolRoute` and `ToolRouteRepair` DSPy signatures, and `RouterDecision` dataclass.
 
-- Model Allocation: `src/llm/rag_system/memory/model_allocation.py`
-  - Centralized, task‑aware model picker with “optimized” vs “premium everywhere” modes.
-  - Defaults to cost‑optimized (use `gpt-4.1-mini` for most tasks; reserve `o3` for a few high‑value tasks). Includes robust fallbacks.
+- Toolcall Schemas and Validation: `src/llm/rag_system/agent/tools/`
+  - `schemas.py`: Pydantic models for toolcalls (`RouterToolCall`, `DBQueryParams`, `SimilarityParams`, `SpatialGenomeParams`) and matching JSON Schema.
+  - `validate.py`: Strict validator that rejects unknown fields (`extra='forbid'`) and provides a repair prompt helper.
 
 - Query Processors: `src/llm/query_processor.py`
-  - `Neo4jQueryProcessor`: raw Cypher with pre‑ and post‑repair (TaskRepairAgent), plus guardrails (strip comments, normalize, fix common relationship mistakes) and error→repair retry flow.
-  - `LanceDBQueryProcessor`, `HybridQueryProcessor` exist but the agent currently leans on Neo4j for structured steps.
+  - Neo4j: Free-form “auto-query” is disabled; use `execute_named_template(name, slots)` with `kg/cypher_templates/registry.py` compilers/validators.
+  - LanceDB: Deterministic similarity search with runtime ESM2 embedder available for `by_sequence` mode (`embedding/runtime_embedder.py`) and manifest parity checks.
+  - Optional curated GDS wrappers are behind a flag and exposed via safe call sites only.
 
-- Tools + Tool Schemas
-  - Pydantic Envelopes: `src/llm/rag_system/tool_schemas.py`
-    - `ToolResultEnvelope` provides a stable envelope: `tool_name`, `success`, `display_text`, optional `structured_data`, timing/usage, and references.
-    - Supporting models for contexts (Gene/Contig/Genome), literature articles, code interpreter results, and synthesis inputs/claims (for future guardrails).
-  - Tool Implementations: `src/llm/rag_system/external_tools.py`
-    - `whole_genome_reader_tool(...)`: spatial genome reading; caches by normalized parameter set; returns envelope.
-    - `genome_selector_tool(...)`: intelligent genome targeting; returns envelope.
-    - `literature_search(...)`: PubMed via Biopython; returns envelope with article models.
-    - `code_interpreter_tool(...)`: async HTTP to a sandboxed service; returns envelope with stdout/output mapped.
-    - `report_synthesis_tool(...)`: signals that synthesis should run using the memory system.
-    - `AVAILABLE_TOOLS` and `TOOL_CAPABILITIES` registry for agent selection.
+- Cypher Template Library: `src/llm/kg/cypher_templates/*`
+  - Template files and a registry with slot validation and compilers for special cases (e.g., `count_by_label`, adjacency `*_neighbors_k`).
+  - Deterministic defaults: enforce or inject `LIMIT` from policy when appropriate. Template metadata (category, returns, cost, slot_hints) is exposed to the agent via a JSON catalog; compile-aware repair validates params before execution.
+  - Discovery templates: `pfam_search.cypher`, `kofam_search.cypher`, `proteins_with_pfams.cypher`, `proteins_with_kos.cypher` (PFAM/KOFAM catalog search + union protein fetch).
+  - Neighborhood templates: `protein_flanking_genes_5.cypher` (fixed 5 up/down neighbors), plus debug helpers `gene_next_degree.cypher`, `contig_gene_index.cypher`.
+  - Compiler slot normalization: for list-based templates, singular or scalar inputs are normalized (e.g., `pfam`→`pfams=[...]`, `ko`→`kos=[...]`); coerces `limit` to int.
 
-- Unified Agent Executor: `src/llm/rag_system/agent_executor.py`
-  - `UnifiedAgentExecutor` replaces the older TaskGraph executor for the agentic path.
-  - Loop: make decision (LLM `AgentDecisionMaker`) → execute tool or DB query → collect results → optional guidance synthesis every N steps → final comprehensive synthesis.
-  - Tools executed via internal methods:
-    - `database_query`: routes through “traditional” query logic.
-    - `whole_genome_reader`: currently calls `WholeGenomeReader` and a hierarchical analyzer directly (see note below), returning a dict with `tool_output`.
-    - `code_interpreter`: generates analysis code from step data and executes the interpreter; expects meaningful printed output and a JSON block for structured findings when present.
-    - `literature_search`: calls the external tool wrapper and returns text.
-  - Step data is accumulated in `_previous_step_data` as a dict keyed by step, used to drive analysis‑code generation.
-  - Progressive synthesis is used both for periodic “guidance” updates and final reporting, leveraging `NoteKeeper` and `ProgressiveSynthesizer`.
+- Unified Agent Executor (FSM): `src/llm/rag_system/agent_executor.py`
+  - FSM-enabled by default (`AGENT_FSM_STRICT=1`): states `PLAN → (DB|SIM|GENOME) → ACCUM → DECIDE → (PLAN|SYN)` (`fsm/action_graph.py`).
+  - `database_query` path is template-only and returns tabular rows; a per-executor dedup cache suppresses repeated identical template+slot queries within a run.
+  - `neighborhood_extractor` supports batch extraction via `protein_ids`; the executor/agent can pass seeds directly to extract all loci in one step.
+  - `whole_genome_reader` uses hierarchical analysis; `literature_search`/`code_interpreter` remain available.
+  - Progressive synthesis used for guidance and final answers; tool results cached via `ToolResultCache` and expanded during synthesis (notes carry references).
+  - Soft progress signals passed to decisions: `progress_state` (candidates collected, loci built, last_row_count, zero_result_streak, est_chunks). Optional advisory `requires_approval` is set when heavy tools are proposed on large datasets.
 
-- Hierarchical Spatial Analysis: `src/llm/rag_system/whole_genome_reader.py` and `hierarchical_analysis/*`
-  - `WholeGenomeReader`: pulls all genes per contig ordered by coordinates; organizes plus/minus strands and formats rich LLM‑readable context.
-  - `HierarchicalGenomeAnalyzer` and `GenomicChunkAnalyzer`: chunk spatial context (token‑aware) and let sub‑agents identify “interesting loci”, then generate a curated, analyzable output with summaries and details.
-  - In the agent path, `UnifiedAgentExecutor` uses this hierarchical flow instead of dumping raw spatial text.
+- Tools + Tool Result Envelope
+  - Envelope models: `src/llm/rag_system/tool_schemas.py` (`ToolResultEnvelope`, genome/literature/code models) used by external tools for stable outputs.
+  - Implementations: `src/llm/rag_system/external_tools.py` with `AVAILABLE_TOOLS` and `TOOL_CAPABILITIES` for selection metadata.
+    - `annotation_discovery`: keyword-driven PFAM+KOFAM discovery (case-insensitive). Uses `pfam_search` and `kofam_search` then fetches proteins via `proteins_with_pfams`/`proteins_with_kos`. Returns deduped proteins + candidate annotations.
+    - `neighborhood_extractor` (DB-backed): extracts local neighborhoods via curated templates. Modes:
+      - Single-seed: `protein_neighbors_k` (k-step adjacency) or (default) `protein_flanking_genes_5` (5 upstream + 5 downstream by contig order).
+      - Windowed: `neighbors_by_window` (contig + start + end).
+      - Batch: `protein_ids=[...]` runs per-seed neighborhoods in one call; auto-seeds from last DB result if no seeds provided (capped by `seeds_limit`).
+      - Adds `summary_table` (seed → row_count) and an advisory for very large batches.
+    - `whole_genome_reader`: remains for broad spatial reads (small genomes); metadata no longer recommends it for per-locus neighborhood extraction.
 
-- Memory and Synthesis: `src/llm/rag_system/memory/*`
-  - `NoteKeeper`: manages session/task notes and paths; `ToolResultCache` stores large tool results off‑trace with references.
-  - `ProgressiveSynthesizer`: Map‑Reduce style progressive synthesis with token‑aware decisions, guidance (“lightweight”) vs report (“comprehensive”) modes, caching, and model allocation integration.
+- Observability: `src/llm/rag_system/tracing.py`
+  - JSONL tracing default-on; `get_tracer()` supports `AGENT_TRACING=jsonl:...` and stubs for Langfuse/LangSmith.
+  - Reduced console noise: large debug file saves now emit at debug level; concise DB/neighborhood execution logs retained.
 
-- Legacy Task System (still present): `task_management.py`, `task_executor.py`, `agent_tool_selector.py`
-  - DAG of `Task` objects with tool selection (LLM‑first), executor, and enhanced logging.
-  - Intended to be superseded in the agentic path by `UnifiedAgentExecutor`, but still used by parts of the traditional flow and for compatibility.
+- Legacy Task System (gated off by default)
+  - TaskGraph types remain behind `AGENT_ENABLE_LEGACY_TASKGRAPH=0` by default to avoid drift. The unified agent + FSM supersedes legacy loops.
 
 ## Execution Flows
 
-1) Traditional Path (single pass)
-   - Plan and classify (`PlannerAgent`, `QueryClassifier`).
-   - Generate Cypher (`ContextRetriever`), apply genome scoping if detected, validate comparative queries.
-   - Run Neo4j; compress if needed; optionally run `literature_search` and/or `code_interpreter` based on heuristics.
-   - Synthesize (`GenomicAnswerer`); return structured result with metadata.
+1) Router-First Traditional Path (typed)
+   - Stage A guardrail may force `whole_genome_reader` with safe defaults; toolcall is validated.
+   - Stage B `database_query` uses named templates only; default `limit` injected via policy when missing.
+   - Results are formatted, optionally compressed, optional tools run, then synthesized via `GenomicAnswerer`.
 
-2) Unified Agent Path (multi‑step)
-   - `AgentDecisionMaker` chooses next action: database query, `whole_genome_reader`, `code_interpreter`, `literature_search`, or `synthesize`.
-   - Each step stores results, updates “current findings”, and optionally writes task notes.
-   - Every N steps, run guidance synthesis to steer the loop; stop when the agent decides to synthesize.
-   - Final report uses all notes/raw data via progressive synthesis.
+2) Unified Agent Path (FSM)
+   - FSM governs steps: decide → execute (`database_query`/`neighborhood_extractor`/`whole_genome_reader`/`literature_search`/`code_interpreter`) → accumulate → decide → synthesize.
+   - Returns a structured execution trace with steps, tools used, and final synthesis.
 
 ## Data and Graph Considerations
 
-- Spatial adjacency
-  - KG bulk‑load now emits `next_relationships.csv` from `genes.csv` (see `src/build_kg/csv_neighbors.py` and `rdf_to_csv_converter.py`), and `Neo4jBulkLoader` supports creating indices and either precomputing or loading adjacency.
-  - `WholeGenomeReader` currently orders genes by `(contig, startCoordinate)` directly; adjacency edges (`:NEXT`) can enable efficient neighborhood/window queries and multi‑hop traversals for future tools.
+- Spatial adjacency and windows
+  - Neo4j templates include coordinate and adjacency patterns; adjacency helpers (`gene_neighbors_k`, `protein_neighbors_k`) avoid in-graph SPARQL-like scans and use deterministic expansions.
+  - `WholeGenomeReader` provides ordered per-contig contexts; hierarchical analyzers curate interesting loci for the LLM.
+  - Compiled neighborhood queries use `CALL (g) { ... }` subqueries and order by `toInteger(startCoordinate)` to avoid deprecation warnings and ensure numerical sort.
 
 - Indices and constraints
-  - `scripts/neo4j/indices.cypher` defines uniqueness constraints and useful indexes (composite `Gene(contig,startCoordinate,endCoordinate)`, full‑text indexes, etc.). `Neo4jBulkLoader` also applies them programmatically post‑import.
+  - `scripts/neo4j/indices.cypher` and loader utilities establish constraints and indexes for predictable performance.
 
-## Issues and Risks Observed
+## Current Issues and Risks
 
-- Tool I/O contract is only partially unified
-  - External tools return `ToolResultEnvelope`, but the agent’s `_execute_whole_genome_reader` method returns a dict with `tool_output` and not an envelope. Mixing shapes requires special‑case handling downstream.
-  - Some integration points read `display_text` (envelope) while others look for `tool_output` (custom dict). This can cause brittle branching and missed data.
+- Tool I/O shape mismatch (minor)
+  - External tools return `ToolResultEnvelope`, while `_execute_whole_genome_reader` returns a dict with `tool_output`. A thin adapter would fully unify shapes.
 
-- Duplicate or divergent capability metadata
-  - `TOOL_CAPABILITIES` is large and currently defined in `external_tools.py`. There’s overlap with selector logic elsewhere and the agent’s own heuristics. Risk of drift if definitions are copy‑pasted or re‑declared.
+- Capability metadata drift
+  - `TOOL_CAPABILITIES` lives alongside agent heuristics; keep a single source of truth to avoid divergence.
 
-- Two systems in parallel
-  - Unified agent vs TaskGraph executor both exist, plus a separate “traditional with tools” branch in `core.py`. Duplication increases maintenance and reasoning complexity.
+- Template coverage gaps
+  - Free-form Cypher is disabled; uncommon queries may require adding new templates and mapper rules.
+  - Domain (PFAM) matching can be versioned or name-based; use flexible matching (`STARTS WITH`/description contains) when `exact=false`.
 
-- Code interpreter contract is implicit
-  - The agent expects printed “ANALYSIS RESULTS” JSON blocks (regex‑extracted) and general output text. A defined schema for analysis outputs would reduce parsing fragility and improve downstream synthesis.
+- Runtime embedder dependencies
+  - `by_sequence` similarity requires transformers+torch; ensure environment is prepared and LanceDB dimensions match the manifest.
 
-- Model allocation knobs are static
-  - Current rules are hand‑tuned (e.g., keep most tasks on `gpt-4.1-mini`). We lack dynamic gating by budget, token counts, or “return‑on‑reasoning” signals from recent steps.
+- Tracing providers
+  - JSONL tracing is default; external providers are stubs pending integration.
 
-- Logging/telemetry not structured
-  - Rich, informative logs exist (with emojis), but there’s no standardized structured telemetry or trace IDs across steps/tools. Harder to benchmark and regress.
+## Flags and Defaults
 
-- Validation and guardrails
-  - `GenomicAnswerer` describes citation/identifier requirements, but enforcement is best‑effort. There’s scaffolding (`Claim`, `SynthesisInput`) for evidence‑backed synthesis that isn’t yet enforced end‑to‑end.
+- See `docs/AGENT_FLAGS.md` for details. Key defaults:
+  - `AGENT_FSM_STRICT=1` (FSM on), `AGENT_DB_TEMPLATES_ONLY=1` (templates-only DB), `AGENT_DEFAULT_DB_LIMIT=100`.
+  - Legacy TaskGraph/Selectors disabled by default.
+  - `AGENT_WGR_APPROVAL_CHUNKS` (default: 0 disabled): when set >0, marks `whole_genome_reader` decisions as `requires_approval=true` if estimated chunks exceed threshold (advisory only).
 
-- Caching is ad‑hoc
-  - Genome reading caches in an in‑module dict (no TTL, no size bound). Tool result caching exists under memory’s session dir, but not all tools integrate uniformly.
-
-## Recommended Improvements
-
-1) Unify tool contracts end‑to‑end
-   - Ensure every tool call returns a `ToolResultEnvelope` (including the hierarchical `whole_genome_reader` path). Provide adapters so older code that expects `tool_output` reads `display_text` from the envelope.
-   - Ingest envelopes centrally in `core.py` and `agent_executor.py` via a small helper that extracts `display_text`, merges `structured_data`, and records `references` into `NoteKeeper`.
-
-2) Centralize tool capability metadata
-   - Move `TOOL_CAPABILITIES` into a single JSON/YAML and reference it from both the agent and selector(s). Add a small linter/test to prevent drift.
-
-3) Standardize analysis outputs for `code_interpreter`
-   - Define a Pydantic `AnalysisResultEnvelope` with required keys (`summary`, `statistics`, `key_findings`, optional `dataframes` schema) and require the interpreter to emit machine‑readable JSON in stdout. Replace regex extraction with strict JSON parsing and validation.
-
-4) Unify execution paths
-   - Gradually retire `TaskGraph` for agentic flows and keep a single traditional path plus a single unified agent path. Reuse the same tool selection logic (LLM‑first) in the traditional path when tools are considered.
-
-5) Tighten DSPy signatures and prompts
-   - Reduce duplication across `PlannerAgent`, `QueryClassifier`, `ContextRetriever`. Explicitly thread the Neo4j schema snippet relevant to a question (rather than the entire block) to lower token use and reduce off‑schema queries.
-   - Consider splitting `GenomicAnswerer` into a short “validator” signature that checks contig/scaffold citation rules before finalization, followed by a final synthesis signature.
-
-6) Dynamic model allocation and budgeting
-   - Add budget/time/token gates that can promote a task to `o3` when prior attempts on `mini` underperform, or demote when the agent’s next actions are routine. Log these decisions for evaluation.
-
-7) Structured telemetry and evals
-   - Emit a compact JSON event per step with: `session_id`, `step`, `tool`, `decision_reasoning`, `tokens_in/out`, `latency_ms`, `result_size`, `error`. Wire to simple CSV/JSONL for offline analysis.
-   - Add seed evals (case studies) that measure: answer correctness, time, token cost, tool mix, and hallucination rate. Integrate into CI with small synthetic DB snapshots.
-
-8) Graph adjacency usage
-   - Add neighborhood/window queries powered by `:NEXT` (e.g., “N genes to either side”). Expose a `neighborhood_reader` tool that takes `gene_id`/`contig` + window size and returns an envelope with an ordered neighborhood.
-   - This enables targeted spatial analysis without full genome dumps and improves latency.
-
-9) Hardening and hygiene
-   - Bound caches (LRU + TTL) for genome reading. Normalize and de‑duplicate common logging. Remove dead/duplicated constants. Ensure `tiktoken` fallbacks don’t degrade behavior.
-
-## Notable File/Module Map (agent‑related)
+## File Map (Quick Reference)
 
 - Orchestrator: `src/llm/rag_system/core.py`
-- Agent loop: `src/llm/rag_system/agent_executor.py`
-- DSPy signatures: `src/llm/rag_system/dspy_signatures.py`
-- Tools: `src/llm/rag_system/external_tools.py` and schemas `tool_schemas.py`
-- Hierarchical analysis: `src/llm/rag_system/whole_genome_reader.py`, `hierarchical_analysis/*`
-- Memory/synthesis: `src/llm/rag_system/memory/*`
-- Legacy task system: `task_management.py`, `task_executor.py`, `agent_tool_selector.py`
-- Processors: `src/llm/query_processor.py`
+- Router: `src/llm/rag_system/router/{two_stage.py,llm_router.py,signatures.py}`
+- Toolcall schemas: `src/llm/rag_system/agent/tools/{schemas.py,validate.py}`
+- FSM: `src/llm/rag_system/fsm/action_graph.py`
+- Templates: `src/llm/kg/cypher_templates/*` + `registry.py`
+- Query processors: `src/llm/query_processor.py`
+- Runtime embedder: `src/llm/embedding/runtime_embedder.py`
+- Agent executor: `src/llm/rag_system/agent_executor.py`
+- Tool envelope + tools: `src/llm/rag_system/{tool_schemas.py,external_tools.py}`
+- Tracing: `src/llm/rag_system/tracing.py`
 
-## Concrete Next Steps (suggested order)
+## Template/Param Defaults and Repair
 
-1) Tool envelope unification
-   - Refactor `UnifiedAgentExecutor._execute_whole_genome_reader` to call the external tool wrapper or to wrap its current dict into a `ToolResultEnvelope`. Add a tiny compatibility shim in the agent to consume envelopes only.
+- Compile-aware defaults: `registry.compile_query` injects safe defaults for optional slots (e.g., `proteins_with_pfam.exact=false`) to prevent ParameterMissing errors.
+- Execution-time limits: `_execute_database_query` injects `limit` from policy/env for list templates when missing (bounded 1–5000).
+- Param repair: when a decision emits invalid/missing params, a single repair attempt is made; if compile fails, a second repair includes the compile error + catalog context. Only repaired params that compile are used.
+ - Slot normalization: for list-based templates (`proteins_with_pfams`, `proteins_with_kos`), compiler tolerates scalar and singular keys, normalizing to proper list slots.
 
-2) Neighborhood tool
-   - Implement `neighborhood_reader_tool` that leverages `:NEXT` with a bounded window, returning a concise, structured neighborhood for follow‑on analysis.
+## Decision Context Enrichment
 
-3) Code‑interpreter schema and parser
-   - Define and enforce an `AnalysisResultEnvelope` and update code generator templates so the interpreter always prints strict JSON blocks. Replace regex parsing with Pydantic validation.
+- `db_templates_catalog`: includes template metadata (category, returns, cost, slot_hints) for the LLM to choose concrete DB steps.
+- `data_profile`: real contig/gene counts + `est_chunks` to inform tool cost/scale.
+- `tool_costs`, `policy_hints`: neutral hints (cheap-first, templates-only-db, may require approval). No hard-coded logic.
+- `functional_signatures_catalog` (optional config): alias panels (e.g., PFAM/KOFAM) passed as advisory context.
 
-4) Execution path cleanup
-   - Route “traditional with tools” through the same tool selection logic as the agent (or share a small selector helper). Begin deprecating the TaskGraph executor for agentic flows.
+## Discovery-First + Batch Neighborhoods (Deterministic Plan)
 
-5) Telemetry + eval harness
-   - Add a minimal event logger and a small eval suite (including your upcoming case study) to track accuracy/time/token cost/tool usage. Use it to drive DSPy signature tweaks and model allocation rules.
+- Discovery-first preflight (recommended):
+  - Extract a neutral functional keyword from the query.
+  - Run `annotation_discovery` once to collect PFAM+KOFAM candidates and union proteins; fall back to `proteins_with_pfam` if nothing found.
+  - Run `neighborhood_extractor` in batch with `protein_ids` (flanks or k-step) for the top-N seeds; then synthesize.
+- Two-stage router vs. unified agent:
+  - A Stage‑A guard routes to `annotation_discovery` for functional keywords; the unified agent should adopt the same preflight so both paths behave identically.
 
-6) Prompt/signature hardening
-   - Split “validation” from final synthesis and add explicit checks for required citations/identifiers. Add schema‑guided prompt snippets instead of the full block where possible.
+## Dev Utilities
 
-7) Caching and policy
-   - Add TTL + size bounds to genome reading cache; centralize tool result caching behind a common interface; expose policy toggles in config for guidance frequency, tool usage, and compression thresholds.
+- Template smoke test: `scripts/smoke_test_templates.py` compiles all templates and can execute a safe subset (`--run`) against a dev DB to catch schema drift early.
 
-With these changes, the agent becomes simpler to reason about (one smart traditional path + one unified agent path), more reliable (typed tool contracts), and more efficient (adjacency‑powered neighborhoods, dynamic model allocation, and consistent telemetry for tuning).
+## Consolidation Plan (Single Path)
 
+- Goal: Remove behavioral drift between the two surfaces (TwoStageRouter and UnifiedAgentExecutor) and converge on a single, deterministic, template‑first flow.
+- Approach:
+  - Add a discovery‑first preflight to UnifiedAgentExecutor (extract neutral keyword → `annotation_discovery` once → seeds → batch `neighborhood_extractor`) and run it before the FSM loop.
+  - Make TwoStageRouter a thin shim that delegates to the same preflight; Stage‑B LLM routing becomes advisory for rare cases only.
+  - Keep one source of truth for template metadata (SPECS) and tool capabilities; both preflight and agent decisions read from it.
+  - Retain compile‑time slot normalization and per‑executor DB dedup cache.
+  - Outcome: Consistent, cheap, DB‑first behavior across all entry points.

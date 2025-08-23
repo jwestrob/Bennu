@@ -122,6 +122,8 @@ class ModelAllocation:
             "comprehensive_analysis": TaskComplexity.COMPLEX,
             "cross_database_integration": TaskComplexity.COMPLEX,
             "tool_selection": TaskComplexity.COMPLEX,           # Agent-based tool selection needs biological reasoning
+            "agent_decision": TaskComplexity.COMPLEX,           # FSM decision making
+            "agent_decision_repair": TaskComplexity.COMPLEX,    # Repair of decision parameters
             "code_generation": TaskComplexity.MEDIUM,           # Generate analysis code based on user questions
         }
         
@@ -135,7 +137,7 @@ class ModelAllocation:
         # Only use o3 for specific high-value tasks
         self.premium_tasks = {
             "agentic_planning",      # Agent planning decisions
-            "final_synthesis"        # Final report generation
+            "final_synthesis",       # Final report generation
         }
         
         logger.info(f"🎯 Model allocation initialized (premium_everywhere={use_premium_everywhere})")

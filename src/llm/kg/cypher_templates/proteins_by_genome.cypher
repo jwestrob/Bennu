@@ -1,3 +1,3 @@
-MATCH (g:Genome {id:$genome_id})<-[:BELONGSTOGENOME]-(p:Protein)
-RETURN p;
-
+MATCH (gen:Genome {genomeId:$genome_id})<-[:BELONGSTOGENOME]-(gene:Gene)
+MATCH (gene)<-[:ENCODEDBY]-(p:Protein)
+RETURN DISTINCT p;
