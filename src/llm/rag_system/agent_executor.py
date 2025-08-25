@@ -283,6 +283,30 @@ class UnifiedAgentExecutor:
         try:
             from ..options.router import parse_macro_intent
             intent = parse_macro_intent(question)
+            # Two-stage fallback: if grammar fails to parse, try Canonicalizer → DSL → Lark
+            if not intent:
+                try:
+                    from ..intent.canonicalizer import canonicalize
+                    from ..intent.dsl_renderer import render_to_dsl
+                    from ..options.intent_grammar import parse_intent as _parse_dsl
+                    canon, raw = canonicalize(question, self.note_keeper, self.model_allocator)
+                    dsl = render_to_dsl(canon)
+                    # Persist DSL string
+                    try:
+                        if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                            dbg = self.note_keeper.session_path / "debug_data_flow"
+                            dbg.mkdir(exist_ok=True)
+                            with open(dbg / "canonicalizer.dsl.txt", 'w') as f:
+                                f.write(dsl)
+                    except Exception:
+                        pass
+                    intent = _parse_dsl(dsl)
+                    if not intent:
+                        logger.info("CANONICAL_FALLBACK_PARSE_FAIL: DSL did not parse; escalating")
+                        return None
+                except Exception as e2:
+                    logger.info(f"CANONICAL_FALLBACK_FAIL: {e2}")
+                    return None
             if not intent or intent.option_name != "LocusDiscovery":
                 logger.info("MFP_PRECHECK: intent_unparsed_or_not_locus")
                 return None
