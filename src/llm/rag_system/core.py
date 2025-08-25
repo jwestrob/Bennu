@@ -277,6 +277,56 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     "error": "Missing dependencies"
                 }
             
+            # STEP 0: Macro Fast Path (deterministic, zero LLM) if enabled
+            try:
+                if getattr(self.config, "FAST_PATH_ENABLED", True):
+                    from .agent_executor import UnifiedAgentExecutor
+                    # Fail fast if obligations require missing tool
+                    try:
+                        from ..options.router import parse_macro_intent
+                        from ..options.obligations import ObligationLedger
+                        from .external_tools import AVAILABLE_TOOLS
+                        it0 = parse_macro_intent(question)
+                        logger.info(f"GRAMMAR_ROUTER_PARSABLE={bool(it0)}")
+                        # Optional fail-fast on grammar parse errors to focus on compile issues
+                        if not it0 and getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
+                            raise RuntimeError("FAST_PATH_GRAMMAR_PARSE_FAIL: intent could not be parsed by grammar router")
+                        if it0:
+                            ledger0 = ObligationLedger.from_intent(it0)
+                            if ledger0.state.get("lancedb_knn", {}).get("required") and (
+                                "lancedb_knn" not in AVAILABLE_TOOLS or AVAILABLE_TOOLS.get("lancedb_knn") is None
+                            ):
+                                raise RuntimeError(
+                                    "CONFIG_ERROR: obligation 'lancedb_knn' requires tool 'lancedb_knn' but it is not registered."
+                                )
+                    except Exception as preflight_err:
+                        # Respect fail-fast: bubble up grammar/tool preflight errors
+                        if getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
+                            raise
+                        logger.info(f"Fast Path preflight skipped: {preflight_err}")
+                    fp_agent = UnifiedAgentExecutor(self, note_keeper=self.note_keeper)
+                    fp_result = await fp_agent._try_fast_path_locus_discovery(question)
+                    if fp_result is not None:
+                        console.print("🚄 [bold green]Macro Fast Path executed[/bold green]")
+                        return {
+                            "question": question,
+                            "answer": fp_result.final_answer,
+                            "confidence": fp_result.confidence,
+                            "citations": fp_result.citations,
+                            "query_metadata": {
+                                "execution_mode": "macro_fast_path",
+                                "total_steps": fp_result.total_steps,
+                                "tools_used": fp_result.tools_used,
+                                "execution_time": fp_result.total_execution_time,
+                                "note_taking_enabled": self.note_keeper is not None,
+                            },
+                        }
+            except Exception as e:
+                # Respect fail-fast on grammar/tool compile errors
+                if getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
+                    raise
+                logger.info(f"Macro Fast Path not taken: {e}")
+
             # STEP 1: Let the LLM decide execution strategy directly
             console.print("🤖 [bold]Using LLM-based execution planning[/bold]")
             
@@ -1069,6 +1119,109 @@ print("Data summary:", data_summary)
 print("General analysis for question: {question[:50]}...")
 print("Data available: {data_summary}")
 """
+
+    # Fast-path finalization helper: render structure-first summary or optionally call heavy model
+    def _finalize_from_locus_cards(self, cards, meta, use_heavy: bool = False) -> str:
+        try:
+            if not use_heavy:
+                lines = []
+                lines.append(f"LocusDiscovery (deterministic): {len(cards)} seeds contextualized.")
+                for i, c in enumerate(cards or [], 1):
+                    contig = getattr(c, 'contig_id', '')
+                    genome = getattr(c, 'genome_id', '')
+                    neigh = len(getattr(c, 'neighbors', []) or [])
+                    seed_id = getattr(c, 'seed_protein_id', None) or '?'
+                    lines.append(f"{i}. seed={seed_id} contig={contig} genome={genome} neighbors={neigh}")
+                # Append concise kNN neighbor info if available
+                if meta and meta.get('knn'):
+                    lines.append("kNN stage executed.")
+                    kr = meta.get('knn_results')
+                    try:
+                        # kr may be a list with one dict mapping or a dict
+                        if isinstance(kr, list) and kr and isinstance(kr[0], dict):
+                            kr = kr[0]
+                        if isinstance(kr, dict):
+                            lines.append("Nearest neighbors:")
+                            shown = 0
+                            for sid, items in kr.items():
+                                if shown >= 5:
+                                    break
+                                top = items[:2] if isinstance(items, list) else []
+                                nbrs = ", ".join([f"{r.get('protein_id')} (d={r.get('distance')})" for r in top])
+                                lines.append(f"  - {sid}: {nbrs}")
+                                shown += 1
+                    except Exception:
+                        pass
+                return "\n".join(lines)
+            # Optional: single heavy synthesis over structured cards
+            if not self.progressive_synthesizer:
+                from .memory import ProgressiveSynthesizer, NoteKeeper
+                nk = self.note_keeper or NoteKeeper()
+                self.progressive_synthesizer = ProgressiveSynthesizer(nk)
+            # Heavy call: summarize loci context
+            payload = {
+                "cards": [c.__dict__ if hasattr(c, '__dict__') else c for c in (cards or [])],
+                "meta": meta or {},
+            }
+            # Promote kNN neighbors to top-level keys the synthesizer can spot
+            try:
+                if isinstance(meta, dict):
+                    if 'neighbors_full' in meta:
+                        payload['neighbors_full'] = meta.get('neighbors_full')
+                    if 'knn_results' in meta:
+                        payload['knn_picked'] = meta.get('knn_results')
+                    if 'knn_stats' in meta:
+                        payload['knn_stats'] = meta.get('knn_stats')
+            except Exception:
+                pass
+            result_text = self.progressive_synthesizer.synthesize_progressive(
+                task_notes=[],
+                question="Summarize loci from structured context",
+                synthesis_mode="report",
+                raw_data=[payload],
+            )
+            # Deterministic postscript: always report LanceDB stage outcome if present
+            try:
+                ps_lines = []
+                if isinstance(payload, dict):
+                    has_knn = bool(payload.get('meta', {}).get('knn')) if isinstance(payload.get('meta'), dict) else False
+                    stats = payload.get('knn_stats') if 'knn_stats' in payload else payload.get('meta', {}).get('knn_stats')
+                    if has_knn or isinstance(stats, dict):
+                        ps_lines.append("\n\nLanceDB kNN (deterministic summary):")
+                        if isinstance(stats, dict):
+                            counts = stats.get('neighbors_counts') or {}
+                            topk = stats.get('topk')
+                            total_seeds = len(counts) if isinstance(counts, dict) else 0
+                            total_neighbors = 0
+                            if isinstance(counts, dict):
+                                try:
+                                    total_neighbors = sum(int(v or 0) for v in counts.values())
+                                except Exception:
+                                    total_neighbors = 0
+                            ps_lines.append(f"- Queried seeds: {total_seeds}; topk: {topk}")
+                            ps_lines.append(f"- Neighbors after filtering: {total_neighbors}")
+                            # Show up to 5 per-seed counts
+                            if isinstance(counts, dict) and counts:
+                                shown = 0
+                                for sid, cnt in counts.items():
+                                    if shown >= 5:
+                                        break
+                                    ps_lines.append(f"  • {sid}: {cnt}")
+                                    shown += 1
+                        else:
+                            ps_lines.append("- kNN stage executed; no statistics available")
+                if ps_lines:
+                    try:
+                        ps_block = ''.join((line + '\n') for line in ps_lines)
+                        result_text = (result_text + "\n" + ps_block).rstrip()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return result_text
+        except Exception as e:
+            logger.warning(f"_finalize_from_locus_cards error: {e}")
+            return "No loci passed deterministic gating; planner escalation not needed."
     
     def _integrate_tool_results(self, original_context: str, tool_results: Dict[str, Any]) -> str:
         """Integrate tool results into the context."""

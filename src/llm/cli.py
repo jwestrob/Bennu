@@ -54,15 +54,18 @@ def ask(
         # Validate configuration
         status = config.validate_configuration()
         if not all(status.values()):
-            console.print("[red]⚠️  Configuration issues detected:[/red]")
-            for component, ok in status.items():
-                icon = "✅" if ok else "❌"
-                console.print(f"  {icon} {component}")
-            
-            if not status.get('llm_configured', False):
-                console.print("\n[yellow]💡 Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable[/yellow]")
-            
-            raise typer.Exit(1)
+            # Allow Macro Fast Path when FAST_PATH_ENABLED and Neo4j is configured
+            fast_path_ok = getattr(config, 'FAST_PATH_ENABLED', True) and status.get('neo4j_configured', False)
+            if not fast_path_ok:
+                console.print("[red]⚠️  Configuration issues detected:[/red]")
+                for component, ok in status.items():
+                    icon = "✅" if ok else "❌"
+                    console.print(f"  {icon} {component}")
+
+                if not status.get('llm_configured', False):
+                    console.print("\n[yellow]💡 Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable[/yellow]")
+
+                raise typer.Exit(1)
         
         # Process question
         response = asyncio.run(_process_question(question, config))

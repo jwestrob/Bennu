@@ -16,6 +16,7 @@ from .tool_schemas import (
     GenomeSelectorResultModel,
 )
 from dataclasses import is_dataclass, asdict
+from ..tools.lancedb_knn import lancedb_knn_tool
 
 logger = logging.getLogger(__name__)
 
@@ -512,6 +513,9 @@ async def neighborhood_extractor_tool(
     - contig + start + end (+ optional limit) -> 'neighbors_by_window'
     """
     try:
+        logger.info(
+            f"TOOL_INVOCATION neighborhood_extractor: protein_id={protein_id} protein_ids={bool(protein_ids)} contig={contig} k={k} limit={limit}"
+        )
         # Helper to detect placeholder protein IDs that won't exist in DB
         def _is_placeholder_pid(pid: Optional[str]) -> bool:
             if not pid:
@@ -527,6 +531,7 @@ async def neighborhood_extractor_tool(
         # Batch mode: explicit list of seeds
         if protein_ids and isinstance(protein_ids, list):
             seeds = [pid for pid in protein_ids if isinstance(pid, str) and not _is_placeholder_pid(pid)]
+            logger.info(f"NEIGHBORHOOD_BATCH: seeds={len(seeds)} (showing up to 5) sample={seeds[:5]}")
             if seeds_limit:
                 try:
                     seeds = seeds[: int(seeds_limit)]
@@ -660,6 +665,9 @@ async def neighborhood_extractor_tool(
                             data = json.loads(f.read_text())
                             rows = (data.get('tool_result') or {}).get('structured_data') or []
                             for row in rows:
+                                pid0 = row.get('protein_id')
+                                if isinstance(pid0, str) and pid0 not in seeds and not _is_placeholder_pid(pid0):
+                                    seeds.append(pid0)
                                 s = row.get('p') or row.get('protein') or ''
                                 m = re.search(r"'id':\s*'([^']+)'", str(s))
                                 if m:
@@ -873,10 +881,29 @@ AVAILABLE_TOOLS = {
     "neighborhood_extractor": neighborhood_extractor_tool,
     "annotation_discovery": annotation_discovery_tool,
     "report_synthesis": report_synthesis_tool,
+    "lancedb_knn": lancedb_knn_tool,
 }
 
 # Enhanced tool capabilities for agent-based selection
 TOOL_CAPABILITIES = {
+    'database_query': {
+        'description': 'Execute curated Cypher templates (compiled; no free-form queries)',
+        'when_to_use': [
+            'Look up proteins/genes/domains via registry templates',
+            'Count or list entities with deterministic limits',
+            'Seed IDs for downstream tools (neighborhoods, LanceDB)'
+        ],
+        'when_NOT_to_use': [
+            'Large spatial scans (use whole_genome_reader)',
+            'Neighborhood extraction (use neighborhood_extractor)'
+        ],
+        'biological_scope': 'discovery|listing|counts',
+        'query_indicators': ['find proteins', 'with pfam', 'with ko', 'in pathway'],
+        'biological_functions': ['annotation_lookup', 'entity_listing'],
+        'input_types': ['template', 'slots'],
+        'output_types': ['table'],
+        'analysis_types': ['discovery']
+    },
     'whole_genome_reader': {
         'description': 'Read complete genome(s) in spatial coordinate order for discovery-based genomic analysis',
         'when_to_use': [

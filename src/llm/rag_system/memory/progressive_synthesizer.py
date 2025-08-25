@@ -1025,6 +1025,120 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                     connections = [f"{conn['from_task']} → {conn['to_task']}" 
                                  for conn in item['cross_connections'][:3]]
                     formatted_item += f"Cross-connections: {'; '.join(connections)}\n"
+            elif isinstance(item, dict) and 'cards' in item:
+                # Structured locus cards from fast path; include PFAM/KO when present
+                cards = item.get('cards') or []
+                formatted_lines = [f"LocusDiscovery: {len(cards)} loci contextualized"]
+                # Show marker context if available
+                try:
+                    marker = item.get('meta', {}).get('marker') if isinstance(item.get('meta'), dict) else None
+                    if marker:
+                        formatted_lines.append(f"Marker: {marker}")
+                except Exception:
+                    pass
+                for idx, card in enumerate(cards, 1):
+                    try:
+                        seed = card.get('seed_protein_id') if isinstance(card, dict) else getattr(card, 'seed_protein_id', '?')
+                        contig = card.get('contig_id') if isinstance(card, dict) else getattr(card, 'contig_id', '')
+                        genome = card.get('genome_id') if isinstance(card, dict) else getattr(card, 'genome_id', '')
+                        neighbors = card.get('neighbors') if isinstance(card, dict) else getattr(card, 'neighbors', [])
+                        ncount = len(neighbors or [])
+                        formatted_lines.append(f"{idx}. seed={seed} contig={contig} genome={genome} neighbors={ncount}")
+                        # Seed annotations (PFAM/KO) if present
+                        try:
+                            spf = card.get('seed_pfams', []) if isinstance(card, dict) else []
+                            sko = card.get('seed_kos', []) if isinstance(card, dict) else []
+                            spf_show = ", ".join(spf[:3]) if spf else "-"
+                            sko_show = ", ".join(sko[:3]) if sko else "-"
+                            formatted_lines.append(f"   seed_ann: pfams=[{spf_show}] kos=[{sko_show}]")
+                        except Exception:
+                            pass
+                        # Show up to 3 neighbors with PFAM/KO details when present
+                        for nb in (neighbors or [])[:3]:
+                            pid = nb.get('protein_id') if isinstance(nb, dict) else nb
+                            pfams = nb.get('pfams', []) if isinstance(nb, dict) else []
+                            kos = nb.get('kos', []) if isinstance(nb, dict) else []
+                            # Show up to 2 identifiers for each to keep concise
+                            p_show = ", ".join(pfams[:2]) if pfams else "-"
+                            k_show = ", ".join(kos[:2]) if kos else "-"
+                            formatted_lines.append(f"   • {pid} pfams=[{p_show}] kos=[{k_show}]")
+                    except Exception:
+                        # Be robust to shape drift
+                        continue
+                # Summarize kNN neighbors if present in payload
+                nbrs_full = item.get('neighbors_full') if isinstance(item, dict) else None
+                stats = item.get('knn_stats') if isinstance(item, dict) else None
+                # Always include a LanceDB section if the stage ran (stats present) even if empty
+                if isinstance(stats, dict):
+                    counts = stats.get('neighbors_counts') or {}
+                    topk = stats.get('topk')
+                    ns = stats.get('exclude_namespace')
+                    needle = stats.get('filter_needle')
+                    markers = stats.get('filter_markers') or []
+                    formatted_lines.append(f"LanceDB kNN: topk={topk} seeds={len(counts) if isinstance(counts, dict) else 0}")
+                    # Briefly show filter criteria
+                    try:
+                        m_show = ", ".join(markers[:3]) if isinstance(markers, list) and markers else "-"
+                        n_show = needle if isinstance(needle, str) and needle else "-"
+                        ns_show = ns if isinstance(ns, str) and ns else "-"
+                        formatted_lines.append(f"filter: ns={ns_show} needle='{n_show}' markers=[{m_show}]")
+                        # Include criteria summary (if provided)
+                        ins = stats.get('include_namespace')
+                        ineed = stats.get('include_needle')
+                        imarks = stats.get('include_markers') or []
+                        if ins or ineed or imarks:
+                            ins_show = ins if isinstance(ins, str) and ins else "-"
+                            in_show = ineed if isinstance(ineed, str) and ineed else "-"
+                            im_show = ", ".join(imarks[:3]) if isinstance(imarks, list) and imarks else "-"
+                            formatted_lines.append(f"include: ns={ins_show} needle='{in_show}' markers=[{im_show}]")
+                    except Exception:
+                        pass
+                    # If we have neighbors_full with entries, list the top 5 per seed
+                    if isinstance(nbrs_full, dict) and nbrs_full:
+                        # Determine how many to show per seed (cap at 10 to keep readable)
+                        try:
+                            nn_cfg = 5
+                            meta = item.get('meta') if isinstance(item.get('meta'), dict) else item.get('meta')
+                            if isinstance(meta, dict) and isinstance(meta.get('nn'), int):
+                                nn_cfg = max(1, min(int(meta.get('nn')), 10))
+                            show_n = nn_cfg
+                        except Exception:
+                            show_n = 5
+                        formatted_lines.append(f"kNN neighbors (top {show_n} per seed):")
+                        shown = 0
+                        for sid, rows in nbrs_full.items():
+                            if shown >= 5:
+                                break
+                            try:
+                                top = rows[:show_n] if isinstance(rows, list) else []
+                                parts = []
+                                for r in top:
+                                    if not isinstance(r, dict):
+                                        continue
+                                    rid = r.get('protein_id') or r.get('id') or 'unknown'
+                                    sim = r.get('similarity')
+                                    dist = r.get('distance')
+                                    if sim is not None:
+                                        parts.append(f"{rid} (sim={sim})")
+                                    elif dist is not None:
+                                        parts.append(f"{rid} (d={dist})")
+                                    else:
+                                        parts.append(str(rid))
+                                formatted_lines.append(f"  - {sid}: {', '.join(parts)}")
+                                shown += 1
+                            except Exception:
+                                continue
+                    else:
+                        # Summarize counts (even if zero)
+                        if isinstance(counts, dict) and counts:
+                            formatted_lines.append("kNN counts:")
+                            shown = 0
+                            for sid, cnt in counts.items():
+                                if shown >= 5:
+                                    break
+                                formatted_lines.append(f"  - {sid}: {cnt}")
+                                shown += 1
+                formatted_item = "\n".join(formatted_lines) + "\n"
             else:
                 # Raw data item
                 formatted_item = f"Data Item {i+1}: {str(item)}\n"

@@ -214,7 +214,9 @@ class UnifiedAgentExecutor:
             "neighborhood_extractor": self._execute_neighborhood_extractor,
             "annotation_discovery": self._execute_annotation_discovery,
             "code_interpreter": self._execute_code_interpreter,
-            "literature_search": self._execute_literature_search
+            "literature_search": self._execute_literature_search,
+            "lancedb_knn": self._execute_lancedb_knn,
+            "report_synthesis": self._execute_report_synthesis,
         }
         # Dedup cache for database queries (template+slots signature → envelope)
         self._db_dedup_cache: Dict[str, Any] = {}
@@ -241,10 +243,215 @@ class UnifiedAgentExecutor:
         logger.info("🤖 UnifiedAgentExecutor initialized - dynamic tool chaining enabled")
         # Initialize FSM for typed transitions
         self._fsm = FSM()
+        # Obligation ledger for deterministic scheduling (optional)
+        self.obligation_ledger = None
+        # Router config debug
+        try:
+            from ..options.router import USE_GRAMMAR_ROUTER as _UGR
+            logger.info(f"ROUTER_CONFIG: USE_GRAMMAR_ROUTER={_UGR}")
+        except Exception:
+            pass
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
-        # Enforce FSM-governed workflow to avoid oscillations (legacy loop removed)
+        """Entrypoint for user questions.
+        
+        Guarded Macro Fast Path (MFP) runs first if enabled and intent matches;
+        otherwise falls back to the FSM-governed reactive planner.
+        """
+        try:
+            # Stash current question for downstream guards/fallbacks
+            try:
+                self.current_question = question
+            except Exception:
+                pass
+            # Fast Path preflight (deterministic, zero LLM calls)
+            if getattr(self.rag_system.config, "FAST_PATH_ENABLED", True):
+                fp_result = await self._try_fast_path_locus_discovery(question)
+                if fp_result is not None:
+                    return fp_result
+        except Exception as e:
+            logger.warning(f"Fast Path preflight failed or skipped: {e}")
+
+        # Enforce FSM-governed workflow to avoid oscillations
         return await self._execute_agent_workflow_fsm(question, selected_genome)
+
+    async def _try_fast_path_locus_discovery(self, question: str) -> Optional[AgentExecutionResult]:
+        """Attempt Macro Fast Path locus discovery if the intent matches.
+
+        Returns AgentExecutionResult on success, or None to fall back.
+        """
+        try:
+            from ..options.router import parse_macro_intent
+            intent = parse_macro_intent(question)
+            if not intent or intent.option_name != "LocusDiscovery":
+                logger.info("MFP_PRECHECK: intent_unparsed_or_not_locus")
+                return None
+        except Exception:
+            logger.info("MFP_PRECHECK: intent_exception")
+            return None
+
+        # Build deterministic option with file-based template runner
+        try:
+            from ..options.template_runner import FileCypherRunner
+            from ..options.locus_discovery import LocusDiscoveryOption, LocusCard
+        except Exception as e:
+            logger.warning(f"Fast Path modules unavailable: {e}")
+            return None
+
+        from ..options.obligations import ObligationLedger
+        db_runner = FileCypherRunner(self.rag_system.neo4j_processor.driver)
+        # Provide lancedb only if present and configured; otherwise keep None to avoid imports
+        ldb = None
+        option = LocusDiscoveryOption(
+            db=db_runner,
+            lancedb=ldb,
+            config={
+                "SKEPTIC_ENABLED": getattr(self.rag_system.config, "SKEPTIC_ENABLED", True),
+                "min_contig_len": 1500,
+            }
+        )
+        ledger = ObligationLedger.from_intent(intent)
+        logger.info(
+            "MFP_INTENT: marker=%s N=%s k=%s ldb_required=%s nn=%s",
+            intent.marker,
+            getattr(intent.N, "value", None),
+            getattr(intent.flank, "value", None),
+            ledger.state.get("lancedb_knn", {}).get("required"),
+            ledger.state.get("lancedb_knn", {}).get("nn"),
+        )
+
+        start = time.time()
+        k = int(intent.flank.value or 4)
+        required_knn = getattr(intent.obligations, "lancedb_knn", None)
+        nn = int(required_knn.nn) if (required_knn and required_knn.required and required_knn.nn) else 0
+        cards, meta = option.run(
+            marker=intent.marker,
+            N=int(intent.N.value or 5),
+            k=k,
+            nn=nn,
+        )
+        elapsed = time.time() - start
+
+        # Mark obligations
+        ledger.mark_done("seed_selection")
+        ledger.mark_done("neighborhoods")
+        # Add marker context to meta for synthesis
+        try:
+            if isinstance(meta, dict):
+                meta.setdefault('marker', intent.marker)
+        except Exception:
+            pass
+        # If LanceDB required, satisfy via first-class tool wrapper for cache/synth compatibility
+        if nn > 0 and getattr(self.rag_system, 'lancedb_processor', None):
+            try:
+                ids = [c.seed_protein_id for c in cards if getattr(c, 'seed_protein_id', None)]
+                if ids:
+                    logger.info("TOOL_INVOCATION: lancedb_knn (fast_path)")
+                    logger.info(f"LDB_KNN_PARAMS: seeds={len(ids)} nn={nn}")
+                    ex_ns = (required_knn.exclude_namespace or 'pfam') if required_knn else 'pfam'
+                    ex_markers = (required_knn.exclude_markers or []) if required_knn else []
+                    env = await self._execute_lancedb_knn({
+                        'seed_ids': ids,
+                        'nn': nn,
+                        'topk': max(10, 10 * nn),
+                        'distance': getattr(required_knn, 'distance', 'cosine'),
+                        'exclude_namespace': ex_ns,
+                        'exclude_markers': ex_markers,
+                    })
+                    # Populate meta in a shape the synthesizer recognizes
+                    sd = env.get('structured_data') if isinstance(env, dict) else None
+                    neighbors_full = None
+                    picked = None
+                    stats = None
+                    try:
+                        if isinstance(sd, list) and len(sd) >= 2 and isinstance(sd[1], dict):
+                            neighbors_full = sd[1].get('neighbors_full')
+                        if isinstance(sd, list) and len(sd) >= 1 and isinstance(sd[0], dict):
+                            picked = (sd[0].get('picked') or {})
+                            stats = sd[0].get('stats')
+                    except Exception:
+                        neighbors_full = None
+                    meta['knn'] = True
+                    # Persist results/stats even if empty so synthesis can report zero matches
+                    if picked is not None:
+                        meta['knn_results'] = picked
+                    if neighbors_full is not None:
+                        meta['neighbors_full'] = neighbors_full
+                    if stats is not None:
+                        meta['knn_stats'] = stats
+                    ledger.mark_done('lancedb_knn')
+            except Exception as e:
+                logger.info(f"Fast Path: LanceDB stage skipped due to error: {e}")
+
+        if meta.get("escalate") or ledger.unmet():
+            logger.info(
+                f"Fast Path: escalating to planner; meta={meta}, unmet={list(ledger.unmet().keys())}"
+            )
+            return None
+
+        # Synthesize final answer (FSM-parity heavy summary)
+        try:
+            final_answer = self.rag_system._finalize_from_locus_cards(cards, meta, use_heavy=True)
+        except Exception:
+            final_answer = self._render_locus_cards_summary(cards)
+
+        # Emit final MFP_RESULT after kNN/meta updates
+        try:
+            logger.info(
+                "MFP_RESULT: seeds=%d escalate=%s knn_present=%s",
+                len(cards or []),
+                meta.get("escalate"),
+                bool(meta.get("knn")),
+            )
+        except Exception:
+            pass
+
+        step = AgentStep(
+            step_number=1,
+            tool_name="fast_path_locus_discovery",
+            tool_parameters={
+                "marker": intent.marker,
+                "N": int(intent.N.value or 5),
+                "k": k,
+                "nn": nn,
+            },
+            reasoning="Deterministic MFP: seeds → EVI gate → batched neighborhoods → persist loci",
+            result={
+                "count": len(cards),
+                "meta": meta,
+                "seeds": [getattr(c, 'seed_protein_id', None) for c in cards],
+                "contigs": list({c.contig_id for c in cards}),
+            },
+            execution_time=elapsed,
+            success=True,
+            error=None,
+        )
+
+        return AgentExecutionResult(
+            question=question,
+            success=True,
+            steps=[step],
+            final_answer=final_answer,
+            confidence="high",
+            citations="",
+            total_execution_time=elapsed,
+            total_steps=1,
+            tools_used=["fast_path_locus_discovery"],
+            error=None,
+        )
+
+    def _render_locus_cards_summary(self, cards: List[Any]) -> str:
+        if not cards:
+            return "No loci passed deterministic gating; planner escalation not needed."
+        lines = []
+        lines.append(f"LocusDiscovery (deterministic): {len(cards)} seeds contextualized.")
+        for i, c in enumerate(cards, 1):
+            contig = getattr(c, "contig_id", "")
+            genome = getattr(c, "genome_id", "")
+            neigh = len(getattr(c, "neighbors", []) or [])
+            seed = getattr(c, 'seed_protein_id', None)
+            lines.append(f"{i}. seed={seed} contig={contig} genome={genome} neighbors={neigh}")
+        return "\n".join(lines)
 
     async def _execute_agent_workflow_fsm(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
         """FSM-governed agent workflow with typed transitions and strict cycle control."""
@@ -260,6 +467,20 @@ class UnifiedAgentExecutor:
         self._fsm.state = State.PLAN
         if self.note_keeper:
             self.note_keeper.set_session_context(question, "unified_agent_fsm")
+        # Initialize obligation ledger early for scheduling if applicable
+        try:
+            from ..options.router import parse_macro_intent
+            from ..options.obligations import ObligationLedger
+            intent0 = parse_macro_intent(question)
+            if intent0:
+                self.obligation_ledger = ObligationLedger.from_intent(intent0)
+                # Fail fast if tool is required but missing
+                if self.obligation_ledger.state.get("lancedb_knn", {}).get("required"):
+                    from .external_tools import AVAILABLE_TOOLS
+                    if "lancedb_knn" not in AVAILABLE_TOOLS or AVAILABLE_TOOLS.get("lancedb_knn") is None:
+                        raise RuntimeError("CONFIG_ERROR: obligation 'lancedb_knn' requires tool 'lancedb_knn' but it is not registered.")
+        except Exception as e:
+            logger.info(f"Obligation ledger init skipped: {e}")
         try:
             for step_number in range(1, self.max_steps + 1):
                 logger.info(f"🔄 FSM Agent step {step_number}/{self.max_steps}")
@@ -318,6 +539,22 @@ class UnifiedAgentExecutor:
                 self._update_previous_step_data(steps)
                 self._update_progress(step_result)
                 self._save_task_debug_data(step_result, step_number)
+                # Optional fail-fast: abort agent workflow on first tool error (e.g., template compile failure)
+                if (not step_result.success) and getattr(self.rag_system.config, 'FAIL_FAST_ON_TOOL_ERROR', False):
+                    total_time = time.time() - start_time
+                    logger.error(f"FAIL_FAST: Aborting on step {step_number} error: {step_result.error}")
+                    return AgentExecutionResult(
+                        question=question,
+                        success=False,
+                        steps=steps,
+                        final_answer=f"Aborted due to tool error at step {step_number}: {step_result.error}",
+                        confidence="low",
+                        citations="",
+                        total_execution_time=total_time,
+                        total_steps=len(steps),
+                        tools_used=tools_used,
+                        error=step_result.error,
+                    )
                 if self.note_keeper and step_result.success:
                     self._save_agent_step_as_note(step_result, question)
                 if step_result.tool_name and step_result.tool_name not in tools_used:
@@ -340,7 +577,36 @@ class UnifiedAgentExecutor:
                 except Exception as fsm_err:
                     logger.error(f"FSM post-exec warning: {fsm_err}")
 
-            # Final synthesis
+            # Final synthesis (pre-synthesis obligation gate)
+            # Build ledger opportunistically once before finalization
+            if self.obligation_ledger is None:
+                try:
+                    from ..options.router import parse_macro_intent
+                    from ..options.obligations import ObligationLedger
+                    intent = parse_macro_intent(question)
+                    if intent:
+                        self.obligation_ledger = ObligationLedger.from_intent(intent)
+                except Exception:
+                    self.obligation_ledger = None
+            if self.obligation_ledger is None:
+                logger.info("FINALIZATION_GATE: no_obligation_ledger_present")
+            if self.obligation_ledger is not None and self.obligation_ledger.unmet():
+                unmet = list(self.obligation_ledger.unmet().keys())
+                logger.error(f"FINALIZATION_BLOCKED: unmet obligations: {unmet}")
+                total_time = time.time() - start_time
+                return AgentExecutionResult(
+                    question=question,
+                    success=False,
+                    steps=steps,
+                    final_answer=f"Cannot finalize; unmet obligations: {unmet}",
+                    confidence="low",
+                    citations="",
+                    total_execution_time=total_time,
+                    total_steps=len(steps),
+                    tools_used=tools_used,
+                    error="unmet_obligations",
+                )
+
             logger.info("📊 Running final reporting synthesis with all notes (FSM mode)")
             final_answer, confidence, citations = await self._run_reporting_synthesis(
                 question=question,
@@ -400,7 +666,17 @@ class UnifiedAgentExecutor:
         
         # Prepare available tools information (structured JSON)
         try:
-            available_tools_json = _json.dumps(TOOL_CAPABILITIES)
+            caps = TOOL_CAPABILITIES
+            # Obligation-aware restriction: prioritize neighborhoods, then LanceDB
+            if getattr(self, "obligation_ledger", None):
+                unmet = self.obligation_ledger.unmet()
+                if "neighborhoods" in unmet:
+                    caps = {k: v for k, v in TOOL_CAPABILITIES.items() if k == "neighborhood_extractor"}
+                    logger.info("FSM_ALLOWED_TOOLS: ['neighborhood_extractor']")
+                elif "lancedb_knn" in unmet:
+                    caps = {k: v for k, v in TOOL_CAPABILITIES.items() if k == "lancedb_knn"}
+                    logger.info("FSM_ALLOWED_TOOLS: ['lancedb_knn']")
+            available_tools_json = _json.dumps(caps)
         except Exception:
             available_tools_json = str(TOOL_CAPABILITIES)
 
@@ -532,6 +808,110 @@ class UnifiedAgentExecutor:
         logger.info(f"🧠 Agent decision: {result.next_action} (confidence: {result.confidence})")
         logger.debug(f"🎯 Reasoning: {result.biological_reasoning[:200]}...")
 
+        # Enforce obligation-aware tool choice (neighborhoods first, then lancedb_knn)
+        try:
+            if getattr(self, "obligation_ledger", None):
+                unmet = self.obligation_ledger.unmet()
+                if "neighborhoods" in unmet:
+                    # Force neighborhoods using recent seeds from cache if present
+                    seed_ids: List[str] = []
+                    try:
+                        from pathlib import Path
+                        import json as _json2
+                        session_path = getattr(getattr(self, 'note_keeper', None), 'session_path', None)
+                        if session_path:
+                            tool_dir = Path(session_path) / 'tool_results'
+                            if tool_dir.exists():
+                                db_files = sorted(tool_dir.glob('db_*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+                                for f in db_files[:5]:
+                                    data = _json2.loads(f.read_text())
+                                    rows = (data.get('tool_result') or {}).get('structured_data') or []
+                                    for row in rows:
+                                        pid = row.get('protein_id') or row.get('id')
+                                        if isinstance(pid, str) and pid not in seed_ids:
+                                            seed_ids.append(pid)
+                                    if len(seed_ids) >= 10:
+                                        break
+                    except Exception:
+                        seed_ids = []
+                    if seed_ids:
+                        setattr(result, 'next_action', 'neighborhood_extractor')
+                        setattr(result, 'tool_parameters', _json.dumps({
+                            'protein_ids': seed_ids,
+                            'seeds_limit': 5,
+                        }))
+                        logger.info(f"🔒 Obligation gate: forcing neighborhood_extractor with seeds={len(seed_ids)}")
+                elif "lancedb_knn" in unmet:
+                    # Hard enforce: redirect to lancedb_knn with best-effort seeds
+                    try:
+                        from ..options.router import parse_macro_intent
+                        intent0 = parse_macro_intent(question)
+                        nn_val = unmet["lancedb_knn"].get("nn") or (getattr(getattr(intent0, 'nn', None), 'value', None) or 2)
+                    except Exception:
+                        nn_val = 2
+                    # Try to extract recent seed_ids from cached DB results
+                    seed_ids: List[str] = []
+                    try:
+                        from pathlib import Path
+                        import json as _json2
+                        session_path = getattr(getattr(self, 'note_keeper', None), 'session_path', None)
+                        if session_path:
+                            tool_dir = Path(session_path) / 'tool_results'
+                            if tool_dir.exists():
+                                db_files = sorted(tool_dir.glob('db_*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+                                for f in db_files[:5]:
+                                    data = _json2.loads(f.read_text())
+                                    rows = (data.get('tool_result') or {}).get('structured_data') or []
+                                    for row in rows:
+                                        # Accept sanitized rows ({"protein_id": ...}) or nested node maps
+                                        pid = row.get('protein_id') or row.get('id')
+                                        if not pid:
+                                            p = row.get('p') or row.get('protein')
+                                            if isinstance(p, dict):
+                                                pid = p.get('id')
+                                        if isinstance(pid, str) and pid not in seed_ids:
+                                            seed_ids.append(pid)
+                                    if len(seed_ids) >= 10:
+                                        break
+                    except Exception:
+                        seed_ids = []
+                    # If no seeds yet, nudge the planner to fetch PFAM seeds deterministically
+                    if not seed_ids:
+                        # Overwrite decision toward a deterministic DB fetch using registry template
+                        from ..kg.cypher_templates.registry import SPECS  # type: ignore
+                        if 'proteins_with_pfam' in SPECS:
+                            try:
+                                from ..options.router import parse_macro_intent
+                                it = parse_macro_intent(question)
+                                marker = getattr(it, 'marker', None) or 'integrase'
+                            except Exception:
+                                marker = 'integrase'
+                            setattr(result, 'next_action', 'database_query')
+                            setattr(result, 'tool_parameters', _json.dumps({
+                                'template': 'proteins_with_pfam',
+                                'slots': {'pfam': marker, 'limit': 50, 'exact': False}
+                            }))
+                            logger.info("🔒 Obligation gate: forcing database_query(proteins_with_pfam) to collect seeds")
+                        else:
+                            # As last resort, preserve decision and let repair step try again
+                            pass
+                    else:
+                        setattr(result, 'next_action', 'lancedb_knn')
+                        # Use default PFAM exclusion if present in ledger
+                        ex = unmet.get('lancedb_knn', {})
+                        tool_params = {
+                            'seed_ids': seed_ids,
+                            'nn': int(nn_val),
+                            'topk': max(10, 10 * int(nn_val)),
+                            'distance': 'cosine',
+                            'exclude_namespace': ex.get('exclude_namespace') or 'pfam',
+                            'exclude_markers': ex.get('exclude_markers') or [],
+                        }
+                        setattr(result, 'tool_parameters', _json.dumps(tool_params))
+                        logger.info(f"🔒 Obligation gate: forcing lancedb_knn with seeds={len(seed_ids)} nn={nn_val}")
+        except Exception:
+            pass
+
         # Advisory: mark WGR as requiring approval on large datasets based on est_chunks threshold (env-driven)
         try:
             import os as _os
@@ -555,6 +935,24 @@ class UnifiedAgentExecutor:
                 params_obj = _json.loads(params_text) if isinstance(params_text, str) and params_text.strip().startswith('{') else params_text
             except Exception:
                 params_obj = {}
+
+            # If the agent mistakenly returned a DB template name as a tool, map it to database_query
+            try:
+                from ..kg.cypher_templates.registry import SPECS  # type: ignore
+                if next_action and next_action not in self.tools and next_action in SPECS:
+                    orig = next_action
+                    setattr(result, 'next_action', 'database_query')
+                    # Seed minimal parameters; downstream repair/validation will fill slots
+                    setattr(result, 'tool_parameters', _json.dumps({"template": orig, "slots": params_obj if isinstance(params_obj, dict) else {}}))
+                    next_action = 'database_query'
+                    params_text = getattr(result, 'tool_parameters', '') or ''
+                    try:
+                        params_obj = _json.loads(params_text)
+                    except Exception:
+                        params_obj = {}
+                    logger.info(f"🔁 Mapped template-name '{orig}' to database_query tool")
+            except Exception:
+                pass
 
             if next_action == 'database_query':
                 # Expect {'template': <str>, 'slots': {}}
@@ -590,8 +988,10 @@ class UnifiedAgentExecutor:
                         try:
                             fixed_obj = _json.loads(fixed_text)
                             if isinstance(fixed_obj, dict) and 'template' in fixed_obj and 'slots' in fixed_obj:
-                                # Overwrite decision parameters with repaired JSON
+                                # Overwrite decision parameters with repaired JSON and update locals
                                 setattr(result, 'tool_parameters', _json.dumps(fixed_obj))
+                                params_text = getattr(result, 'tool_parameters', '') or ''
+                                params_obj = fixed_obj
                                 logger.info("🔧 Repaired agent decision tool_parameters for database_query")
                         except Exception:
                             pass
@@ -640,6 +1040,8 @@ class UnifiedAgentExecutor:
                                         # Validate compile again
                                         _cy2, _p2 = compile_query(fixed_obj2['template'], fixed_obj2['slots'])
                                         setattr(result, 'tool_parameters', _json.dumps(fixed_obj2))
+                                        params_text = getattr(result, 'tool_parameters', '') or ''
+                                        params_obj = fixed_obj2
                                         logger.info("🔧 Repaired agent decision tool_parameters after compile failure")
                                 except Exception:
                                     pass
@@ -718,16 +1120,68 @@ class UnifiedAgentExecutor:
             success=success,
             error=error
         )
+
+    async def _execute_lancedb_knn(self, params: Dict[str, Any]) -> Any:
+        """Execute LanceDB kNN tool via first-class tool wrapper."""
+        from .external_tools import AVAILABLE_TOOLS
+        tool = AVAILABLE_TOOLS.get("lancedb_knn")
+        if tool is None:
+            raise RuntimeError("Tool 'lancedb_knn' not registered")
+        # Required params
+        seed_ids = params.get("seed_ids") or []
+        nn = int(params.get("nn") or 0)
+        if not seed_ids or nn <= 0:
+            raise ValueError("lancedb_knn requires 'seed_ids' (list) and 'nn' (>0)")
+        # Optional params
+        topk = int(params.get("topk") or max(10, 10 * nn))
+        distance = params.get("distance", "cosine")
+        exclude_namespace = params.get("exclude_namespace", "pfam")
+        exclude_markers = params.get("exclude_markers") or []
+        # Invoke tool
+        result = await tool(
+            rag_system=self.rag_system,
+            seed_ids=seed_ids,
+            nn=nn,
+            topk=topk,
+            distance=distance,
+            exclude_namespace=exclude_namespace,
+            exclude_markers=exclude_markers,
+        )
+        # Mark obligation done on success
+        try:
+            if getattr(self, 'obligation_ledger', None) and result and result.get('success'):
+                self.obligation_ledger.mark_done('lancedb_knn')
+        except Exception:
+            pass
+        return result
     
     async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
         """Execute database query via STRICT template path only (envelope result)."""
         from .tool_schemas import ToolResultEnvelope  # For shape reference only
         from ..kg.cypher_templates.registry import SPECS  # type: ignore
+        from ..options.router import parse_macro_intent
 
         template = params.get("template")
         slots = params.get("slots", {})
         if not template:
             raise ValueError("database_query requires 'template' and 'slots' (strict mode)")
+        # Hard guard: if template not in registry, attempt one deterministic fallback using parsed intent
+        if template not in SPECS:
+            try:
+                it = parse_macro_intent(self.current_question if hasattr(self, 'current_question') else '')
+            except Exception:
+                it = None
+            marker = getattr(it, 'marker', None) if it else None
+            if marker and 'proteins_with_pfam' in SPECS:
+                logger.warning(f"FORCED_TEMPLATE_SELECTION: unknown template '{template}' → proteins_with_pfam")
+                template = 'proteins_with_pfam'
+                slots = {'pfam': marker, 'limit': 50, 'exact': False}
+            elif 'proteins_with_pfam' in SPECS:
+                logger.warning(f"FORCED_TEMPLATE_SELECTION: unknown template '{template}' → proteins_with_pfam (default integrase)")
+                template = 'proteins_with_pfam'
+                slots = {'pfam': 'integrase', 'limit': 50, 'exact': False}
+            else:
+                raise ValueError(f"Unknown template: {template}")
         # Inject default limit for list-style templates when missing
         try:
             spec = SPECS.get(template)
@@ -765,8 +1219,43 @@ class UnifiedAgentExecutor:
         display = f"template={template} rows={row_count}"
         try:
             logger.info(f"🔎 DB template executed: {template} slots={slots} rows={row_count}")
+            # Seed summary for common discovery templates
+            if template in ("proteins_with_pfam", "proteins_with_pfams") and row_count:
+                # Try to extract a few stable identifiers for debugging
+                seeds = []
+                for r in rows[:5]:
+                    pid = r.get("protein_id") or r.get("id") or r.get("pid")
+                    if pid:
+                        seeds.append(str(pid))
+                logger.info(f"DB_SEED_SUMMARY: n={row_count} sample={seeds}")
         except Exception:
             pass
+        # Sanitize rows for common discovery templates so downstream tools can consume stable IDs
+        try:
+            if template in ("proteins_with_pfam", "proteins_with_pfams", "proteins_with_kos", "proteins_by_genome"):
+                sanitized = []
+                for r in rows:
+                    # Attempt to extract protein ID from various shapes
+                    pid = None
+                    # First, accept already-sanitized rows
+                    if isinstance(r, dict) and 'protein_id' in r and isinstance(r['protein_id'], str):
+                        sanitized.append({"protein_id": r['protein_id']})
+                        continue
+                    pval = r.get('p') or r.get('protein') or r
+                    try:
+                        if isinstance(pval, dict) and 'id' in pval:
+                            pid = pval['id']
+                        elif hasattr(pval, '__getitem__'):
+                            pid = pval['id']
+                    except Exception:
+                        pid = None
+                    if pid:
+                        sanitized.append({"protein_id": pid})
+                if sanitized:
+                    rows = sanitized
+        except Exception:
+            pass
+
         envelope = {
             "tool_name": "database_query",
             "success": True,
@@ -786,6 +1275,13 @@ class UnifiedAgentExecutor:
         }
         # Store in dedup cache and return
         self._db_dedup_cache[sig] = envelope
+        # Mark seed selection obligation done for seed-fetching templates
+        try:
+            if getattr(self, 'obligation_ledger', None) and envelope.get('success'):
+                if template in ("proteins_with_pfam", "proteins_with_pfams", "proteins_with_kos") and row_count > 0:
+                    self.obligation_ledger.mark_done('seed_selection')
+        except Exception:
+            pass
         return envelope
     
     async def _execute_whole_genome_reader(self, params: Dict[str, Any]) -> Any:
@@ -1093,11 +1589,21 @@ class UnifiedAgentExecutor:
         
         return result
 
+    async def _execute_report_synthesis(self, params: Dict[str, Any]) -> Any:
+        """Execute report synthesis tool wrapper."""
+        from .external_tools import report_synthesis_tool
+        description = params.get("description", "Generate final report")
+        original_question = getattr(self, 'current_user_question', '')
+        return report_synthesis_tool(
+            description=description,
+            original_question=original_question,
+        )
+
     async def _execute_neighborhood_extractor(self, params: Dict[str, Any]) -> Any:
         """Execute DB-backed neighborhood extraction via curated templates."""
         from .external_tools import neighborhood_extractor_tool
         # Pass rag_system so the tool can execute DB templates
-        return await neighborhood_extractor_tool(
+        result = await neighborhood_extractor_tool(
             rag_system=self.rag_system,
             protein_id=params.get("protein_id"),
             contig=params.get("contig"),
@@ -1105,7 +1611,16 @@ class UnifiedAgentExecutor:
             end=params.get("end"),
             k=params.get("k"),
             limit=params.get("limit"),
+            protein_ids=params.get("protein_ids"),
+            seeds_limit=params.get("seeds_limit", 5),
         )
+        # Mark neighborhoods obligation done on success
+        try:
+            if getattr(self, 'obligation_ledger', None) and result and result.get('success'):
+                self.obligation_ledger.mark_done('neighborhoods')
+        except Exception:
+            pass
+        return result
 
     async def _execute_annotation_discovery(self, params: Dict[str, Any]) -> Any:
         """Execute integrated PFAM+KOFAM discovery for a keyword (default 'integrase')."""

@@ -4,7 +4,7 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 
 ## 🚨 **CRITICAL: USER RUNS ALL CLI COMMANDS**
 
-**🛑 NEVER RUN src.cli COMMANDS - ALWAYS ASK USER TO RUN THEM! 🛑**
+**🛑 NEVER RUN src.cli COMMANDS — ALWAYS ASK THE USER TO RUN THEM! 🛑**
 
 **IMPORTANT: Claude Code MUST NOT execute any `src.cli` commands due to timeout and execution issues!**
 
@@ -20,6 +20,12 @@ The user needs to be able to test pipeline commands, especially stage 7 builds a
 ## ✅ Recent Agent Architecture Updates (DB‑first, deterministic)
 
 - Templates-only DB access: all queries run via curated Cypher templates; free-form Cypher is disabled.
+- Macro Fast Path (MFP): typed, LLM‑free route for locus discovery with obligation gates and fail‑fast routing.
+  - Grammar + normalizer: tolerates natural phrasing (e.g., “within N genes” → `± N`; strips “focusing on …”).
+  - Deterministic flow: seeds_by_marker → batched_neighborhoods_gated (±k) → LanceDB kNN → heavy synthesis.
+  - Neighborhoods include per‑neighbor PFAM/KO and seed PFAM/KO; flank is a true ±k radius.
+  - Fail‑fast flags: `FAIL_FAST_ON_GRAMMAR_ERROR=1` and `FAIL_FAST_ON_TOOL_ERROR=1` stop early on compile errors.
+  - LanceDB defaults: `nn=10` when unspecified; `topk=max(10, 10*nn)`; kNN outcome is always summarized in the final report.
 - New tools:
   - `annotation_discovery`: keyword-based PFAM + KOFAM search (case-insensitive), then union proteins via `proteins_with_pfams`/`proteins_with_kos`.
   - `neighborhood_extractor`: DB-backed neighborhoods with three modes:
@@ -27,6 +33,10 @@ The user needs to be able to test pipeline commands, especially stage 7 builds a
     - Windowed: `neighbors_by_window` with contig+start+end.
     - Batch: `protein_ids=[...]` per-seed neighborhoods in one call; auto-seeds from last DB result if seeds are not provided.
   - Adds concise summary_table and advisory for very large batches.
+- `lancedb_knn`: batched vector similarity search with PFAM/KOFAM‑aware filtering (pfam include/exclude implemented).
+  - Exclude: drop neighbors whose Domain description CONTAINS exclusion text (e.g., “integrase”) or whose Domain id/acc IN exclusion markers (e.g., `PF00589`).
+  - Include (pfam, new): if provided, keep only neighbors whose Domain description CONTAINS include text or id/acc IN include markers.
+  - Returns `neighbors`, `picked`, `neighbors_full`, and `stats` (filter summaries, counts, topk). Filter criteria are logged and added to session notes.
 - New templates: `pfam_search`, `kofam_search`, `proteins_with_pfams`, `proteins_with_kos`, `protein_flanking_genes_5`, `gene_next_degree`, `contig_gene_index`.
 - Compiler normalization: scalar/singular params are normalized for list-based templates (e.g., `pfam`→`pfams=[...]`), and numeric coercions are applied where sensible.
 - DB query dedup: identical template+slot calls are cached per executor instance and marked `summary.deduplicated=true`.
@@ -36,6 +46,181 @@ Notes for Claude Code:
 - Favor `annotation_discovery` → `neighborhood_extractor` (batch) → synthesis for functional queries.
 - Do not hardcode specific biology (e.g., integrase IDs); use the templates/tooling above.
 - Avoid redundant DB calls; rely on dedup and/or plan steps once.
+
+## Neo4j Schema Reference (Authoritative)
+
+Use ONLY the labels, relationships, and properties below. Property names are case-sensitive. Coordinates on Gene nodes are strings in the DB; cast with `toInteger(...)` when ordering or comparing.
+
+### Node Labels and Properties
+
+Genome
+- id: Unique genome identifier
+- genomeId: Internal genome identifier (use this for joins)
+
+Gene
+- id: Gene identifier (e.g., `gene:<contig>_<index>`)
+- geneId: Identifier without prefix (may be present)
+- contig: Contig/scaffold identifier string
+- startCoordinate: String position; cast with `toInteger`
+- endCoordinate: String position; cast with `toInteger`
+- strand: String, typically `1` or `-1`
+
+Protein
+- id: Stable protein identifier (e.g., `protein:<contig>_<index>`)
+- length: Amino-acid length (Integer)
+- proteinId: Identifier without prefix (may be present)
+
+Domain (PFAM Family)
+- id: PFAM family ID (accession or ID string)
+- pfamAccession: PFAM accession (e.g., `PF00589`), if present
+- name: Family name, if present
+- description: Family description
+
+DomainAnnotation (per-protein domain hit)
+- id: Annotation identifier (opaque)
+
+KEGGOrtholog
+- id: KO identifier (e.g., `K06966`)
+- description: KO description
+
+Pathway
+- id: Pathway identifier (string)
+
+Bgc (GECCO BGC)
+- id, bgcId: Identifiers
+- bgcProduct: Product type
+- contig: Contig identifier
+- startCoordinate, endCoordinate: Integers
+- lengthNt, proteinCount: Integers
+- averageProbability, maxProbability: Floats
+- alkaloidProbability, nrpProbability, polyketideProbability, rippProbability, saccharideProbability, terpeneProbability: Floats
+- domains: Semicolon-separated PFAM list
+
+QualityMetrics (per-Genome QUAST)
+- quast_totalLength: Integer
+- quast_n50, quast_n90, quast_l50, quast_l90: Integers
+- quast_numContigs, quast_largestContig, quast_contigs1kbPlus, quast_contigs5kbPlus, quast_contigs10kbPlus, quast_contigs25kbPlus, quast_contigs50kbPlus: Integers
+- quast_gcContent, quast_auN, quast_nsPer100kb: Floats
+
+Cazymeannotation (per-protein CAZy hit)
+- id: Annotation identifier
+- cazymeType: One of `GH|GT|PL|CE|AA|CBM`
+- familyId: e.g., `GH3`, `GT2`
+- substrateSpecificity: String
+- evalue, coverage: Floats
+- startPosition, endPosition, hmmLength: Integers
+
+Cazymefamily
+- familyId: e.g., `GH3`
+- cazymeType: `GH|GT|PL|CE|AA|CBM`
+- substrateSpecificity: String
+
+### Relationships (Direction Is Critical)
+
+- (p:Protein)-[:ENCODEDBY]->(g:Gene)
+- (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
+- (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+- (ko:KEGGOrtholog)-[:PARTICIPATESIN]->(pw:Pathway)
+- (g:Gene)-[:BELONGSTOGENOME]->(gen:Genome)
+- (gen:Genome)-[:HASQUALITYMETRICS]->(qm:QualityMetrics)
+- (gen:Genome)-[:HASBGC]->(bgc:Bgc)
+- (g:Gene)-[:PARTOFBGC]->(bgc:Bgc)
+- (g:Gene)-[:NEXT]-(g2:Gene)  // undirected adjacency along a contig
+- (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily)
+
+### Query Tips and Gotchas
+
+- Coordinates: store as strings; always cast for math/sorting: `ORDER BY toInteger(g.startCoordinate)`.
+- Avoid `id(node)`; use the `id` property on nodes. Neo4j’s `id()`/elementId() should not be used in templates.
+- There is no Contig node; contig is a string property on Gene (e.g., `g.contig`).
+- Domain path ALWAYS starts at Protein going out: `(p)-[:HASDOMAIN]->(da)-[:DOMAINFAMILY]->(d)`.
+- Use KO via HASFUNCTION; PFAM via HASDOMAIN/DOMAINFAMILY.
+ - LanceDB filtering (pfam): exclusion and inclusion use Domain description substring matching and PFAM id/accession lists. See `resources/cypher/pfam_flags_for_protein_ids.cypher`.
+
+## ✅ Fast Path Grammar Tolerance + Fail‑Fast
+
+- Natural phrasing tolerance (deterministic pre‑normalizer):
+  - “within N genes” → `± N` flank
+  - Removes non‑semantic asides like “, focusing on …” before THEN
+  - Plural normalization for common markers (e.g., “integrases” → “integrase”)
+- Fail‑fast mode (on by default):
+  - `FAIL_FAST_ON_GRAMMAR_ERROR=1` aborts instead of falling back to FSM on grammar parse errors.
+  - `FAIL_FAST_ON_TOOL_ERROR=1` aborts FSM on first tool compile/execute error.
+
+## ✅ LanceDB Reporting & Debugging
+
+- kNN stage is always reflected in session notes and final synthesis:
+  - Session notes: `debug_data_flow/pre_synthesis_data_*.json` carries `knn_stats` (exclude/include summaries, topk, counts).
+  - Formatted synthesis input includes a LanceDB header and a compact `filter:` / `include:` line.
+  - Final answer appends a deterministic LanceDB postscript (seeds, topk, neighbors after filtering) even when zero.
+- Logging: tool logs `KNN_FILTER: ns=..., needle=..., markers=[...] topk=..., nn=..., seeds=...`.
+
+### Common Patterns (Copy/Paste)
+
+Protein → Gene coordinates
+```cypher
+MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(g:Gene)
+RETURN g.id AS gene_id, g.contig AS contig,
+       toInteger(g.startCoordinate) AS start,
+       toInteger(g.endCoordinate) AS end,
+       g.strand AS strand
+LIMIT 1;
+```
+
+Proteins with PFAM (by accession/ID substring)
+```cypher
+MATCH (d:Domain)
+WHERE toLower(d.id) CONTAINS toLower($q)
+   OR toLower(d.pfamAccession) CONTAINS toLower($q)
+   OR toLower(d.description) CONTAINS toLower($q)
+WITH collect(d.id) AS pfams
+MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(dom:Domain)
+WHERE dom.id IN pfams
+RETURN DISTINCT p
+LIMIT $limit;
+```
+
+Proteins with KO list
+```cypher
+MATCH (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)
+WHERE ko.id IN $kos
+RETURN DISTINCT p
+LIMIT $limit;
+```
+
+Windowed neighborhood by contig coordinates
+```cypher
+MATCH (g:Gene {contig:$contig})
+WHERE toInteger(g.startCoordinate) >= $start
+  AND toInteger(g.endCoordinate) <= $end
+RETURN g
+ORDER BY toInteger(g.startCoordinate);
+```
+
+K-step neighborhood (genes → proteins)
+```cypher
+MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(g:Gene)
+CALL (g) { MATCH pth=(g)-[:NEXT*..$k]-(ng:Gene) RETURN DISTINCT ng }
+OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng)
+WITH DISTINCT np, ng WHERE np IS NOT NULL
+RETURN np AS protein
+ORDER BY toInteger(ng.startCoordinate)
+LIMIT $limit;
+```
+
+CAZy annotations
+```cypher
+MATCH (p:Protein)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily)
+RETURN p.id AS protein_id, cf.familyId AS cazyme_family, ca.substrateSpecificity AS substrate;
+```
+
+Pathway membership
+```cypher
+MATCH (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)-[:PARTICIPATESIN]->(pw:Pathway {id:$pathway})
+RETURN DISTINCT p;
+```
+
+If a query returns zero rows, verify labels/relationships match this reference and that coordinate casts are applied.
 
 ## ✅ **FIXED: Intent Classification and Database Query Issues** 
 
@@ -584,3 +769,104 @@ brew services start neo4j
 - **Pipeline**: Improve error handling and recovery mechanisms
 - **Memory**: Further optimize reference-based storage for very large datasets
 - **Integration**: Design clean interfaces for external database connections
+## Deterministic Intent Grammar & Obligation Ledger (Option 2)
+
+What changed:
+- Replaced brittle regex-based routing with a PEG/Lark grammar that deterministically parses:
+  - locus cardinality `N` with comparators (`exactly`, `at least`, `at most`)
+  - flanking window (`±k` or `flanking genes = k`)
+  - multi-stage obligations: `LanceDB` / `embedding` / `kNN` (including `nearest/closest` neighbors and optional count)
+  - negative filters like `not annotated as <marker> by pfam/kofam`
+  - optional `literature search`
+
+Why:
+- Reproducibility, lower variance, and guaranteed execution of requested stages (e.g., LanceDB) without LLM heuristics.
+
+Models/Files:
+- `src/llm/options/intent_models.py` — typed Intent, Cardinality, Obligations (Pydantic).
+- `src/llm/options/intent_grammar.py` — Lark grammar + transformer that emits an Intent.
+- `src/llm/options/router.py` — now delegates to the grammar (flag `USE_GRAMMAR_ROUTER`, default on); contains a minimal regex fallback.
+- `src/llm/options/obligations.py` — obligation ledger used by the fast path executor to enforce requested stages.
+- `requirements.txt` — add `lark==1.1.7`.
+
+Executor behavior:
+- The fast path constructs an ObligationLedger from the parsed Intent.
+- Finalization is deferred until all required obligations are marked done.
+- For LanceDB stages, the ledger carries `nn`, `exclude_markers`, `exclude_namespace`. The fast path must satisfy this before synthesis; otherwise it escalates to the FSM with a clear reason.
+
+Examples parsed correctly:
+- “Find five loci with integrases … then perform a LanceDB search … nearest neighbors … not annotated as integrases by pfam.”
+- “Find at least 5 terminase loci with ±4 flanking genes, then kNN 2 nearest each; literature search.”
+
+Acceptance:
+- No LLM calls to parse or route.
+- LanceDB obligation (when present) cannot be optimized away; it becomes part of the ledger and must be satisfied before finalization.
+- Backward-compatible: toggle `USE_GRAMMAR_ROUTER=False` to use the legacy regex fallback.
+
+Limitations:
+- AUTO cardinality policies are handled separately and are not part of this change.
+- Grammar currently supports number words up to 20; extend as needed.
+
+## LanceDB kNN as a First‑Class Tool + Obligation‑Aware Scheduling
+
+What & why
+- Added `lancedb_knn` tool with typed IO and manifest parity checks.
+- Fast path and FSM now honor the obligation ledger: if a query requires LanceDB, the system cannot finalize until `lancedb_knn` runs.
+- A finalization gate prevents narrative synthesis with unmet obligations.
+- Startup fails fast when `lancedb_knn` is required but not registered.
+
+Execution flow (fast path)
+1) Grammar → `Intent` → `ObligationLedger`.
+2) Deterministic tasks:
+   - `SEED_SELECTION` (compiled Cypher)
+   - `LANCEDB_KNN` (one batched query; KG Pfam filter; pick top‑nn)
+   - `SYNTHESIS`
+3) Gate: if any required obligation is unmet, abort; else finalize.
+
+FSM fallback
+- While obligations are pending, `available_tools` is narrowed (e.g., `['lancedb_knn']`), preventing cheap loops on `database_query`.
+- Finalization gate refuses synthesis if obligations remain unmet.
+
+Logs to expect
+- `FAST_PATH: tasks=[...]`
+- `TOOL_INVOCATION lancedb_knn seeds=... topk=... exclude=pfam:integrase`
+- `LEDGER_UPDATE lancedb_knn.done=true`
+- `FSM_ALLOWED_TOOLS: ['lancedb_knn']` (only if FSM engaged)
+
+Troubleshooting
+- If synthesis happens without a LanceDB call: check the finalization gate and that `lancedb_knn` is registered.
+- If neighbors are empty after filtering: we do not re‑query LanceDB; shortfalls are reported or escalated as configured.
+
+---
+
+Current Fix Focus (Resume Notes)
+
+What we implemented (deterministic fast path):
+- Grammar‑driven routing with obligations (LanceDB kNN, exclude “not annotated as … by pfam/kofam”), extracting: marker, N, flank, nn, filters.
+- Seeds → Neighborhoods → LanceDB kNN, all via compiled templates/tools:
+  - seeds_by_marker: schema‑correct; returns `seed_protein_id`; migrated to scoped CALL for Neo4j (CALL (lowers) { … }, CALL (g) { … }).
+  - batched_neighborhoods_gated: contig‑ordered neighbors, one row per seed; fixed variable scope (`sp`,`sg`), and return `coalesce(s.seed_protein_id, sp.id)`.
+  - LanceDB: routed through first‑class `lancedb_knn` tool; single batched call; KG Pfam filter; meta carries `knn` + `neighbors_full` for synthesis.
+- Finalization parity: fast path now uses the ProgressiveSynthesizer (heavy) so the final report is FSM‑quality; raw_data includes cards + `neighbors_full`.
+- Per‑genome WGR guard: skip whole_genome_reader for genomes > 20MB (via QUAST totalLength); global reader skips large genomes.
+
+Why annotations (PFAM/KO) are missing right now:
+- We intentionally stubbed neighbors with a minimal, schema‑stable payload during bring‑up and set `annotation: ''` as a placeholder to avoid hallucinations. We did not join PFAM/KO in neighborhoods yet, so the synthesizer faithfully reports none.
+
+Next steps (to resume work):
+- Enrich neighborhoods with PFAM/KO (compact):
+  - In `batched_neighborhoods_gated.cypher` add OPTIONAL MATCH for `(np)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)` and `(np)-[:HASFUNCTION]->(ko:KEGGOrtholog)`, and emit per‑neighbor `pfams` (e.g., `[d.id]`) and `kos` (e.g., `[ko.id]`).
+  - Drop the `annotation: ''` placeholder from neighbor maps.
+  - Optionally include seed PFAM/KO in seeds_by_marker (bounded: 1–2 labels) if cheap.
+- Synthesis polish:
+  - Teach the finalizer to display per‑neighbor `pfams`/`kos` when present (raw_data already flows into the heavy synthesizer).
+  - Ensure `neighbors_full` (from LanceDB) is summarized with IDs + distances/similarities in the final narrative.
+- Planner clamp (optional):
+  - Restrict FSM template/tool proposals to the registry to eliminate invented names; keep forced fallback to `proteins_with_pfam` as a safety net.
+- Logging sanity:
+  - Keep `MFP_RESULT` emitted after kNN so `knn_present=true` reflects reality; retain `DB_TEMPLATE_EXECUTE` traces.
+
+Quick verification checklist:
+- Fast path: seeds_by_marker → batched_neighborhoods_gated → lancedb_knn → synthesized report (no FSM).
+- Final report shows real seed IDs, per‑neighbor PFAM/KO (after enrichment), and kNN neighbors with distances.
+- No Neo4j CALL scope deprecation warnings from seeds_by_marker; other templates may still need scoped CALL.

@@ -62,6 +62,12 @@ This document reflects the current state of the GenomicRAG agent after the typed
       - Batch: `protein_ids=[...]` runs per-seed neighborhoods in one call; auto-seeds from last DB result if no seeds provided (capped by `seeds_limit`).
       - Adds `summary_table` (seed → row_count) and an advisory for very large batches.
     - `whole_genome_reader`: remains for broad spatial reads (small genomes); metadata no longer recommends it for per-locus neighborhood extraction.
+    - `lancedb_knn`: Batched LanceDB similarity with PFAM/KOFAM‑aware filtering.
+      - Default `nn=10` (when unspecified); `topk = max(10, 10*nn)`.
+      - Exclusion (pfam): drop neighbors whose Domain description CONTAINS exclude text, or whose Domain id/acc IN exclude markers.
+      - Inclusion (pfam, new): if include criteria provided, keep only neighbors whose Domain description CONTAINS include text or id/acc IN include markers.
+      - Returns tuple neighbors, `neighbors_full` (ids + distance/similarity + metadata), and `stats` (counts, topk, filter summaries).
+      - The final report always includes a deterministic LanceDB postscript summarizing queried seeds, topk, and neighbors-after-filtering, even when empty.
 
 - Observability: `src/llm/rag_system/tracing.py`
   - JSONL tracing default-on; `get_tracer()` supports `AGENT_TRACING=jsonl:...` and stubs for Langfuse/LangSmith.
@@ -80,6 +86,13 @@ This document reflects the current state of the GenomicRAG agent after the typed
 2) Unified Agent Path (FSM)
    - FSM governs steps: decide → execute (`database_query`/`neighborhood_extractor`/`whole_genome_reader`/`literature_search`/`code_interpreter`) → accumulate → decide → synthesize.
    - Returns a structured execution trace with steps, tools used, and final synthesis.
+
+3) Macro Fast Path (deterministic)
+   - Typed grammar parses: marker, N, flank (±k), LanceDB obligations (nn, filters). A tolerant pre‑normalizer maps phrases like “within N genes” → `± N`, and strips non‑semantic asides (e.g., “focusing on …”).
+   - Seeds via `resources/cypher/seeds_by_marker.cypher` (scoped `CALL`).
+   - Neighborhoods via `resources/cypher/batched_neighborhoods_gated.cypher`: radius = ±k by contig order; returns per‑neighbor PFAM/KO and seed PFAM/KO.
+   - LanceDB via `lancedb_knn` (one batched call). Default `nn=10`; filters recorded in session notes (exclude/include summaries).
+   - Heavy synthesis over a single aggregated payload; marker context and kNN stats always presented; deterministic postscript appended to final answer.
 
 ## Data and Graph Considerations
 

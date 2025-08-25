@@ -49,6 +49,12 @@ class LLMConfig(BaseModel):
     # Performance settings
     timeout_seconds: int = Field(default=30, description="Query timeout in seconds")
     cache_enabled: bool = Field(default=True, description="Enable query result caching")
+
+    # Feature flags
+    FAST_PATH_ENABLED: bool = Field(default=True, description="Enable deterministic macro options for common queries; bypass per-step LLM.")
+    SKEPTIC_ENABLED: bool = Field(default=True, description="Run auditor after costly batched ops; may request mini-model adjudication on anomaly.")
+    FAIL_FAST_ON_GRAMMAR_ERROR: bool = Field(default=True, description="If grammar parse fails for fast-path intent, abort instead of falling back to FSM.")
+    FAIL_FAST_ON_TOOL_ERROR: bool = Field(default=True, description="If a tool step fails to compile/execute (e.g., template missing), abort agent workflow immediately.")
     
     @classmethod
     def from_env(cls) -> 'LLMConfig':
@@ -86,6 +92,15 @@ class LLMConfig(BaseModel):
             config_data['similarity_threshold'] = float(os.getenv('SIMILARITY_THRESHOLD'))
         if os.getenv('TIMEOUT_SECONDS'):
             config_data['timeout_seconds'] = int(os.getenv('TIMEOUT_SECONDS'))
+        # Feature flags
+        if os.getenv('FAST_PATH_ENABLED') is not None:
+            config_data['FAST_PATH_ENABLED'] = os.getenv('FAST_PATH_ENABLED') not in ('0', 'false', 'False')
+        if os.getenv('SKEPTIC_ENABLED') is not None:
+            config_data['SKEPTIC_ENABLED'] = os.getenv('SKEPTIC_ENABLED') not in ('0', 'false', 'False')
+        if os.getenv('FAIL_FAST_ON_GRAMMAR_ERROR') is not None:
+            config_data['FAIL_FAST_ON_GRAMMAR_ERROR'] = os.getenv('FAIL_FAST_ON_GRAMMAR_ERROR') not in ('0', 'false', 'False')
+        if os.getenv('FAIL_FAST_ON_TOOL_ERROR') is not None:
+            config_data['FAIL_FAST_ON_TOOL_ERROR'] = os.getenv('FAIL_FAST_ON_TOOL_ERROR') not in ('0', 'false', 'False')
         
         return cls(**config_data)
     

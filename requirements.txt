@@ -1,0 +1,5 @@
+# Core project runtime requirements
+
+# Grammar parser for deterministic intent routing
+lark==1.1.7
+

@@ -23,6 +23,15 @@
 - `AGENT_ENABLE_LEGACY_SELECTORS` (default: 0)
   - When 1, enables legacy selectors behind the new router surface.
 
+- `FAST_PATH_ENABLED` (default: 1)
+  - Enable deterministic macro options for common queries; bypass per-step LLM routing when guards pass.
+
+- `SKEPTIC_ENABLED` (default: 1)
+  - Run post-batch auditor; may request a single mini-model adjudication only on anomalies.
+
+- `USE_GRAMMAR_ROUTER` (default: 1)
+  - Enable the grammar-driven intent router (Lark) for Macro Fast Path parsing with obligations; set to 0/false to fall back to minimal regex parser.
+
 ## Defaults Summary
 - FSM runner: ON
 - Templates-only DB: ON
