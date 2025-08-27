@@ -377,13 +377,13 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
     Returns:
         Dict with execution results, output, and error information
     """
-    import httpx
+    import httpx, os
     
     logger.info(f"🐍 Executing code in interpreter (session: {session_id})")
     
     try:
         # Code interpreter service endpoint
-        base_url = kwargs.get('base_url', 'http://localhost:8000')
+        base_url = kwargs.get('base_url') or os.getenv('CODE_INTERPRETER_URL') or 'http://localhost:8000'
         
         # Prepare request
         request_data = {
@@ -811,6 +811,47 @@ async def annotation_discovery_tool(rag_system, keyword: Optional[str] = None, l
                 message="annotation_discovery requires a 'keyword' parameter (case-insensitive substring)",
             ).dict()
         kw = str(keyword).strip()
+        # Helper: extract protein_id robustly from Neo4j row
+        import re as _re
+        def _extract_pid(row: Dict[str, Any]) -> Optional[str]:
+            if not isinstance(row, dict):
+                return None
+            # Common forms: explicit field, nested node under 'p' or 'protein'
+            pid = row.get('protein_id') or row.get('id')
+            if isinstance(pid, str) and pid:
+                return pid
+            p = row.get('p') or row.get('protein') or None
+            if p is not None:
+                # Try mapping-like access first
+                try:
+                    val = p.get('id')  # type: ignore[attr-defined]
+                    if isinstance(val, str) and val:
+                        return val
+                except Exception:
+                    pass
+                try:
+                    val = p['id']  # type: ignore[index]
+                    if isinstance(val, str) and val:
+                        return val
+                except Exception:
+                    pass
+                # Fallback: parse string representation
+                try:
+                    m = _re.search(r"'id':\s*'([^']+)'", str(p))
+                    if m:
+                        return m.group(1)
+                except Exception:
+                    pass
+            # Last resort: scan all values
+            try:
+                text = str(row)
+                m = _re.search(r"protein:?['\"]?id['\"]?[:=]\s*['\"]([^'\"]+)['\"]", text)
+                if m:
+                    return m.group(1)
+            except Exception:
+                pass
+            return None
+
         # Find candidate PFAMs
         pfam_slots = {"q": kw, "limit": int(limit)}
         pfam_res = await rag_system.neo4j_processor.execute_named_template("pfam_search", pfam_slots)
@@ -835,20 +876,18 @@ async def annotation_discovery_tool(rag_system, keyword: Optional[str] = None, l
                 "proteins_with_pfams", {"pfams": pfams, "limit": int(protein_limit)}
             )
             for row in pfp.results or []:
-                p = row.get("p") or row.get("protein") or row
-                pid = p.get("id") if isinstance(p, dict) else None
+                pid = _extract_pid(row)
                 if pid and pid not in proteins:
-                    proteins[pid] = row
+                    proteins[pid] = {"protein_id": pid}
         # Fetch proteins by KOs
         if kos:
             pko = await rag_system.neo4j_processor.execute_named_template(
                 "proteins_with_kos", {"kos": kos, "limit": int(protein_limit)}
             )
             for row in pko.results or []:
-                p = row.get("p") or row.get("protein") or row
-                pid = p.get("id") if isinstance(p, dict) else None
+                pid = _extract_pid(row)
                 if pid and pid not in proteins:
-                    proteins[pid] = row
+                    proteins[pid] = {"protein_id": pid}
 
         summary = {
             "keyword": kw,
@@ -880,6 +919,7 @@ AVAILABLE_TOOLS = {
     "whole_genome_reader": whole_genome_reader_tool,
     "neighborhood_extractor": neighborhood_extractor_tool,
     "annotation_discovery": annotation_discovery_tool,
+    "concept_discovery": None,  # placeholder; set below after definition
     "report_synthesis": report_synthesis_tool,
     "lancedb_knn": lancedb_knn_tool,
 }
@@ -1074,6 +1114,218 @@ TOOL_CAPABILITIES = {
         ]
     }
 }
+
+async def concept_discovery_tool(
+    rag_system,
+    concept: str,
+    n: int = 5,
+    flank_k: int = 5,
+    max_rounds: int = 2,
+    anchor_limit: int = 8,
+    protein_limit: int = 200,
+    seeds_limit: int = 100,
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Concept → anchors → PFAM/KO IDs → proteins → batch neighborhoods → select ≥ n loci.
+    Deterministic DB retrieval; LLM only proposes short anchors.
+    """
+    from .tool_schemas import ToolResultEnvelope
+    from .memory.model_allocation import get_model_allocator
+    from .dspy_signatures import AnnotationAnchorPlanner
+    import json as _json
+    import logging as _logging
+    import re as _re
+
+    logger = _logging.getLogger(__name__)
+
+    concept = (concept or "").strip()
+    if not concept:
+        return ToolResultEnvelope(
+            tool_name="concept_discovery",
+            success=False,
+            message="concept_discovery requires a non-empty 'concept' string",
+        ).dict()
+
+    allocator = get_model_allocator()
+
+    def _plan_anchors(prev: list[str]) -> list[str]:
+        hints = _json.dumps({"prior": prev, "max": int(anchor_limit)})
+        def call(module):
+            return module(concept=concept, hints=hints)
+        res = allocator.create_context_managed_call(
+            task_name="query_classification",  # cheap tier
+            signature_class=AnnotationAnchorPlanner,
+            module_call_func=call,
+            query=concept,
+            task_context="anchor_planning",
+        )
+        if not res:
+            return []
+        # Prefer new field 'anchors'; fallback to legacy 'anchors_json'
+        text = getattr(res, "anchors", None)
+        if not text:
+            text = getattr(res, "anchors_json", "[]") or "[]"
+        try:
+            arr = _json.loads(text)
+            if isinstance(arr, list):
+                return [str(x).strip() for x in arr if str(x).strip()]
+        except Exception:
+            pass
+        return []
+
+    used_anchors: list[str] = []
+    proteins: dict[str, dict] = {}
+    rounds_summary: list[dict] = []
+    picked_loci: list[dict] = []
+
+    for rnd in range(int(max_rounds)):
+        anchors = [a for a in _plan_anchors(used_anchors) if a.lower() not in {x.lower() for x in used_anchors}]
+        anchors = anchors[: int(anchor_limit)]
+        used_anchors.extend(anchors)
+        if not anchors:
+            rounds_summary.append({"round": rnd + 1, "anchors": [], "proteins": 0})
+            continue
+
+        # Collect PFAM/KOs and proteins per anchor
+        pfam_total = 0
+        ko_total = 0
+        def _extract_pid(row: Dict[str, Any]) -> Optional[str]:
+            if not isinstance(row, dict):
+                return None
+            pid = row.get('protein_id') or row.get('id')
+            if isinstance(pid, str) and pid:
+                return pid
+            p = row.get('p') or row.get('protein') or None
+            if p is not None:
+                try:
+                    val = p.get('id')  # type: ignore[attr-defined]
+                    if isinstance(val, str) and val:
+                        return val
+                except Exception:
+                    pass
+                try:
+                    val = p['id']  # type: ignore[index]
+                    if isinstance(val, str) and val:
+                        return val
+                except Exception:
+                    pass
+                try:
+                    m = _re.search(r"'id':\s*'([^']+)'", str(p))
+                    if m:
+                        return m.group(1)
+                except Exception:
+                    pass
+            return None
+
+        for a in anchors:
+            # PFAM candidates
+            pfam_rows = await rag_system.neo4j_processor.execute_named_template("pfam_search", {"q": a, "limit": 200})
+            pfam_ids = []
+            for r in (pfam_rows.results or []):
+                if r.get("pfam"):
+                    pfam_ids.append(str(r["pfam"]))  # keep case to match template exact comparison
+                elif r.get("id"):
+                    pfam_ids.append(str(r["id"]))
+            pfam_ids = list(dict.fromkeys(pfam_ids))
+            pfam_total += len(pfam_ids)
+            # KO candidates
+            ko_rows = await rag_system.neo4j_processor.execute_named_template("kofam_search", {"q": a, "limit": 200})
+            ko_ids = [str(r.get("id")) for r in (ko_rows.results or []) if r.get("id")]
+            ko_ids = list(dict.fromkeys(ko_ids))
+            ko_total += len(ko_ids)
+            # Proteins by PFAMs
+            if pfam_ids:
+                pfp = await rag_system.neo4j_processor.execute_named_template(
+                    "proteins_with_pfams", {"pfams": pfam_ids, "limit": int(protein_limit)}
+                )
+                for row in pfp.results or []:
+                    pid = _extract_pid(row)
+                    if pid and pid not in proteins:
+                        proteins[pid] = {"protein_id": pid, "anchor": a}
+            # Proteins by KOs
+            if ko_ids:
+                pko = await rag_system.neo4j_processor.execute_named_template(
+                    "proteins_with_kos", {"kos": ko_ids, "limit": int(protein_limit)}
+                )
+                for row in pko.results or []:
+                    pid = _extract_pid(row)
+                    if pid and pid not in proteins:
+                        proteins[pid] = {"protein_id": pid, "anchor": a}
+
+        rounds_summary.append({
+            "round": rnd + 1,
+            "anchors": anchors,
+            "pfam_candidates": pfam_total,
+            "ko_candidates": ko_total,
+            "proteins": len(proteins),
+        })
+
+        # If we have seeds, extract annotated neighborhoods in batch (pfams/kos) and pick loci
+        if proteins:
+            seeds = list(proteins.keys())[: int(seeds_limit)]
+            try:
+                from ..options.template_runner import FileCypherRunner
+                runner = FileCypherRunner(rag_system.neo4j_processor.driver)
+                seeds_payload = [{
+                    'seed_protein_id': pid,
+                    'contig_len': 1,
+                    'orf_count': 1,
+                    'genome_id': '',
+                    'contig_id': '',
+                } for pid in seeds]
+                rows = runner.run_template(
+                    "batched_neighborhoods_gated.cypher",
+                    {
+                        "seeds": seeds_payload,
+                        "min_contig_len": 0,
+                        "min_orf": 0,
+                        "k_window": int(flank_k),
+                    },
+                )
+                agg = rows or []
+                for r in agg:
+                    sid = r.get('seed_protein_id')
+                    neigh = r.get('neighbors') or []
+                    if sid and isinstance(neigh, list) and len(neigh) > 0:
+                        picked_loci.append({
+                            'seed_protein_id': sid,
+                            'neighbor_count': len(neigh),
+                            'from_anchor': proteins.get(sid, {}).get('anchor'),
+                        })
+                        if len(picked_loci) >= int(n):
+                            break
+                if len(picked_loci) >= int(n):
+                    break
+            except Exception as e:
+                logger.info(f"concept_discovery annotated neighborhood fallback failed: {e}")
+
+    display = f"concept_discovery loci={len(picked_loci)} anchors={len(used_anchors)}"
+    summary = {
+        "concept": concept,
+        "n": int(n),
+        "flank_k": int(flank_k),
+        "rounds": rounds_summary,
+        "anchors_used": used_anchors,
+    }
+    # Ensure 'agg' is defined even when annotated neighborhoods step is skipped or returns nothing
+    try:
+        agg
+    except NameError:
+        agg = []
+    return ToolResultEnvelope(
+        tool_name="concept_discovery",
+        success=True,
+        display_text=display,
+        structured_data=[
+            {"loci": picked_loci},
+            {"aggregated": agg},
+        ],
+        summary=summary,
+    ).dict()
+
+# Register concept_discovery now that it's defined
+AVAILABLE_TOOLS["concept_discovery"] = concept_discovery_tool
 
 def register_tool(name: str, function):
     """Register a new tool for agentic workflows."""

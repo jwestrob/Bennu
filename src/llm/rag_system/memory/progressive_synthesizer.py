@@ -574,12 +574,18 @@ class ProgressiveSynthesizer:
         
         # Format data for synthesis
         formatted_data = self._format_data_for_synthesis(data)
+        # Extract task graph if present in raw items (e.g., MacroPlanner plan)
+        task_graph_text = self._extract_task_graph(data)
         
         # DEBUG: Save formatted synthesis input
         self._save_debug_data("formatted_synthesis_input", formatted_data, "Formatted data sent to LLM")
         
+        prefix = f"QUESTION: {question}\n\n"
+        tg = ("TASK GRAPH:\n" + task_graph_text + "\n\n") if task_graph_text else ""
+        body = f"DATA:\n{formatted_data}"
+        synthesis_context = prefix + tg + body
         return self._call_synthesis_model(
-            context=formatted_data,
+            context=synthesis_context,
             question=question,
             task_name="final_synthesis",  # Use o3 for complex biological reasoning
             focus="comprehensive biological analysis with full context"
@@ -614,10 +620,15 @@ class ProgressiveSynthesizer:
             logger.info("🎯 Single chunk detected - bypassing Map-Reduce and proceeding directly to final synthesis")
             single_chunk_data = chunks[0]
             formatted_context = self._format_data_for_synthesis(single_chunk_data)
+            task_graph_text = self._extract_task_graph(data)
+            prefix = f"QUESTION: {question}\n\n"
+            tg = ("TASK GRAPH:\n" + task_graph_text + "\n\n") if task_graph_text else ""
+            body = f"DATA:\n{formatted_context}"
+            synthesis_context = prefix + tg + body
             
             # Use high-capability model for direct synthesis
             final_result = self._call_synthesis_model(
-                context=formatted_context,
+                context=synthesis_context,
                 question=question,
                 task_name="final_synthesis",  # Use o3 for complex synthesis
                 focus="comprehensive biological analysis with full data context",
@@ -966,14 +977,12 @@ class ProgressiveSynthesizer:
         ])
         
         # Add synthesis metadata
-        synthesis_context = f"""
-QUESTION: {question}
-
-CHUNK SUMMARIES ({len(chunk_summaries)} chunks):
-{combined_context}
-
-SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.
-"""
+        # Include task graph if available from previously unified data (may not be present in reduce step)
+        task_graph_text = getattr(self, '_last_task_graph', '') if hasattr(self, '_last_task_graph') else ''
+        header = f"QUESTION: {question}\n\nCHUNK SUMMARIES ({len(chunk_summaries)} chunks):\n{combined_context}\n\n"
+        tg = ("TASK GRAPH:\n" + task_graph_text + "\n") if task_graph_text else ""
+        footer = "SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.\n"
+        synthesis_context = header + tg + footer
         
         # Use original question directly for intelligent selection
         
@@ -990,6 +999,45 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         self._save_debug_data("reduce_step_final_output", final_synthesis, f"Final synthesis from {len(chunk_summaries)} chunk summaries")
         
         return final_synthesis
+
+    def _extract_task_graph(self, data: List[Dict[str, Any]]) -> str:
+        """Extract and pretty-print a task graph (operator plan) if present in raw items.
+
+        Recognizes a task_note with quantitative_data.plan from MacroPlanner execution.
+        """
+        try:
+            plan = None
+            for item in data:
+                if isinstance(item, dict) and item.get('type') == 'task_note':
+                    qd = item.get('quantitative_data') or {}
+                    if isinstance(qd, dict) and qd.get('plan'):
+                        plan = qd.get('plan')
+                        break
+            if not plan:
+                return ''
+            steps = plan.get('steps', []) if isinstance(plan, dict) else []
+            lines = []
+            for idx, st in enumerate(steps, 1):
+                if not isinstance(st, dict):
+                    continue
+                op = st.get('op')
+                bind = st.get('bind')
+                params = st.get('params') or {}
+                inputs = st.get('inputs') or {}
+                line = f"{idx}. op={op}"
+                if bind:
+                    line += f" -> {bind}"
+                if inputs:
+                    line += f" inputs={inputs}"
+                if params:
+                    line += f" params={params}"
+                lines.append(line)
+            text = "\n".join(lines)
+            # store for reduce step
+            self._last_task_graph = text
+            return text
+        except Exception:
+            return ''
     
     
     def _format_data_for_synthesis(self, data: List[Dict[str, Any]]) -> str:
@@ -1029,6 +1077,28 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                 # Structured locus cards from fast path; include PFAM/KO when present
                 cards = item.get('cards') or []
                 formatted_lines = [f"LocusDiscovery: {len(cards)} loci contextualized"]
+                # Scope & provenance: be explicit about ±k windows and seed selection
+                try:
+                    meta = item.get('meta') if isinstance(item.get('meta'), dict) else {}
+                    scope = meta.get('analysis_scope') or {}
+                    seedsel = meta.get('seed_selection') or {}
+                    window_k = scope.get('window_k')
+                    sel_method = seedsel.get('method')
+                    if isinstance(window_k, int) or isinstance(sel_method, str):
+                        scope_bits = []
+                        if isinstance(window_k, int):
+                            scope_bits.append(f"±{window_k} genes around seed")
+                        if isinstance(sel_method, str):
+                            if sel_method == 'id_resolution':
+                                scope_bits.append("seeded by PFAM/KO IDs")
+                            elif sel_method == 'concept_anchors':
+                                scope_bits.append("seeded via concept anchors → PFAM/KO IDs")
+                            elif sel_method == 'substring_fallback':
+                                scope_bits.append("seeded by substring fallback")
+                        if scope_bits:
+                            formatted_lines.append("Scope: " + "; ".join(scope_bits) + " (locus windows, not complete islands)")
+                except Exception:
+                    pass
                 # Show marker context if available
                 try:
                     marker = item.get('meta', {}).get('marker') if isinstance(item.get('meta'), dict) else None
@@ -1093,51 +1163,15 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                             formatted_lines.append(f"include: ns={ins_show} needle='{in_show}' markers=[{im_show}]")
                     except Exception:
                         pass
-                    # If we have neighbors_full with entries, list the top 5 per seed
-                    if isinstance(nbrs_full, dict) and nbrs_full:
-                        # Determine how many to show per seed (cap at 10 to keep readable)
-                        try:
-                            nn_cfg = 5
-                            meta = item.get('meta') if isinstance(item.get('meta'), dict) else item.get('meta')
-                            if isinstance(meta, dict) and isinstance(meta.get('nn'), int):
-                                nn_cfg = max(1, min(int(meta.get('nn')), 10))
-                            show_n = nn_cfg
-                        except Exception:
-                            show_n = 5
-                        formatted_lines.append(f"kNN neighbors (top {show_n} per seed):")
+                    # Summarize counts (even if detailed neighbors are present)
+                    if isinstance(counts, dict) and counts:
+                        formatted_lines.append("kNN counts:")
                         shown = 0
-                        for sid, rows in nbrs_full.items():
+                        for sid, cnt in counts.items():
                             if shown >= 5:
                                 break
-                            try:
-                                top = rows[:show_n] if isinstance(rows, list) else []
-                                parts = []
-                                for r in top:
-                                    if not isinstance(r, dict):
-                                        continue
-                                    rid = r.get('protein_id') or r.get('id') or 'unknown'
-                                    sim = r.get('similarity')
-                                    dist = r.get('distance')
-                                    if sim is not None:
-                                        parts.append(f"{rid} (sim={sim})")
-                                    elif dist is not None:
-                                        parts.append(f"{rid} (d={dist})")
-                                    else:
-                                        parts.append(str(rid))
-                                formatted_lines.append(f"  - {sid}: {', '.join(parts)}")
-                                shown += 1
-                            except Exception:
-                                continue
-                    else:
-                        # Summarize counts (even if zero)
-                        if isinstance(counts, dict) and counts:
-                            formatted_lines.append("kNN counts:")
-                            shown = 0
-                            for sid, cnt in counts.items():
-                                if shown >= 5:
-                                    break
-                                formatted_lines.append(f"  - {sid}: {cnt}")
-                                shown += 1
+                            formatted_lines.append(f"  - {sid}: {cnt}")
+                            shown += 1
                 formatted_item = "\n".join(formatted_lines) + "\n"
             else:
                 # Raw data item
@@ -1415,6 +1449,13 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                 self.synthesis_cache[cache_key] = fallback_result
                 return fallback_result
             
+            # If a task graph was extracted earlier, prepend it to ensure visibility in final output
+            try:
+                tg = getattr(self, '_last_task_graph', '') if hasattr(self, '_last_task_graph') else ''
+                if tg:
+                    synthesis_result = f"TASK GRAPH:\n{tg}\n\n" + synthesis_result
+            except Exception:
+                pass
             # Cache and return the result
             self.synthesis_cache[cache_key] = synthesis_result
             return synthesis_result

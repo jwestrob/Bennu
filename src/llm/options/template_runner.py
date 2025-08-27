@@ -13,9 +13,22 @@ class FileCypherRunner:
 
     def __init__(self, neo4j_driver) -> None:
         self.driver = neo4j_driver
-        # Resolve project root from this file location
-        self._root = Path(__file__).resolve().parents[3]
-        self._tpl_dir = self._root / "resources" / "cypher"
+        # Resolve project root from this file location robustly and find templates dir
+        base = Path(__file__).resolve()
+        candidates = [
+            base.parents[4] / "resources" / "cypher",  # project_root/resources/cypher
+            base.parents[3] / "resources" / "cypher",  # src/resources/cypher (fallback)
+            Path.cwd() / "resources" / "cypher",       # CWD/resources/cypher (last resort)
+        ]
+        self._tpl_dir = None
+        for c in candidates:
+            if c.exists():
+                self._tpl_dir = c
+                break
+        if self._tpl_dir is None:
+            raise FileNotFoundError(
+                f"Cypher templates directory not found. Tried: {', '.join(str(c) for c in candidates)}"
+            )
         self.logger = logging.getLogger(__name__)
 
     def run_template(self, name: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:

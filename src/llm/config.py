@@ -52,9 +52,18 @@ class LLMConfig(BaseModel):
 
     # Feature flags
     FAST_PATH_ENABLED: bool = Field(default=True, description="Enable deterministic macro options for common queries; bypass per-step LLM.")
+    USE_MFP_PLANNER: bool = Field(default=True, description="Enable agent-designed macro plan (operators) executed by Macro Fast Path.")
+    USE_CODE_INTERPRETER_IN_FAST_PATH: bool = Field(default=False, description="If true, run code interpreter post-processing in fast path when supported.")
+    CODE_INTERPRETER_URL: str = Field(default="http://localhost:8000", description="Base URL for code interpreter service")
+    USE_CI_TOTALS_FOR_PATHWAYS: bool = Field(default=False, description="If true, always compute pathway totals via code interpreter (ko_pathway.list) rather than Neo4j graph totals.")
+    USE_NATIVE_TOTALS_FOR_PATHWAYS: bool = Field(default=True, description="If true, compute pathway totals natively from ko_pathway.list (recommended). Overrides DB totals.")
     SKEPTIC_ENABLED: bool = Field(default=True, description="Run auditor after costly batched ops; may request mini-model adjudication on anomaly.")
     FAIL_FAST_ON_GRAMMAR_ERROR: bool = Field(default=True, description="If grammar parse fails for fast-path intent, abort instead of falling back to FSM.")
     FAIL_FAST_ON_TOOL_ERROR: bool = Field(default=True, description="If a tool step fails to compile/execute (e.g., template missing), abort agent workflow immediately.")
+    # Agent control flags
+    DISABLE_FSM: bool = Field(default=False, description="Disable FSM-based agent workflow entirely.")
+    DISABLE_WHOLE_GENOME_READER: bool = Field(default=True, description="Disable whole_genome_reader tool (blocks global genome reads).")
+    WGR_MAX_TOTAL_GENES: int = Field(default=100000, description="Hard cap on total genes for whole_genome_reader global runs.")
     
     @classmethod
     def from_env(cls) -> 'LLMConfig':
@@ -101,6 +110,20 @@ class LLMConfig(BaseModel):
             config_data['FAIL_FAST_ON_GRAMMAR_ERROR'] = os.getenv('FAIL_FAST_ON_GRAMMAR_ERROR') not in ('0', 'false', 'False')
         if os.getenv('FAIL_FAST_ON_TOOL_ERROR') is not None:
             config_data['FAIL_FAST_ON_TOOL_ERROR'] = os.getenv('FAIL_FAST_ON_TOOL_ERROR') not in ('0', 'false', 'False')
+        if os.getenv('DISABLE_FSM') is not None:
+            config_data['DISABLE_FSM'] = os.getenv('DISABLE_FSM') not in ('0', 'false', 'False')
+        if os.getenv('DISABLE_WHOLE_GENOME_READER') is not None:
+            config_data['DISABLE_WHOLE_GENOME_READER'] = os.getenv('DISABLE_WHOLE_GENOME_READER') not in ('0', 'false', 'False')
+        if os.getenv('WGR_MAX_TOTAL_GENES'):
+            try:
+                config_data['WGR_MAX_TOTAL_GENES'] = int(os.getenv('WGR_MAX_TOTAL_GENES'))
+            except Exception:
+                pass
+        # Native/CI totals toggles
+        if os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') is not None:
+            config_data['USE_NATIVE_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
+        if os.getenv('USE_CI_TOTALS_FOR_PATHWAYS') is not None:
+            config_data['USE_CI_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_CI_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
         
         return cls(**config_data)
     

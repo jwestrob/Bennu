@@ -30,8 +30,8 @@ def render_to_dsl(plan: CanonicalIntent) -> str:
         fs = plan.find_by_signature
         if not fs:
             raise ValueError("Canonical plan missing find_by_signature")
-        # Do not emit the literal word SIGNATURE to keep within current grammar
-        parts.append(f"FIND {int(plan.n)} LOCI WITH {fs.signature_name} ± {int(fs.flank_k)}")
+        # Emit explicit SIGNATURE keyword per grammar extension
+        parts.append(f"FIND {int(plan.n)} LOCI WITH {fs.signature_name} SIGNATURE ± {int(fs.flank_k)}")
     else:
         raise ValueError(f"Unsupported primary task: {plan.task}")
 
@@ -46,4 +46,3 @@ def render_to_dsl(plan: CanonicalIntent) -> str:
             raise ValueError(f"Unsupported action type: {type(act)}")
 
     return " ".join(parts)
-

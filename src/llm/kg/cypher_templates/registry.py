@@ -48,7 +48,7 @@ def _compile_gene_neighbors_k(slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any
     # Embed k directly into the pattern length; param for id/limit only
     cypher = (
         f"MATCH (g:Gene {{id:$gene_id}}) "
-        f"CALL (g) {{ MATCH p=(g)-[:NEXT*..{k}]-(n:Gene) RETURN DISTINCT n }} "
+        f"CALL {{ WITH g MATCH p=(g)-[:NEXT*..{k}]-(n:Gene) RETURN DISTINCT n }} "
         "RETURN n ORDER BY toInteger(n.startCoordinate)"
     )
     # Let compiler append LIMIT later if provided
@@ -75,7 +75,7 @@ def _compile_protein_neighbors_k(slots: Dict[str, Any]) -> Tuple[str, Dict[str, 
     # 4) Order results by numeric startCoordinate of the neighbor gene
     cypher = (
         "MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(g:Gene) "
-        f"CALL (g) {{ MATCH pth=(g)-[:NEXT*..{k}]-(ng:Gene) RETURN DISTINCT ng }} "
+        f"CALL {{ WITH g MATCH pth=(g)-[:NEXT*..{k}]-(ng:Gene) RETURN DISTINCT ng }} "
         "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng) "
         "WITH DISTINCT np, ng WHERE np IS NOT NULL "
         "RETURN np AS protein ORDER BY toInteger(ng.startCoordinate)"
@@ -147,11 +147,56 @@ SPECS: Dict[str, TemplateSpec] = {
     "cazy_family": TemplateSpec(
         filename="cazy_family.cypher",
         required={"family": str},
-        optional={},
+        optional={"limit": int},
         category="discovery",
-        returns="protein",
+        returns="table",
         cost="cheap",
-        slot_hints={"family": "GHxx/PLxx/CIxx", "limit": "int"},
+        slot_hints={"family": "GHxx/GTxx/PLxx/CExx/AAxx/CBMxx", "limit": "int"},
+    ),
+    "cazymes_by_genome": TemplateSpec(
+        filename="cazymes_by_genome.cypher",
+        required={"genome_id": str},
+        optional={"limit": int},
+        category="discovery",
+        returns="table",
+        cost="cheap",
+        slot_hints={"genome_id": "<Genome.id>", "limit": "int"},
+    ),
+    "cazyme_family_counts": TemplateSpec(
+        filename="cazyme_family_counts.cypher",
+        required={},
+        optional={},
+        category="count",
+        returns="table",
+        cost="cheap",
+        slot_hints=SLOT_HINTS_EMPTY,
+    ),
+    "bgcs_by_genome": TemplateSpec(
+        filename="bgcs_by_genome.cypher",
+        required={"genome_id": str},
+        optional={"limit": int},
+        category="discovery",
+        returns="table",
+        cost="cheap",
+        slot_hints={"genome_id": "<Genome.id>", "limit": "int"},
+    ),
+    "bgcs_by_product": TemplateSpec(
+        filename="bgcs_by_product.cypher",
+        required={"product": str},
+        optional={"limit": int},
+        category="discovery",
+        returns="table",
+        cost="cheap",
+        slot_hints={"product": "e.g., Terpene/Polyketide", "limit": "int"},
+    ),
+    "genes_in_bgc": TemplateSpec(
+        filename="genes_in_bgc.cypher",
+        required={"bgc_id": str},
+        optional={"limit": int},
+        category="neighborhood",
+        returns="table",
+        cost="cheap",
+        slot_hints={"bgc_id": "<Bgc.bgcId>", "limit": "int"},
     ),
     "count_by_label": TemplateSpec(
         filename=None,

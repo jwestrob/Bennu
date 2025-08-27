@@ -23,5 +23,4 @@ def test_signature_head_rendering():
         actions=[],
     )
     dsl = render_to_dsl(ci)
-    assert "WITH PROPHAGE ± 5" in dsl
-
+    assert "WITH PROPHAGE SIGNATURE ± 5" in dsl

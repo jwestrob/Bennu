@@ -301,6 +301,18 @@ class PlannerAgent(dspy.Signature):
     reasoning = dspy.OutputField(desc="Explanation of why agentic planning is or isn't needed")
     task_plan = dspy.OutputField(desc="If agentic: high-level task breakdown. If traditional: 'N/A'")
 
+class AnnotationAnchorPlanner(dspy.Signature):
+    """Return a compact JSON array of short anchors.
+
+    - Input: concept phrase and optional JSON hints
+    - Output: ONLY a JSON array (4–8 items), each a short anchor string
+    - No commentary, no keys, no trailing text
+    """
+
+    concept = dspy.InputField(desc="Concept phrase (e.g., 'metal transport')")
+    hints = dspy.InputField(desc="JSON string with prior anchors/constraints; may be empty")
+    anchors = dspy.OutputField(desc="Return ONLY a JSON array of 4–8 short anchor phrases")
+
 class QueryClassifier(dspy.Signature):
     """
     Classify genomic queries into categories for appropriate retrieval strategy.
@@ -447,6 +459,39 @@ class GenomicSummarizer(dspy.Signature):
     key_findings = dspy.OutputField(desc="Most important biological insights from the data")
     data_statistics = dspy.OutputField(desc="Quantitative summary of the dataset")
 
+
+class MacroPlannerSignature(dspy.Signature):
+    """
+    Plan a deterministic macro execution graph using only allowed operators.
+
+    Strictly output a JSON object with shape:
+    {
+      "steps": [
+        {
+          "op": <operator name>,
+          "inputs": {<input_name>: <binding_name>, ...},  # optional if op has no inputs
+          "params": {<param>: <value>, ...},              # optional
+          "bind": <binding_name>                          # optional; stores full result under this name
+        },
+        ...
+      ]
+    }
+    Allowed operators are listed in operator_catalog (JSON). Do not invent operators.
+
+    Planner rubric (breadth-first reminder):
+    - Prefer breadth-first exploration across both KO and PFAM namespaces when probing a functional capability.
+    - PFAM Domain.id and description are keyword-searchable and are often richer than KO terms in metagenomes; consider PFAM or a PFAM+KO union early.
+    - When searching for hallmark enzymes, include both long-form names and common gene symbols/abbreviations in your probe terms, and treat matches as case-insensitive.
+    - When choosing KEGG completeness, use canonical map IDs (mapxxxxx) or compute unfiltered and filter downstream; completeness is optional.
+    - Avoid repeating the same operator+term; diversify probes and include a corroboration step (e.g., neighborhood/contig window) if any hits are found.
+    """
+
+    question = dspy.InputField(desc="User question to answer with a macro plan")
+    operator_catalog = dspy.InputField(desc="JSON catalog of allowed operators: names, inputs, outputs, params")
+    constraints = dspy.InputField(desc="Constraints: max_steps, prefer native totals, include SM evidence if relevant")
+    ko_reference = dspy.InputField(desc="Optional compact KO reference: one line per KO as 'Kxxxxx: definition' to assist keyword/operator selection")
+    plan_json = dspy.OutputField(desc="Return ONLY the strict JSON plan (no commentary)")
+
 class GenomicSynthesizer(dspy.Signature):
     """
     Synthesize genomic analysis results into comprehensive biological interpretations.
@@ -464,8 +509,9 @@ class GenomicSynthesizer(dspy.Signature):
 
     question = dspy.InputField(desc="Original user question being addressed")
     context = dspy.InputField(desc="Integrated context from multiple analysis tasks")
+    task_graph = dspy.InputField(desc="JSON or pretty-printed task graph with ordered steps (if provided, include a 'TASK GRAPH' section at the top of the summary)")
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
-    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
     key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data - no abbreviations or partial names allowed.")
 

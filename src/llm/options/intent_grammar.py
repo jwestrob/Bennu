@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 _GRAMMAR = r"""
 start: query
 
-query: FIND n_clause? LOCI WITH marker mid_clause? then_stage*
+query: FIND n_clause? LOCI WITH (signature | marker) mid_clause? then_stage*
 mid_clause: flank about? | about? flank | about
 
 FIND: /find/i
@@ -23,9 +23,12 @@ ON: /on/i
 TO: /to/i
 
 marker: MARKER_WORD (MARKER_WORD | "-" | "_" | "." )*
+// Signature form: lexical marker followed by literal 'signature'
+signature: marker SIG
 // A non-side-effecting marker term for use inside filters
 marker_term: MARKER_WORD (MARKER_WORD | "-" | "_" | "." )*
 MARKER_WORD: /[A-Za-z0-9]+/
+SIG: /signature/i
 
 // "five" | "5" | with comparators
 n_clause: quant
@@ -50,7 +53,11 @@ LOOKUP: /lookup/i
 BY: /by/i
 COSINE: /cosine/i
 SIMILARITY: /similarity/i
-simphrase: BY COSINE SIMILARITY
+// Accept common similarity phrasing variants; default distance remains cosine
+simphrase: (BY (COSINE (SIMILARITY)?)
+          | BY SIMILARITY
+          | COSINE (SIMILARITY)?
+          | SIMILARITY)
 
 // Support both orders: "closest 3", "3 closest"; allow synonyms (neighbors|relatives)
 nn_spec: nn_after | nn_before
@@ -113,14 +120,18 @@ class _X(Transformer):
     # marker
     def marker(self, *parts):
         m = "".join(str(p) for p in parts).strip()
-        mlow = m.lower()
-        # Minimal plural normalization for common markers
-        if mlow == "integrases":
-            mlow = "integrase"
-        if mlow == "terminases":
-            mlow = "terminase"
-        self.intent.marker = mlow
+        self.intent.marker = m.lower()
         return m
+
+    # signature: marker SIG
+    def signature(self, mark, _sig):
+        try:
+            name = str(mark).strip()
+        except Exception:
+            name = ""
+        # Canonicalize to upper for signature tagging
+        self.intent.signature_name = name.upper() if name else None
+        return name
 
     # quantifiers
     def quant(self, *items):
@@ -249,6 +260,13 @@ def normalize_macro_text(text: str) -> str:
         try:
             # Map common synonyms
             nt = _re.sub(r"\bORFs?\b", "genes", nt, flags=_re.I)
+            # Normalize colloquial 'you think are prophages' → 'with PROPHAGE signature'
+            nt = _re.sub(
+                r"\bloci\s+you\s+think\s+are\s+prophages?\b",
+                "loci with PROPHAGE signature",
+                nt,
+                flags=_re.I,
+            )
             # Collapse common aside patterns into a flank spec (± N)
             nt = _re.sub(
                 r"[,;:]?\s*(restricting|limiting)\s+to\b.*?\bwithin\s+(\d+)\s+genes?\b.*?(?=(?:[,;:.!?]|\bthen\b|$))",
@@ -271,9 +289,7 @@ def normalize_macro_text(text: str) -> str:
             nt = _re.sub(r",\s*focusing\s+on[^.]*\.", ".", nt, flags=_re.I)
             # Whitespace tidy-up
             nt = _re.sub(r"\s{2,}", " ", nt)
-            # Minimal plural normalization for marker mentions
-            nt = _re.sub(r"\bintegrases\b", "integrase", nt, flags=_re.I)
-            nt = _re.sub(r"\bterminases\b", "terminase", nt, flags=_re.I)
+            # No marker-specific rewrites here; keep normalization generic
         except Exception:
             pass
         return nt
@@ -312,9 +328,7 @@ def parse_intent(text:str) -> Optional[Intent]:
                         ns = m.group(2).lower()
                         ldb.exclude_namespace = ns
                         variants = [mk]
-                        # Simple plural handling with special-case for 'integrases' -> 'integrase'
-                        if mk == 'integrases':
-                            variants.append('integrase')
+                        # Simple plural handling: tolerate trailing 's'/'es'
                         if mk.endswith('es'):
                             variants.append(mk[:-2])
                         if mk.endswith('s') and mk[:-1] not in variants:

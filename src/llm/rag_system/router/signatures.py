@@ -39,5 +39,5 @@ if DSPY_AVAILABLE:
     class ToolRouteRepair(dspy.Signature):  # type: ignore
         instruction = dspy.InputField()
         bad = dspy.InputField()
-        schema = dspy.InputField()
-        json = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")
+        schema_def = dspy.InputField()
+        json_payload = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")

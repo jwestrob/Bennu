@@ -145,7 +145,7 @@ class DecisionParamRepair(dspy.Signature if DSPY_AVAILABLE else object):
     bad = dspy.InputField(desc="Bad or missing tool parameters (JSON or text)")
     db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and slots")
     param_schema_json = dspy.InputField(desc="JSON schema for the expected parameters")
-    json = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")
+    json_payload = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")
 
 
 class AnalysisCodeGenerator(dspy.Signature if DSPY_AVAILABLE else object):
@@ -218,6 +218,13 @@ class UnifiedAgentExecutor:
             "lancedb_knn": self._execute_lancedb_knn,
             "report_synthesis": self._execute_report_synthesis,
         }
+        # Optionally disable whole_genome_reader tool entirely
+        try:
+            if getattr(self.rag_system.config, 'DISABLE_WHOLE_GENOME_READER', False):
+                self.tools.pop('whole_genome_reader', None)
+                logger.info("🛑 whole_genome_reader disabled by configuration; removed from tool registry")
+        except Exception:
+            pass
         # Dedup cache for database queries (template+slots signature → envelope)
         self._db_dedup_cache: Dict[str, Any] = {}
         
@@ -236,6 +243,8 @@ class UnifiedAgentExecutor:
             "zero_result_streak": 0,
             "last_query_signature": None,
         }
+        # Seed steps appended before FSM (e.g., from Macro Fast Path)
+        self._seed_steps: List[AgentStep] = []
         
         # Code generator will use model allocation system
         # (no need to initialize here, will use model_allocator.create_context_managed_call)
@@ -281,37 +290,380 @@ class UnifiedAgentExecutor:
         Returns AgentExecutionResult on success, or None to fall back.
         """
         try:
-            from ..options.router import parse_macro_intent
-            intent = parse_macro_intent(question)
-            # Two-stage fallback: if grammar fails to parse, try Canonicalizer → DSL → Lark
-            if not intent:
+            # Canonicalizer-first: NL → Canonical JSON
+            from ..intent.canonicalizer import canonicalize
+            from ..intent.models import TaskFamily
+            canon, _raw = canonicalize(question, self.note_keeper, self.model_allocator)
+        except Exception as e:
+            logger.info(f"MFP_PRECHECK: canonicalizer_exception: {e}")
+            canon = None
+
+        # Special branch: Pathway completeness (no DSL/PEG)
+        if canon and getattr(canon, 'task', None) == TaskFamily.PATHWAY_COMPLETENESS:
+            try:
+                from ..options.template_runner import FileCypherRunner
+                from ..options.pathway_completeness import PathwayCompletenessOption
+                from .external_tools import code_interpreter_tool
+                import os, json as _json
+                db_runner = FileCypherRunner(self.rag_system.neo4j_processor.driver)
+                opt = PathwayCompletenessOption(db_runner)
+                genome_ids = []
+                # Prefer explicitly selected genome if available
                 try:
-                    from ..intent.canonicalizer import canonicalize
-                    from ..intent.dsl_renderer import render_to_dsl
-                    from ..options.intent_grammar import parse_intent as _parse_dsl
-                    canon, raw = canonicalize(question, self.note_keeper, self.model_allocator)
-                    dsl = render_to_dsl(canon)
-                    # Persist DSL string
-                    try:
-                        if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
-                            dbg = self.note_keeper.session_path / "debug_data_flow"
-                            dbg.mkdir(exist_ok=True)
-                            with open(dbg / "canonicalizer.dsl.txt", 'w') as f:
-                                f.write(dsl)
-                    except Exception:
-                        pass
-                    intent = _parse_dsl(dsl)
-                    if not intent:
-                        logger.info("CANONICAL_FALLBACK_PARSE_FAIL: DSL did not parse; escalating")
-                        return None
-                except Exception as e2:
-                    logger.info(f"CANONICAL_FALLBACK_FAIL: {e2}")
-                    return None
+                    if getattr(self, 'selected_genome', None):
+                        genome_ids = [self.selected_genome]
+                    elif isinstance(getattr(canon, 'genome_ids', None), list):
+                        genome_ids = list(getattr(canon, 'genome_ids'))
+                except Exception:
+                    pass
+                min_c = getattr(canon, 'min_completeness', None)
+                pathways = getattr(canon, 'pathways', None)
+                # Decide totals source (default native)
+                import os as _os
+                use_native_totals = (
+                    _os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS', '1').lower() in ('1','true','yes')
+                    or bool(getattr(self.rag_system.config, 'USE_NATIVE_TOTALS_FOR_PATHWAYS', True))
+                )
+                rows, meta = opt.run(
+                    genome_ids=genome_ids or None,
+                    min_completeness=min_c,
+                    pathways=pathways,
+                    use_native_totals=use_native_totals,
+                )
+                # Seed fast-path result and continue into the agent FSM; do not return early
+                try:
+                    src_tag = meta.get('totals_source') if isinstance(meta, dict) else None
+                except Exception:
+                    src_tag = None
+                logger.info(f"FASTPATH_PC: rows={len(rows)} use_ci=False totals_source={src_tag}")
+                step = AgentStep(
+                    step_number=1,
+                    tool_name="fast_path_pathway_completeness",
+                    tool_parameters={
+                        "genome_ids": genome_ids or "ALL",
+                        "min_completeness": min_c,
+                        "pathways": pathways or "ALL",
+                        "totals_source": (meta or {}).get('totals_source') if isinstance(meta, dict) else None,
+                    },
+                    reasoning="Deterministic KEGG pathway completeness via KO→Pathway graph",
+                    result={"rows": [r.__dict__ for r in rows], "meta": meta},
+                    execution_time=0.0,
+                    success=True,
+                    error=None,
+                )
+                self._seed_steps.append(step)
+                return None
+                # Default concise result
+                lines = ["KEGG Pathway Completeness:"]
+                if not rows:
+                    lines.append("No pathways evaluated or data missing.")
+                else:
+                    shown = 0
+                    for r in rows:
+                        try:
+                            # Avoid duplicate ID/Name when identical
+                            label = r.pathway_id if (not r.pathway_name or r.pathway_name == r.pathway_id) else f"{r.pathway_id} {r.pathway_name}"
+                            lines.append(f"- [{r.genome_id}] {label}: {r.present_kos}/{r.total_kos} ({r.completeness:.2f})")
+                            shown += 1
+                            if shown >= 25:
+                                break
+                        except Exception:
+                            continue
+                answer = "\n".join(lines)
+
+                # Optional: post-process with code interpreter for nicer formatting (no network/file IO needed)
+                try:
+                    # Flag can be enabled via config or environment
+                    env_flag = os.getenv('USE_CODE_INTERPRETER_IN_FAST_PATH')
+                    use_ci = (
+                        (str(env_flag).lower() in ('1','true','yes'))
+                        or bool(getattr(self.rag_system.config, 'USE_CODE_INTERPRETER_IN_FAST_PATH', False))
+                    )
+                    src_tag = meta.get('totals_source') if isinstance(meta, dict) else None
+                    logger.info(f"FASTPATH_PC: rows={len(rows)} use_ci={use_ci} totals_source={src_tag}")
+                    # If configured, force CI recompute of totals using ko_pathway.list even when Neo4j returned rows
+                    env_ci_totals = os.getenv('USE_CI_TOTALS_FOR_PATHWAYS')
+                    use_ci_totals = (
+                        (str(env_ci_totals).lower() in ('1','true','yes'))
+                        or bool(getattr(self.rag_system.config, 'USE_CI_TOTALS_FOR_PATHWAYS', False))
+                    )
+                    if use_ci and rows:
+                        rows_payload = [r.__dict__ for r in rows]
+                        rows_json = _json.dumps(rows_payload)
+                        ci_code = (
+                            "import json\n"
+                            f"rows = json.loads('''{rows_json}''')\n"
+                            "from collections import defaultdict\n"
+                            "by_genome = defaultdict(list)\n"
+                            "for r in rows:\n"
+                            "    by_genome[r['genome_id']].append(r)\n"
+                            "for gid, arr in by_genome.items():\n"
+                            "    arr.sort(key=lambda x: (-float(x.get('completeness',0.0)), -int(x.get('present_kos',0)), x.get('pathway_id','')))\n"
+                            "    print(f'Genome: {gid}')\n"
+                            "    complete = [t for t in arr if abs(float(t.get('completeness',0.0)) - 1.0) < 1e-9]\n"
+                            "    show = complete if complete else arr[:25]\n"
+                            "    for t in show:\n"
+                            "        print(f""  {t['pathway_id']} {t.get('pathway_name','')}: {t.get('present_kos',0)}/{t.get('total_kos',0)} ({float(t.get('completeness',0.0)):.2f})"")\n"
+                            "    print()\n"
+                        )
+                        # Rebuild ci_code with safe embedded JSON to avoid quoting issues
+                        try:
+                            import base64 as _b64, gzip as _gz
+                            _rows_b64 = _b64.b64encode(_gz.compress(rows_json.encode('utf-8'))).decode('ascii')
+                            ci_code = (
+                                "import json, base64, gzip\n"
+                                f"rows = json.loads(gzip.decompress(base64.b64decode('{_rows_b64}')).decode('utf-8'))\n"
+                                "from collections import defaultdict\n"
+                                "by_genome = defaultdict(list)\n"
+                                "for r in rows:\n"
+                                "    gid = r.get('genome_id','')\n"
+                                "    by_genome[gid].append(r)\n"
+                                "for gid, arr in by_genome.items():\n"
+                                "    try:\n"
+                                "        arr.sort(key=lambda x: (-float(x.get('completeness',0.0)), -int(x.get('present_kos',0)), x.get('pathway_id','')))\n"
+                                "    except Exception:\n"
+                                "        pass\n"
+                                "    print('Genome:', gid)\n"
+                                "    complete = [t for t in arr if abs(float(t.get('completeness',0.0)) - 1.0) < 1e-9]\n"
+                                "    show = complete if complete else arr[:25]\n"
+                                "    for t in show:\n"
+                                "        pk = int(t.get('present_kos',0)); tk = int(t.get('total_kos',0)); comp=float(t.get('completeness',0.0))\n"
+                                "        pid = t.get('pathway_id',''); pname = t.get('pathway_name','')\n"
+                                "        label = pid if (not pname or pname==pid) else f'{pid} {pname}'\n"
+                                "        print(' ', label, f': {pk}/{tk} ({comp:.2f})')\n"
+                            "    print()\n"
+                            )
+                        except Exception as _embed_err:
+                            logger.info(f"FASTPATH_PC: CI code embedding skipped: {_embed_err}")
+                        # Use env override for base URL if present
+                        base_url = os.getenv('CODE_INTERPRETER_URL') or getattr(self.rag_system.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000')
+                        logger.info(f"FASTPATH_PC: invoking code_interpreter (base_url={base_url})")
+                        env = await code_interpreter_tool(ci_code, session_id='fastpath-pathway', timeout=60, base_url=base_url)
+                        if env and env.get('success'):
+                            out = env.get('display_text') or ''
+                            if out.strip():
+                                answer = out.strip()
+                        else:
+                            logger.info(f"FASTPATH_PC: CI result: success={env.get('success') if isinstance(env, dict) else None} message={env.get('message') if isinstance(env, dict) else None}")
+
+                    # Force CI totals recompute if requested (disabled when native totals already used)
+                    if use_ci and use_ci_totals and (not use_native_totals):
+                        try:
+                            from ..options.template_runner import FileCypherRunner as _Runner
+                            rr = _Runner(self.rag_system.neo4j_processor.driver).run_template(
+                                "present_kos_by_genome.cypher", {}
+                            ) or []
+                            present_map = {}
+                            for rec in rr:
+                                gid = rec.get('genome_id')
+                                kos = rec.get('present_ko_ids') or []
+                                if gid:
+                                    present_map[str(gid)] = [str(k) for k in kos]
+                            from pathlib import Path as _Path
+                            import base64 as _b64, gzip as _gz
+                            repo_root = _Path(__file__).resolve().parents[3]
+                            ko_p = repo_root / 'data' / 'reference' / 'ko_pathway.list'
+                            if ko_p.exists():
+                                ko_b64 = _b64.b64encode(_gz.compress(ko_p.read_bytes())).decode('ascii')
+                                present_json = _json.dumps(present_map)
+                                ci_code_totals = (
+                                    "import json, base64, gzip\n"
+                                    f"present = json.loads('''{present_json}''')\n"
+                                    f"KO_LIST_B64 = '{ko_b64}'\n"
+                                    "ko_text = gzip.decompress(base64.b64decode(KO_LIST_B64)).decode('utf-8')\n"
+                                    "from collections import defaultdict\n"
+                                    "pathway_kos = defaultdict(set)\n"
+                                    "for line in ko_text.splitlines():\n"
+                                    "    line = line.strip()\n"
+                                    "    if not line: continue\n"
+                                    "    parts = line.split('\t')\n"
+                                    "    if len(parts) != 2: continue\n"
+                                    "    ko, path = parts\n"
+                                    "    ko = ko.replace('ko:', '')\n"
+                                    "    path = path.replace('path:', '')\n"
+                                    "    if not path.startswith('map'): continue\n"
+                                    "    pathway_kos[path].add(ko)\n"
+                                    "for gid, kos in present.items():\n"
+                                    "    print('Genome:', gid)\n"
+                                    "    s = set(kos)\n"
+                                    "    # Show only complete pathways (present == total)\n"
+                                    "    for pw, all_kos in sorted(pathway_kos.items()):\n"
+                                    "        tot = len(all_kos)\n"
+                                    "        if tot == 0: continue\n"
+                                    "        pc = len(all_kos & s)\n"
+                                    "        if pc == tot:\n"
+                                    "            print(' ', pw, f': {pc}/{tot} (1.00)')\n"
+                                    "    print()\n"
+                                )
+                                base_url = os.getenv('CODE_INTERPRETER_URL') or getattr(self.rag_system.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000')
+                                logger.info("FASTPATH_PC: invoking CI totals recompute (embedded ko_list)")
+                                envt = await code_interpreter_tool(ci_code_totals, session_id='fastpath-pathway-totals', timeout=90, base_url=base_url)
+                                if envt and envt.get('success'):
+                                    outt = envt.get('display_text') or ''
+                                    if outt.strip():
+                                        answer = outt.strip()
+                                else:
+                                    logger.info(f"FASTPATH_PC: CI totals recompute failed: success={envt.get('success') if isinstance(envt, dict) else None} message={envt.get('message') if isinstance(envt, dict) else None}")
+                            else:
+                                logger.info(f"FASTPATH_PC: ko_pathway.list not found at {ko_p}")
+                        except Exception as _ci_tot_err:
+                            logger.info(f"FASTPATH_PC: CI totals recompute error: {_ci_tot_err}")
+
+                    # Fallback: if no rows from Neo4j, optionally compute completeness via CI using KO_LIST_URL + Neo4j HTTP
+                    if use_ci and not rows and (not use_native_totals):
+                        # Fallback: compute present KO sets via Bolt (server-side) and embed KO list into CI code
+                        try:
+                            # 1) Present KO sets via Bolt (no CI network)
+                            from ..options.template_runner import FileCypherRunner as _Runner
+                            rr = _Runner(self.rag_system.neo4j_processor.driver).run_template(
+                                "present_kos_by_genome.cypher", {}
+                            ) or []
+                            present_map = {}
+                            for rec in rr:
+                                gid = rec.get('genome_id')
+                                kos = rec.get('present_ko_ids') or []
+                                if gid:
+                                    present_map[str(gid)] = [str(k) for k in kos]
+                            try:
+                                logger.info(f"FASTPATH_PC: embedded fallback present genomes={len(present_map)} total_kos={sum(len(v) for v in present_map.values())}")
+                            except Exception:
+                                pass
+                            # 2) Embed KO list from repo
+                            from pathlib import Path as _Path
+                            import base64 as _b64, gzip as _gz
+                            repo_root = _Path(__file__).resolve().parents[3]
+                            ko_p = repo_root / 'data' / 'reference' / 'ko_pathway.list'
+                            if ko_p.exists():
+                                ko_b64 = _b64.b64encode(_gz.compress(ko_p.read_bytes())).decode('ascii')
+                                present_json = _json.dumps(present_map)
+                                ci_code3 = (
+                                    "import json, base64, gzip\n"
+                                    f"present = json.loads('''{present_json}''')\n"
+                                    f"KO_LIST_B64 = '{ko_b64}'\n"
+                                    "ko_text = gzip.decompress(base64.b64decode(KO_LIST_B64)).decode('utf-8')\n"
+                                    "from collections import defaultdict\n"
+                                    "pathway_kos = defaultdict(set)\n"
+                                    "for line in ko_text.splitlines():\n"
+                                    "    line = line.strip()\n"
+                                    "    if not line: continue\n"
+                                    "    parts = line.split('\t')\n"
+                                    "    if len(parts) != 2: continue\n"
+                                    "    ko, path = parts\n"
+                                    "    ko = ko.replace('ko:', '')\n"
+                                    "    path = path.replace('path:', '')\n"
+                                    "    if not path.startswith('map'): continue\n"
+                                    "    pathway_kos[path].add(ko)\n"
+                                    "print(f'Summary: genomes={len(present)} pathways={len(pathway_kos)}')\n"
+                                    "def rows_for(genome_kos):\n"
+                                    "    s = set(genome_kos)\n"
+                                    "    out = []\n"
+                                    "    for pw, all_kos in pathway_kos.items():\n"
+                                    "        tot = len(all_kos)\n"
+                                    "        if tot == 0: continue\n"
+                                    "        pc = len(all_kos & s)\n"
+                                    "        comp = pc / tot\n"
+                                    "        out.append((pw, pc, tot, comp))\n"
+                                    "    out.sort(key=lambda x: (-x[3], -x[1], x[0]))\n"
+                                    "    return out\n"
+                                    "shown_genomes = 0\n"
+                                    "for gid, kos in present.items():\n"
+                                    "    print(f'Genome: {gid}')\n"
+                                    "    rr = rows_for(kos)\n"
+                                    "    if not rr:\n"
+                                    "        print('  No pathways evaluated.')\n"
+                                    "        continue\n"
+                                    "    complete = [t for t in rr if abs(t[3] - 1.0) < 1e-9]\n"
+                                    "    show = complete if complete else rr[:25]\n"
+                                    "    for pw, pc, tot, comp in show:\n"
+                                    "        print(f'  {pw}: {pc}/{tot} ({comp:.2f})')\n"
+                                    "    print()\n"
+                                    "    shown_genomes += 1\n"
+                                    "    if shown_genomes >= 5: break\n"
+                                )
+                                base_url = os.getenv('CODE_INTERPRETER_URL') or getattr(self.rag_system.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000')
+                                logger.info("FASTPATH_PC: invoking CI embedded KO fallback")
+                                env3 = await code_interpreter_tool(ci_code3, session_id='fastpath-pathway-embed', timeout=90, base_url=base_url)
+                                if env3 and env3.get('success'):
+                                    out3 = env3.get('display_text') or ''
+                                    if out3.strip():
+                                        answer = out3.strip()
+                                else:
+                                    logger.info(f"FASTPATH_PC: CI embedded fallback failed: success={env3.get('success') if isinstance(env3, dict) else None} message={env3.get('message') if isinstance(env3, dict) else None}")
+                            else:
+                                logger.info(f"FASTPATH_PC: embedded KO list unavailable at {ko_p}")
+                        except Exception as _bolt_ci_err:
+                            logger.info(f"FASTPATH_PC: CI embedded fallback error: {_bolt_ci_err}")
+                except Exception as _ci_err:
+                    logger.info(f"Code interpreter post-processing skipped: {_ci_err}")
+                step = AgentStep(
+                    step_number=1,
+                    tool_name="fast_path_pathway_completeness",
+                    tool_parameters={
+                        "genome_ids": genome_ids or "ALL",
+                        "min_completeness": min_c,
+                        "pathways": pathways or "ALL",
+                        "totals_source": (meta or {}).get('totals_source') if isinstance(meta, dict) else None,
+                    },
+                    reasoning="Deterministic KEGG pathway completeness via KO→Pathway graph",
+                    result={"rows": [r.__dict__ for r in rows], "meta": meta},
+                    execution_time=0.0,
+                    success=True,
+                    error=None,
+                )
+                # Always run synthesis at the end of the pipeline
+                try:
+                    complete_counts = (meta or {}).get('complete_counts', {}) if isinstance(meta, dict) else {}
+                    pf_scope = (meta or {}).get('pathway_scope', 'ALL') if isinstance(meta, dict) else 'ALL'
+                    cf_brief = ", ".join(f"{k}:{v}" for k,v in complete_counts.items()) if isinstance(complete_counts, dict) else ""
+                    current_findings = (
+                        f"evaluated={len(rows)} pathways; complete_by_genome=({cf_brief}); scope={pf_scope}"
+                    )
+                except Exception:
+                    current_findings = f"evaluated={len(rows)} pathways"
+                synth_answer, synth_conf, synth_citations = await self._synthesize_agent_results(
+                    question, [step], current_findings
+                )
+                final_out = synth_answer.strip() if isinstance(synth_answer, str) and synth_answer.strip() else answer
+                return AgentExecutionResult(
+                    question=question,
+                    success=True,
+                    steps=[step],
+                    final_answer=final_out,
+                    confidence=synth_conf or "high",
+                    citations=synth_citations or "",
+                    total_execution_time=0.0,
+                    total_steps=1,
+                    tools_used=["fast_path_pathway_completeness", "report_synthesis"],
+                    error=None,
+                )
+            except Exception as e:
+                logger.info(f"Pathway completeness fast path failed: {e}")
+                return None
+
+        # Locus path requires DSL/PEG intent
+        try:
+            from ..intent.dsl_renderer import render_to_dsl
+            from ..options.intent_grammar import parse_intent as _parse_dsl
+            intent = None
+            if canon:
+                dsl = render_to_dsl(canon)
+                try:
+                    if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                        dbg = self.note_keeper.session_path / "debug_data_flow"
+                        dbg.mkdir(exist_ok=True)
+                        with open(dbg / "canonicalizer.dsl.txt", 'w') as f:
+                            f.write(dsl)
+                except Exception:
+                    pass
+                intent = _parse_dsl(dsl)
+            if not intent:
+                from ..options.router import parse_macro_intent
+                intent = parse_macro_intent(question)
             if not intent or intent.option_name != "LocusDiscovery":
                 logger.info("MFP_PRECHECK: intent_unparsed_or_not_locus")
                 return None
-        except Exception:
-            logger.info("MFP_PRECHECK: intent_exception")
+        except Exception as e:
+            logger.info(f"MFP_PRECHECK: intent_exception: {e}")
             return None
 
         # Build deterministic option with file-based template runner
@@ -348,12 +700,24 @@ class UnifiedAgentExecutor:
         k = int(intent.flank.value or 4)
         required_knn = getattr(intent.obligations, "lancedb_knn", None)
         nn = int(required_knn.nn) if (required_knn and required_knn.required and required_knn.nn) else 0
-        cards, meta = option.run(
-            marker=intent.marker,
-            N=int(intent.N.value or 5),
-            k=k,
-            nn=nn,
-        )
+        # Branch: signature-based discovery vs. marker-based
+        if getattr(intent, 'signature_name', None):
+            try:
+                from ..signatures.registry import SignatureRegistry
+                from ..options.locus_signature_discovery import find_loci_by_signature
+                reg = SignatureRegistry(self.rag_system.config.project_root if hasattr(self.rag_system.config, 'project_root') else __import__('pathlib').Path('.'))
+                cards, meta = find_loci_by_signature(intent.signature_name, int(intent.N.value or 5), k, db_runner, reg)
+                meta.setdefault('knn', False)
+            except Exception as e:
+                logger.info(f"Signature discovery failed: {e}")
+                return None
+        else:
+            cards, meta = option.run(
+                marker=intent.marker,
+                N=int(intent.N.value or 5),
+                k=k,
+                nn=nn,
+            )
         elapsed = time.time() - start
 
         # Mark obligations
@@ -408,6 +772,89 @@ class UnifiedAgentExecutor:
                 logger.info(f"Fast Path: LanceDB stage skipped due to error: {e}")
 
         if meta.get("escalate") or ledger.unmet():
+            # Attempt concept discovery before escalating to planner
+            try:
+                need = int(getattr(intent.N, 'value', None) or 5)
+                logger.info("MFP_FALLBACK: invoking concept_discovery before planner escalation")
+                # Extract concise concept phrase like "metal transport" from the question
+                concept_text = question
+                try:
+                    import re as _re
+                    m = _re.search(r"find\s+\w+\s+(.*?)\s+loci", question, _re.I)
+                    if m:
+                        concept_text = m.group(1).strip()
+                except Exception:
+                    pass
+                cd = await self._execute_concept_discovery({
+                    "concept": concept_text,
+                    "n": need,
+                    "flank_k": k,
+                })
+                loci = (cd.get("structured_data") or []) if isinstance(cd, dict) else []
+                # structured_data may be a list with loci and aggregated rows
+                cards_for_heavy = []
+                if isinstance(loci, list):
+                    # Try to locate aggregated rows
+                    aggregated = None
+                    for item in loci:
+                        if isinstance(item, dict) and 'aggregated' in item:
+                            aggregated = item.get('aggregated')
+                            break
+                    # Build minimal cards from aggregated if present
+                    if isinstance(aggregated, list):
+                        for item in aggregated[:need]:
+                            sid = item.get('seed_protein_id') or item.get('seed')
+                            neighbors = item.get('neighbors') or []
+                            contig = item.get('contig_id') or ''
+                            cards_for_heavy.append({
+                                'seed_protein_id': sid,
+                                'contig_id': contig,
+                                'genome_id': '',
+                                'contig_len': None,
+                                'neighbors': neighbors,
+                                'verdict': 'CONTEXTUALIZED' if neighbors else 'PARTIAL_SIGNAL',
+                                'seed_pfams': item.get('seed_pfams') or [],
+                                'seed_kos': item.get('seed_kos') or [],
+                            })
+                if cards_for_heavy and len(cards_for_heavy) >= min(1, need):
+                    # Always use heavy finalizer for narrative
+                    # Build meta with scope and seed_selection provenance for the heavy finalizer
+                    summary_cd = cd.get('summary') if isinstance(cd, dict) else {}
+                    meta_cd = {
+                        'escalate': False,
+                        'signature': f'CONCEPT:{concept_text}',
+                        'marker': concept_text,
+                        'k': int(k),
+                        'nn': 0,
+                        'analysis_scope': {"mode": "locus_window", "window_k": int(k), "contig_semantics": "gene_order"},
+                        'seed_selection': {"method": "concept_anchors", "anchors_count": len((summary_cd or {}).get('anchors_used', []) )},
+                        'witness': {},
+                    }
+                    final_answer = self.rag_system._finalize_from_locus_cards(cards_for_heavy[:need], meta_cd, use_heavy=True)
+                    step = AgentStep(
+                        step_number=1,
+                        tool_name="concept_discovery",
+                        tool_parameters={"concept": concept_text, "n": need, "flank_k": k},
+                        reasoning="Anchors → PFAM/KO → proteins → batch neighborhoods → select loci",
+                        result={"count": len(cards_for_heavy), "loci": cards_for_heavy[:need], "summary": cd.get("summary")},
+                        execution_time=elapsed,
+                        success=True,
+                        error=None,
+                    )
+                    return AgentExecutionResult(
+                        question=question,
+                        success=True,
+                        steps=[step],
+                        final_answer=final_answer,
+                        confidence="high",
+                        citations="",
+                        total_execution_time=elapsed,
+                        total_steps=1,
+                        tools_used=["concept_discovery"],
+                        error=None,
+                    )
+            except Exception as _cd_err:
+                logger.info(f"Concept discovery fallback skipped: {_cd_err}")
             logger.info(
                 f"Fast Path: escalating to planner; meta={meta}, unmet={list(ledger.unmet().keys())}"
             )
@@ -432,14 +879,14 @@ class UnifiedAgentExecutor:
 
         step = AgentStep(
             step_number=1,
-            tool_name="fast_path_locus_discovery",
+            tool_name="fast_path_signature_discovery" if getattr(intent, 'signature_name', None) else "fast_path_locus_discovery",
             tool_parameters={
                 "marker": intent.marker,
                 "N": int(intent.N.value or 5),
                 "k": k,
                 "nn": nn,
             },
-            reasoning="Deterministic MFP: seeds → EVI gate → batched neighborhoods → persist loci",
+            reasoning="Deterministic MFP (signature-aware): seeds → neighborhoods → DNF motifs → persist loci",
             result={
                 "count": len(cards),
                 "meta": meta,
@@ -487,6 +934,23 @@ class UnifiedAgentExecutor:
         steps: List[AgentStep] = []
         current_findings = f"Analyzing question: {question}"
         tools_used: List[str] = []
+        # Consume any pre-seeded steps (from Macro Fast Path) before agent decisions
+        try:
+            if getattr(self, '_seed_steps', None):
+                for s in self._seed_steps:
+                    steps.append(s)
+                    if s.tool_name and s.tool_name not in tools_used:
+                        tools_used.append(s.tool_name)
+                    elif s.tool_name is None and 'database_query' not in tools_used:
+                        tools_used.append('database_query')
+                    try:
+                        result_summary = self._summarize_step_result(s)
+                        current_findings += f"\n\nSeed step findings: {result_summary}"
+                    except Exception:
+                        pass
+                self._seed_steps = []
+        except Exception:
+            pass
         # Reset FSM state
         self._fsm.state = State.PLAN
         if self.note_keeper:
@@ -1008,7 +1472,7 @@ class UnifiedAgentExecutor:
                         task_context="Agent decision parameter repair"
                     )
                     if fixed is not None:
-                        fixed_text = getattr(fixed, 'json', '') or ''
+                        fixed_text = getattr(fixed, 'json_payload', '') or ''
                         try:
                             fixed_obj = _json.loads(fixed_text)
                             if isinstance(fixed_obj, dict) and 'template' in fixed_obj and 'slots' in fixed_obj:
@@ -1057,7 +1521,7 @@ class UnifiedAgentExecutor:
                                 task_context="Agent decision parameter repair (compile failure)"
                             )
                             if fixed2 is not None:
-                                fixed_text2 = getattr(fixed2, 'json', '') or ''
+                                fixed_text2 = getattr(fixed2, 'json_payload', '') or ''
                                 try:
                                     fixed_obj2 = _json.loads(fixed_text2)
                                     if isinstance(fixed_obj2, dict) and 'template' in fixed_obj2 and 'slots' in fixed_obj2:
@@ -1178,6 +1642,32 @@ class UnifiedAgentExecutor:
         except Exception:
             pass
         return result
+
+    async def _execute_concept_discovery(self, params: Dict[str, Any]) -> Any:
+        """Execute concept discovery (anchors → PFAM/KO → proteins → neighborhoods)."""
+        from .external_tools import AVAILABLE_TOOLS
+        tool = AVAILABLE_TOOLS.get("concept_discovery")
+        if tool is None:
+            raise RuntimeError("Tool 'concept_discovery' not registered")
+        concept = params.get("concept")
+        if not concept or not isinstance(concept, str):
+            raise ValueError("concept_discovery requires 'concept' (string)")
+        n = int(params.get("n") or 5)
+        flank_k = int(params.get("flank_k") or 5)
+        max_rounds = int(params.get("max_rounds") or 2)
+        anchor_limit = int(params.get("anchor_limit") or 8)
+        protein_limit = int(params.get("protein_limit") or 200)
+        seeds_limit = int(params.get("seeds_limit") or 100)
+        return await tool(
+            rag_system=self.rag_system,
+            concept=concept,
+            n=n,
+            flank_k=flank_k,
+            max_rounds=max_rounds,
+            anchor_limit=anchor_limit,
+            protein_limit=protein_limit,
+            seeds_limit=seeds_limit,
+        )
     
     async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
         """Execute database query via STRICT template path only (envelope result)."""
@@ -1312,7 +1802,12 @@ class UnifiedAgentExecutor:
         """Execute hierarchical genomic analysis instead of raw data dumping."""
         from .whole_genome_reader import WholeGenomeReader
         from .hierarchical_analysis import HierarchicalGenomeAnalyzer
+        from ..kg.cypher_templates.registry import compile_query
         
+        # Hard guard by config
+        if getattr(self.rag_system.config, 'DISABLE_WHOLE_GENOME_READER', False):
+            raise RuntimeError("whole_genome_reader is disabled by configuration")
+
         # Get the user's original question for context-driven analysis
         user_question = getattr(self, 'current_user_question', '') or params.get('user_question', '')
         
@@ -1327,6 +1822,20 @@ class UnifiedAgentExecutor:
         max_genes = params.get("max_genes_per_contig", 2000)  # Increased for chunking
         
         if not genome_id:
+            # Global preflight size check: total gene count
+            try:
+                cy, pr = compile_query('count_by_label', {'label': 'Gene'})
+                qres = await self.rag_system.neo4j_processor.process_query(cy, query_type='cypher')
+                total = 0
+                if qres and isinstance(qres.results, list) and qres.results:
+                    c = qres.results[0].get('count')
+                    total = int(c or 0)
+                threshold = int(getattr(self.rag_system.config, 'WGR_MAX_TOTAL_GENES', 100000))
+                if total > threshold:
+                    raise RuntimeError(f"whole_genome_reader blocked: total genes {total} exceeds cap {threshold}")
+            except Exception as pre_err:
+                # Surface clear message for planner/agent
+                raise RuntimeError(f"whole_genome_reader preflight failed: {pre_err}")
             # If no specific genome, use global spatial reading
             from .whole_genome_reader import read_all_genomes_spatial
             raw_result = await read_all_genomes_spatial(self.rag_system.neo4j_processor)

@@ -96,7 +96,7 @@ class LLMRouter:
             return module(
                 instruction=instruction,
                 bad=json.dumps(bad_obj, ensure_ascii=False),
-                schema=json.dumps(TOOLCALL_JSON_SCHEMA, ensure_ascii=False),
+                schema_def=json.dumps(TOOLCALL_JSON_SCHEMA, ensure_ascii=False),
             )
 
         fixed = self.model_allocator.create_context_managed_call(
@@ -108,7 +108,7 @@ class LLMRouter:
         )
         if not fixed:
             return None
-        text = getattr(fixed, "json", "{}")
+        text = getattr(fixed, "json_payload", "{}")
         try:
             obj = json.loads(text)
             return obj

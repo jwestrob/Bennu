@@ -20,6 +20,8 @@ class LocusCard:
     contig_len: int | None
     neighbors: List[Dict[str, Any]]
     verdict: str  # CONTEXTUALIZED | PARTIAL_SIGNAL | NO_SIGNAL
+    seed_pfams: List[str] | None = None
+    seed_kos: List[str] | None = None
 
 
 class LocusDiscoveryOption:
@@ -38,12 +40,40 @@ class LocusDiscoveryOption:
         self.logger = logging.getLogger(__name__)
 
     def run(self, marker: str, N: int, k: int, nn: int) -> Tuple[List[LocusCard], Dict[str, Any]]:
-        # 1) Seeds
-        self.logger.info("[MFP] Fetching seeds by marker...")
-        seeds = self.db.run_template(
-            "seeds_by_marker.cypher",
-            {"markers": self._synonyms(marker), "limit": 5 * max(N, 10)},
-        )
+        # 1) Seeds (prefer ID-backed resolution over substring matching)
+        self.logger.info("[MFP] Resolving marker to PFAM/KO IDs...")
+        pfam_ids: List[str] = []
+        ko_ids: List[str] = []
+        try:
+            # Deterministic templates in resources/cypher
+            pref = self.db.run_template("pfam_ids_by_query.cypher", {"q": marker, "limit": 200}) or []
+            for r in pref:
+                pid = (r.get("pfam_id") or r.get("id") or "").strip()
+                if pid:
+                    pfam_ids.append(pid)
+            kref = self.db.run_template("ko_ids_by_query.cypher", {"q": marker, "limit": 200}) or []
+            for r in kref:
+                kid = (r.get("ko_id") or "").strip()
+                if kid:
+                    ko_ids.append(kid)
+            # Dedup while preserving order
+            pfam_ids = list(dict.fromkeys(pfam_ids))
+            ko_ids = list(dict.fromkeys(ko_ids))
+        except Exception as e:
+            self.logger.info(f"[MFP] Marker ID resolution skipped: {e}")
+
+        if pfam_ids or ko_ids:
+            self.logger.info(f"[MFP] IDs resolved: pfam={len(pfam_ids)} ko={len(ko_ids)}; fetching seeds by IDs…")
+            seeds = self.db.run_template(
+                "seeds_by_domain_set.cypher",
+                {"pfam_ids": pfam_ids, "ko_ids": ko_ids, "limit": 5 * max(N, 10)},
+            )
+        else:
+            self.logger.info("[MFP] No IDs resolved; falling back to substring matching seeds_by_marker…")
+            seeds = self.db.run_template(
+                "seeds_by_marker.cypher",
+                {"markers": [marker], "limit": 5 * max(N, 10)},
+            )
         self.logger.info(f"[MFP] Seeds fetched: {len(seeds)}")
         assert_schema_minimal(seeds)
         seeds = collapse_redundant_seeds(seeds)
@@ -91,6 +121,13 @@ class LocusDiscoveryOption:
         for row in neigh:
             neighbors = row.get("neighbors", [])
             verdict = "CONTEXTUALIZED" if len(neighbors) > 0 else "PARTIAL_SIGNAL"
+            # Attach seed annotations if present
+            try:
+                seed_pfams = row.get("seed_pfams") or []
+                seed_kos = row.get("seed_kos") or []
+            except Exception:
+                seed_pfams = []
+                seed_kos = []
             cards.append(
                 LocusCard(
                     seed_protein_id=row.get("seed_protein_id"),
@@ -99,6 +136,8 @@ class LocusDiscoveryOption:
                     contig_len=row.get("contig_len"),
                     neighbors=neighbors,
                     verdict=verdict,
+                    seed_pfams=seed_pfams,
+                    seed_kos=seed_kos,
                 )
             )
 
@@ -123,6 +162,12 @@ class LocusDiscoveryOption:
                 "seed_candidates": [r.get("seed_protein_id") for r in (seeds or []) if r.get("seed_protein_id")],
                 "gated_seed_ids": [r.get("seed_protein_id") for r in (gated or []) if r.get("seed_protein_id")],
                 "shortlist_seed_ids": [r.get("seed_protein_id") for r in (shortlist or []) if r.get("seed_protein_id")],
+                "analysis_scope": {"mode": "locus_window", "window_k": int(k), "contig_semantics": "gene_order"},
+                "seed_selection": {
+                    "method": "id_resolution" if (pfam_ids or ko_ids) else "substring_fallback",
+                    "pfam_ids_count": len(pfam_ids),
+                    "ko_ids_count": len(ko_ids),
+                },
             }
         except Exception:
             meta = {"escalate": False, "knn": knn_info, "marker": marker, "k": int(k), "nn": int(nn)}
@@ -130,13 +175,8 @@ class LocusDiscoveryOption:
         return (cards, meta)
 
     def _synonyms(self, marker: str) -> List[str]:
-        # Map common synonyms; extend via config; keep deterministic.
-        base = [marker]
-        if marker == "terminase":
-            base += ["terminase large subunit", "terL", "PF03237", "K06966"]
-        if marker == "integrase":
-            base += ["tyrosine recombinase", "int", "PF00589", "K14059"]
-        return list(dict.fromkeys(base))
+        # Minimal deterministic synonym mapping left intentionally generic; prefer ID-based resolution upstream.
+        return [marker]
 
     def _batched_knn(self, seed_pids: List[int], nn: int) -> Dict[str, Any]:
         # Delegate to existing LanceDB utility if present; otherwise no-op

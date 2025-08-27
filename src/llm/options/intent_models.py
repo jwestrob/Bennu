@@ -31,6 +31,7 @@ class Obligations(BaseModel):
 class Intent(BaseModel):
     option_name: str = "LocusDiscovery"
     marker: str
+    signature_name: Optional[str] = None
     N: Cardinality = Field(default_factory=Cardinality)
     flank: Cardinality = Field(default_factory=Cardinality)
     nn: Cardinality = Field(default_factory=Cardinality)

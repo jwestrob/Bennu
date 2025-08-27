@@ -207,19 +207,34 @@ class Neo4jBulkLoader:
         
         # Add node files with labels
         for node_file in node_files:
-            # Extract label from filename (e.g., "domains.csv" -> "Domain")
-            label = node_file.stem.rstrip('s').title()
-            if label.endswith('ie'):  # Fix "Qualitymetrie" -> "QualityMetrics"
-                label = label[:-2] + "ies"
-            elif label == "Domainannotation":
-                label = "DomainAnnotation"
-            elif label == "Functionalannotation":
-                label = "FunctionalAnnotation"
-            elif label == "Keggortholog":
-                label = "KEGGOrtholog"
-            elif label == "Qualitymetric":
-                label = "QualityMetrics"
-            
+            # Extract label from filename with explicit overrides where needed.
+            stem = node_file.stem.lower()
+            label_overrides = {
+                # Canonical node labels
+                "domainannotations": "DomainAnnotation",
+                "functionalannotations": "FunctionalAnnotation",
+                "keggorthologs": "KEGGOrtholog",
+                "qualitymetrics": "QualityMetrics",
+                # BGC variants
+                "bgcs": "Bgc",
+                "bgc_clusters": "Bgc",
+            }
+            if stem in label_overrides:
+                label = label_overrides[stem]
+            else:
+                # Default heuristic (e.g., "domains" -> "Domain")
+                label = node_file.stem.rstrip('s').title()
+                if label.endswith('ie'):  # Fix "Qualitymetrie" -> "QualityMetrics"
+                    label = label[:-2] + "ies"
+                elif label == "Domainannotation":
+                    label = "DomainAnnotation"
+                elif label == "Functionalannotation":
+                    label = "FunctionalAnnotation"
+                elif label == "Keggortholog":
+                    label = "KEGGOrtholog"
+                elif label == "Qualitymetric":
+                    label = "QualityMetrics"
+
             cmd.extend(["--nodes", f"{label}={node_file}"])
         
         # Add relationship files  

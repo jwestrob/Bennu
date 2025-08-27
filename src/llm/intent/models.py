@@ -1,7 +1,7 @@
 from __future__ import annotations
 from enum import Enum
 from typing import List, Optional, Literal, Union
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class TaskFamily(str, Enum):
@@ -9,6 +9,7 @@ class TaskFamily(str, Enum):
     FIND_LOCI_BY_SIGNATURE = "FIND_LOCI_BY_SIGNATURE"
     LANCEDB_KNN = "LANCEDB_KNN"
     SUMMARIZE_NEIGHBORHOOD = "SUMMARIZE_NEIGHBORHOOD"
+    PATHWAY_COMPLETENESS = "PATHWAY_COMPLETENESS"
 
 
 class KnnAction(BaseModel):
@@ -46,7 +47,22 @@ class CanonicalIntent(BaseModel):
     find_by_signature: Optional[FindBySignature] = None
     actions: List[Action] = Field(default_factory=list)
     version_tag: str = "v1"
+    # Optional scope for pathway completeness
+    genome_ids: Optional[List[str]] = None
+    min_completeness: Optional[float] = None
+    pathways: Optional[List[str]] = None  # Optional filter: KEGG map IDs (e.g., "map00010")
 
     def to_minimal_dict(self) -> dict:
         return self.model_dump(by_alias=False, exclude_none=True)
 
+    @model_validator(mode="before")
+    def _adjust_for_pathway(cls, data):
+        """Ensure valid defaults for PATHWAY_COMPLETENESS (n>=1)."""
+        try:
+            if isinstance(data, dict) and str(data.get("task")) == TaskFamily.PATHWAY_COMPLETENESS:
+                n = data.get("n")
+                if not isinstance(n, int) or n < 1:
+                    data["n"] = 1
+        except Exception:
+            pass
+        return data

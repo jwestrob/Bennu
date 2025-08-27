@@ -7,6 +7,7 @@ Restored from backup with modular organization.
 import logging
 from typing import List, Dict, Any, Optional
 import os
+import json
 import asyncio
 
 try:
@@ -44,6 +45,9 @@ from ..context_compression import ContextCompressor
 from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
 from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
+from ..mfp.operators import builtin as _mfp_builtin  # noqa: F401  # register builtins
+from ..mfp.operators.base import operator_catalog, OperatorContext
+from ..mfp.executor import execute_plan
 from .query_validator import QueryValidator
 # Old genome_selector.py replaced by unified genome_selection.py
 from .router import get_router
@@ -277,33 +281,193 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     "error": "Missing dependencies"
                 }
             
-            # STEP 0: Macro Fast Path (deterministic, zero LLM) if enabled
+            # STEP 0A: Agent-designed Macro Plan (operator catalog → plan → MFP executor)
+            try:
+                if getattr(self.config, 'FAST_PATH_ENABLED', True) and getattr(self.config, 'USE_MFP_PLANNER', True):
+                    from .dspy_signatures import MacroPlannerSignature
+                    logger.info("🧭 MacroPlanner: proposing operator plan")
+                    # Light instrumentation: expose operator catalog size and key operators
+                    try:
+                        oc = operator_catalog()
+                        op_names = [o.get("name") for o in oc.get("operators", [])]
+                        logger.info("🧭 Operator catalog loaded: %d operators (examples: %s)", len(op_names), ", ".join(op_names[:5]))
+                    except Exception:
+                        pass
+                    # Load compact KO reference (knum + definition) to aid keyword selection
+                    def _load_ko_reference(max_lines: int = 3000) -> str:
+                        try:
+                            import csv
+                            path = os.path.join(os.getcwd(), 'data', 'reference', 'ko_list')
+                            if not os.path.exists(path):
+                                return ""
+                            lines = []
+                            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                # Try CSV/TSV with header first, fallback to space-delimited
+                                sample = f.read(4096)
+                                f.seek(0)
+                                dialect = None
+                                try:
+                                    dialect = csv.Sniffer().sniff(sample)
+                                except Exception:
+                                    dialect = None
+                                if dialect:
+                                    reader = csv.DictReader(f, dialect=dialect)
+                                    # Normalize column names
+                                    cols = {k.lower(): k for k in (reader.fieldnames or [])}
+                                    for i, row in enumerate(reader):
+                                        if i >= max_lines:
+                                            break
+                                        knum = (row.get(cols.get('knum', ''), '') or row.get(cols.get('ko', ''), '')).strip()
+                                        defin = (row.get(cols.get('definition', ''), '') or row.get(cols.get('name', ''), '')).strip()
+                                        if knum and defin:
+                                            lines.append(f"{knum}: {defin}")
+                                else:
+                                    # Fallback: simple parsing assuming first token is Kxxxxx and rest is definition
+                                    for i, raw in enumerate(f):
+                                        if i >= max_lines:
+                                            break
+                                        raw = raw.strip()
+                                        if not raw:
+                                            continue
+                                        parts = raw.split('\t') if '\t' in raw else raw.split(None, 1)
+                                        if not parts:
+                                            continue
+                                        knum = parts[0].strip()
+                                        defin = parts[1].strip() if len(parts) > 1 else ''
+                                        if knum and defin and (knum.startswith('K') or knum.lower().startswith('ko:')):
+                                            lines.append(f"{knum}: {defin}")
+                            # Keep to budget and return
+                            return "\n".join(lines)
+                        except Exception:
+                            return ""
+
+                    ko_ref = _load_ko_reference()
+                    def planner_call(module):
+                        return module(
+                            question=question,
+                            operator_catalog=json.dumps(operator_catalog()),
+                            constraints="",
+                            ko_reference=ko_ref
+                        )
+                    plan_res = self.model_allocator.create_context_managed_call(
+                        task_name="agentic_planning",
+                        signature_class=MacroPlannerSignature,
+                        module_call_func=planner_call,
+                        query=question,
+                        task_context="macro operator planning"
+                    )
+                    plan_text = getattr(plan_res, 'plan_json', '') if plan_res else ''
+                    plan = None
+                    if isinstance(plan_text, str) and plan_text.strip().startswith('{'):
+                        try:
+                            plan = json.loads(plan_text)
+                        except Exception:
+                            plan = None
+                    if plan is not None:
+                        def _env_has_results(env_dict: Dict[str, Any]) -> bool:
+                            try:
+                                for k, v in (env_dict or {}).items():
+                                    if isinstance(v, list) and len(v) > 0:
+                                        return True
+                                    # Also consider bound dicts that wrap rows
+                                    if isinstance(v, dict):
+                                        for vv in v.values():
+                                            if isinstance(vv, list) and len(vv) > 0:
+                                                return True
+                                return False
+                            except Exception:
+                                return False
+
+                        def _collect_macro_raw_items(env_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+                            items: List[Dict[str, Any]] = []
+                            try:
+                                for k, v in (env_dict or {}).items():
+                                    if isinstance(v, list):
+                                        items.append({'type': 'macro_result', 'name': k, 'rows': v})
+                            except Exception:
+                                pass
+                            return items
+
+                        all_raw_items: List[Dict[str, Any]] = []
+                        combined_env: Dict[str, Any] = {}
+                        attempts = 0
+                        max_attempts = 2  # first pass + one retry
+
+                        while attempts < max_attempts:
+                            try:
+                                ops_list = [step.get("op") for step in plan.get("steps", [])]
+                                logger.info("🧭 MacroPlanner plan ops: %s", ", ".join([str(x) for x in ops_list]))
+                            except Exception:
+                                pass
+                            logger.info("🧭 MacroPlanner: executing %d steps (attempt %d/%d)", len(plan.get('steps', [])), attempts + 1, max_attempts)
+                            ctx = OperatorContext(neo4j_driver=self.neo4j_processor.driver, project_root=str(getattr(self, 'project_root', '')))
+                            env = execute_plan(plan, ctx)
+                            # Merge environments (last write wins on same keys)
+                            try:
+                                combined_env.update(env)
+                            except Exception:
+                                combined_env = env
+                            # Collect raw items for this attempt
+                            attempt_items = _collect_macro_raw_items(env)
+                            all_raw_items.extend(attempt_items)
+                            # Add plan note for this attempt
+                            plan_note = {"type": "task_note", "task_id": f"mfp_plan_attempt_{attempts+1}", "description": "Macro plan executed (operators + params)", "observations": [], "key_findings": [], "quantitative_data": {"operators": [step.get("op") for step in plan.get("steps", [])], "plan": plan}, "cross_task_connections": []}
+                            all_raw_items.append(plan_note)
+                            # Sufficiency check
+                            if _env_has_results(env) or attempts == max_attempts - 1:
+                                break
+                            # Retry: re-plan and re-execute
+                            logger.info("🔁 MacroPlanner retry: insufficient evidence, attempting broader pass")
+                            def planner_call_retry(module):
+                                return module(
+                                    question=question,
+                                    operator_catalog=json.dumps(operator_catalog()),
+                                    constraints="allow_keyword_discovery=1",
+                                    ko_reference=ko_ref
+                                )
+                            plan_res2 = self.model_allocator.create_context_managed_call(
+                                task_name="agentic_planning",
+                                signature_class=MacroPlannerSignature,
+                                module_call_func=planner_call_retry,
+                                query=question,
+                                task_context="macro operator planning (retry)"
+                            )
+                            plan2_text = getattr(plan_res2, 'plan_json', '') if plan_res2 else ''
+                            if isinstance(plan2_text, str) and plan2_text.strip().startswith('{'):
+                                try:
+                                    plan = json.loads(plan2_text)
+                                except Exception:
+                                    pass
+                            attempts += 1
+                            if attempts >= max_attempts:
+                                break
+                        # Always synthesize at the end (with whatever we gathered)
+                        if not self.progressive_synthesizer:
+                            self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
+                        final_answer = self.progressive_synthesizer.synthesize_progressive(
+                            task_notes=[],
+                            question=question,
+                            raw_data=all_raw_items,
+                        )
+                        return {
+                            "question": question,
+                            "answer": final_answer,
+                            "confidence": "high",
+                            "citations": "",
+                            "query_metadata": {
+                                "execution_mode": "mfp_planned",
+                                "note_taking_enabled": self.note_keeper is not None,
+                                "steps": len(plan.get('steps', [])),
+                                "attempts": attempts + 1,
+                            },
+                        }
+            except Exception as e:
+                logger.info(f"MacroPlanner path skipped: {e}")
+
+            # STEP 0B: Macro Fast Path (canonicalizer-first, deterministic execution)
             try:
                 if getattr(self.config, "FAST_PATH_ENABLED", True):
                     from .agent_executor import UnifiedAgentExecutor
-                    # Fail fast if obligations require missing tool
-                    try:
-                        from ..options.router import parse_macro_intent
-                        from ..options.obligations import ObligationLedger
-                        from .external_tools import AVAILABLE_TOOLS
-                        it0 = parse_macro_intent(question)
-                        logger.info(f"GRAMMAR_ROUTER_PARSABLE={bool(it0)}")
-                        # Optional fail-fast on grammar parse errors to focus on compile issues
-                        if not it0 and getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
-                            raise RuntimeError("FAST_PATH_GRAMMAR_PARSE_FAIL: intent could not be parsed by grammar router")
-                        if it0:
-                            ledger0 = ObligationLedger.from_intent(it0)
-                            if ledger0.state.get("lancedb_knn", {}).get("required") and (
-                                "lancedb_knn" not in AVAILABLE_TOOLS or AVAILABLE_TOOLS.get("lancedb_knn") is None
-                            ):
-                                raise RuntimeError(
-                                    "CONFIG_ERROR: obligation 'lancedb_knn' requires tool 'lancedb_knn' but it is not registered."
-                                )
-                    except Exception as preflight_err:
-                        # Respect fail-fast: bubble up grammar/tool preflight errors
-                        if getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
-                            raise
-                        logger.info(f"Fast Path preflight skipped: {preflight_err}")
                     fp_agent = UnifiedAgentExecutor(self, note_keeper=self.note_keeper)
                     fp_result = await fp_agent._try_fast_path_locus_discovery(question)
                     if fp_result is not None:
@@ -321,6 +485,23 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 "note_taking_enabled": self.note_keeper is not None,
                             },
                         }
+                    # If fast path seeded steps for FSM, continue using the same executor
+                    if getattr(fp_agent, "_seed_steps", None):
+                        console.print("🚦 [bold cyan]Fast Path seed ready → continuing with FSM[/bold cyan]")
+                        agent_res = await fp_agent._execute_agent_workflow_fsm(question, selected_genome=None)
+                        return {
+                            "question": question,
+                            "answer": agent_res.final_answer,
+                            "confidence": agent_res.confidence,
+                            "citations": agent_res.citations,
+                            "query_metadata": {
+                                "execution_mode": "macro_fast_path_seeded_fsm",
+                                "total_steps": agent_res.total_steps,
+                                "tools_used": agent_res.tools_used,
+                                "execution_time": agent_res.total_execution_time,
+                                "note_taking_enabled": self.note_keeper is not None,
+                            },
+                        }
             except Exception as e:
                 # Respect fail-fast on grammar/tool compile errors
                 if getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
@@ -328,6 +509,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 logger.info(f"Macro Fast Path not taken: {e}")
 
             # STEP 1: Let the LLM decide execution strategy directly
+            if getattr(self.config, 'DISABLE_FSM', False):
+                console.print("🛑 [bold red]FSM disabled by configuration[/bold red]")
+                return {
+                    "question": question,
+                    "answer": "Macro Fast Path did not yield sufficient results and FSM is disabled. Please refine the marker/signature or enable FSM for agentic exploration.",
+                    "confidence": "low",
+                    "citations": "",
+                    "query_metadata": {
+                        "execution_mode": "disabled_fsm",
+                        "note_taking_enabled": self.note_keeper is not None,
+                    },
+                }
             console.print("🤖 [bold]Using LLM-based execution planning[/bold]")
             
             # Use model allocation for planning (o3 for complex planning tasks)
@@ -1152,6 +1345,24 @@ print("Data available: {data_summary}")
                                 shown += 1
                     except Exception:
                         pass
+                # Append signature witness (boolean motifs) if present
+                try:
+                    if isinstance(meta, dict) and meta.get('witness'):
+                        lines.append("")
+                        if meta.get('signature'):
+                            lines.append(f"Signature: {meta.get('signature')}")
+                        lines.append("Signature Witness (boolean motifs):")
+                        wit = meta.get('witness') or {}
+                        shown = 0
+                        for sid, w in wit.items():
+                            if shown >= 5:
+                                break
+                            clauses = ", ".join(w.get('clauses', [])[:3]) if isinstance(w, dict) else ''
+                            motifs = ", ".join(w.get('motifs_true', [])[:4]) if isinstance(w, dict) else ''
+                            lines.append(f"  - {sid}: clauses=[{clauses}] motifs=[{motifs}]")
+                            shown += 1
+                except Exception:
+                    pass
                 return "\n".join(lines)
             # Optional: single heavy synthesis over structured cards
             if not self.progressive_synthesizer:
@@ -1210,6 +1421,20 @@ print("Data available: {data_summary}")
                                     shown += 1
                         else:
                             ps_lines.append("- kNN stage executed; no statistics available")
+                    # Signature witness section
+                    wit = payload.get('meta', {}).get('witness') if isinstance(payload.get('meta'), dict) else None
+                    if isinstance(wit, dict) and wit:
+                        ps_lines.append("\nSignature Witness (boolean motifs):")
+                        if isinstance(payload.get('meta'), dict) and payload.get('meta', {}).get('signature'):
+                            ps_lines.append(f"- Signature: {payload.get('meta', {}).get('signature')}")
+                        shown = 0
+                        for sid, w in wit.items():
+                            if shown >= 5:
+                                break
+                            clauses = ", ".join(w.get('clauses', [])[:3]) if isinstance(w, dict) else ''
+                            motifs = ", ".join(w.get('motifs_true', [])[:4]) if isinstance(w, dict) else ''
+                            ps_lines.append(f"  • {sid}: clauses=[{clauses}] motifs=[{motifs}]")
+                            shown += 1
                 if ps_lines:
                     try:
                         ps_block = ''.join((line + '\n') for line in ps_lines)

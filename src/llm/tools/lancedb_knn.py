@@ -11,7 +11,7 @@ class LanceDbKnnInput(BaseModel):
     topk: conint(gt=0, le=200) = 50
     distance: Literal["cosine", "l2", "dot"] = "cosine"
     exclude_namespace: Literal["pfam", "kofam", "none"] = "pfam"
-    exclude_markers: List[str] = Field(default_factory=list)  # e.g., ["integrase","PF00589"]
+    exclude_markers: List[str] = Field(default_factory=list)  # e.g., ["PF00589", "marker-text"]
     include_namespace: Literal["pfam", "kofam", "none"] = "none"
     include_markers: List[str] = Field(default_factory=list)
     include_text: str | None = None
@@ -64,14 +64,8 @@ async def lancedb_knn_tool(
                 cand.append(t[:-2])
             elif t.endswith("s"):
                 cand.append(t[:-1])
-        # Prefer exact common forms if present, otherwise shortest candidate
-        pref = None
-        for p in ("integrase", "terminase"):
-            if p in cand:
-                pref = p
-                break
-        if pref is None and cand:
-            pref = sorted(set(cand), key=len)[0]
+        # Prefer the shortest candidate if available (generic heuristic)
+        pref = sorted(set(cand), key=len)[0] if cand else None
         needle = pref or (text_markers[0] if text_markers else "")
 
     # Primary: simple, filtered neighbors (seed -> [(protein_id, distance), ...])

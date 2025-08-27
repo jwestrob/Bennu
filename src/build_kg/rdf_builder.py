@@ -958,7 +958,8 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     if ko_pathway_file.exists():
         # Create pathway integration in temporary directory  
         pathway_temp_dir = output_dir / "temp_pathways"
-        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, found_ko_ids)
+        # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
+        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
         
         # Load and merge pathway graph into main graph
         pathway_graph = Graph()
@@ -1215,7 +1216,8 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     if ko_pathway_file.exists():
         # Create pathway integration in temporary directory  
         pathway_temp_dir = output_dir / "temp_pathways"
-        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, found_ko_ids)
+        # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
+        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
         
         # Load and merge pathway graph into main graph
         pathway_graph = Graph()
