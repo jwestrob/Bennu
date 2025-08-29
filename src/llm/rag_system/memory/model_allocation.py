@@ -79,7 +79,7 @@ class ModelAllocation:
                 specialties=["reasoning", "coding", "complex_analysis"]
             ),
             ModelTier.PREMIUM: ModelConfig(
-                model_name="o3",
+                model_name="gpt-5-2025-08-07",
                 provider="openai",
                 cost_per_million=15.00,
                 max_context=30000,
@@ -106,7 +106,7 @@ class ModelAllocation:
             "literature_search": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for search queries
             "data_aggregation": TaskComplexity.MEDIUM,       # Can use gpt-4.1-mini for combining data
             "statistical_analysis": TaskComplexity.MEDIUM,   # Can use gpt-4.1-mini for basic stats
-            "genomic_synthesis": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for synthesis to avoid o3 token limits
+            "genomic_synthesis": TaskComplexity.MEDIUM,      # Can use gpt-4.1-mini for synthesis to avoid premium token caps
             "detailed_report_synthesis": TaskComplexity.MEDIUM,  # Force gpt-4.1-mini for detailed reports
             "guidance_synthesis": TaskComplexity.MEDIUM,      # Fast lightweight synthesis for agent guidance
             
@@ -134,7 +134,7 @@ class ModelAllocation:
             TaskComplexity.COMPLEX: ModelTier.MINI      # Use mini for most complex tasks (cost optimization)
         }
         
-        # Only use o3 for specific high-value tasks
+        # Only use premium (gpt-5) for specific high-value tasks
         self.premium_tasks = {
             "agentic_planning",      # Agent planning decisions
             "final_synthesis",       # Final report generation
@@ -229,10 +229,10 @@ class ModelAllocation:
         # Get context-aware task complexity
         complexity = self.get_task_complexity(task_name, query, task_context)
         
-        # Check if this is a premium task that requires o3
+        # Check if this is a premium task that requires gpt-5
         if task_name in self.premium_tasks:
             tier = ModelTier.PREMIUM
-            logger.info(f"🔥 PREMIUM TASK: Using o3 for {task_name}")
+            logger.info(f"🔥 PREMIUM TASK: Using gpt-5 for {task_name}")
         else:
             # Use default complexity-based allocation (all use mini now)
             tier = self.complexity_to_tier[complexity]
@@ -268,7 +268,7 @@ class ModelAllocation:
     def switch_to_premium_mode(self):
         """Switch to premium models for all tasks."""
         self.use_premium_everywhere = True
-        logger.info("🔥 Switched to premium mode - using o3 for all tasks")
+        logger.info("🔥 Switched to premium mode - using gpt-5 for all tasks")
     
     def switch_to_optimized_mode(self):
         """Switch to cost-optimized model selection."""
@@ -343,23 +343,46 @@ class ModelAllocation:
             return None
         
         model_name, model_config = self.get_model_for_task(task_name, query, task_context)
+
+        def _max_tokens_for_task(task: str, default: int = 8000) -> int:
+            """Choose a sensible max_tokens cap per task.
+
+            - Map/summary steps benefit from larger completions.
+            - Keep reasoning models on their configured caps elsewhere.
+            """
+            # Pull policy max to serve as default cap
+            try:
+                from ..policy_engine import get_policy_engine
+                policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+            except Exception:
+                policy_max = 30000
+            t = (task or "").lower()
+            if t in {"genomic_summarization", "genomic_synthesis", "detailed_report_synthesis"}:
+                return policy_max
+            return policy_max
         
         try:
             # Use DSPy 2.6+ LM format with provider/model
             if model_config.provider == "openai":
                 model_string = f"openai/{model_name}"
                 # Special handling for reasoning models
-                if model_name.startswith(('o1', 'o3')):
-                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
+                if (model_name.startswith('gpt-5') or model_name.startswith('o1')):
+                    # Use policy max to avoid truncation for reasoning outputs
+                    try:
+                        from ..policy_engine import get_policy_engine
+                        policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+                    except Exception:
+                        policy_max = 30000
+                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=policy_max)
                 else:
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
+                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=_max_tokens_for_task(task_name, 8000))
             elif model_config.provider == "anthropic":
                 model_string = f"anthropic/{model_name}"
-                lm = dspy.LM(model=model_string, max_tokens=8000)
+                lm = dspy.LM(model=model_string, max_tokens=_max_tokens_for_task(task_name, 8000))
             else:
                 logger.warning(f"Unknown provider {model_config.provider}, using default")
                 model_string = f"openai/{model_name}"
-                lm = dspy.LM(model=model_string, max_tokens=8000)
+                lm = dspy.LM(model=model_string, max_tokens=_max_tokens_for_task(task_name, 8000))
             
             # Create module and execute with context manager
             module = dspy.Predict(signature_class)
@@ -379,7 +402,11 @@ class ModelAllocation:
                 logger.warning(f"🚫 Token limit exceeded for {task_name}, forcing fallback to smaller model")
                 try:
                     # Force fallback to mini model for token limit issues
-                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                    fallback_lm = dspy.LM(
+                        model="openai/gpt-4.1-mini",
+                        temperature=0.0,
+                        max_tokens=_max_tokens_for_task(task_name, 8000),
+                    )
                     fallback_module = dspy.Predict(signature_class)
                     with dspy.context(lm=fallback_lm):
                         result = module_call_func(fallback_module)

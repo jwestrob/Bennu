@@ -1,4 +1,4 @@
-Supersedes: previous CLAUDE note (2025-08-26)
+Supersedes: previous CLAUDE note (2025-08-26) and pre‑compaction notes
 
 Context: KEGG Pathway Completeness (Fast Path + Code Interpreter)
 
@@ -147,6 +147,39 @@ Testing Plan (quick wins)
 - Smoke tests for: neighborhood_extractor, annotation_discovery, concept_discovery, lancedb_knn, report_synthesis.
 - Literature search: network-skipped integration test; assert graceful fallback when Biopython missing.
 - Genome selector tool: unit-test with a mocked selector for `analyze_genome_intent`.
+
+---
+
+Context Compaction Policy (2025-08-29) — supersedes pre‑compaction notes
+
+Goal
+- Keep early testing and typical analyses out of ProgressiveSynthesizer (Map‑Reduce) by default while preserving strong evidence. Allow full JSON detail when the task is small and intentionally requests it.
+
+Defaults (now live)
+- Evidence format: discovered_proteins are deduplicated globally (by genome_id, protein_id) and rendered compactly as counts + up to 10 examples. Catalog hits (PFAM/KO) are not fed to synthesis.
+- True totals: we preserve full row counts during pre‑compaction (total_rows) and display correct totals in synthesis headers. The example list is capped (10 by default) but counts reflect the full set.
+- Compact by default: macro_result lists are pre‑compacted before token counting to avoid triggering Map‑Reduce solely due to large JSON payloads.
+- Planner rubric: Two‑stage search (catalog → IDs → exact retrieval) remains. Prefer compact evidence unless explicitly requested (see below).
+
+Optional full JSON (small, targeted queries)
+- Operator flag: AnnotationDiscovery accepts `return_full_rows=true`. When set, bindings are marked with `_format: 'full'` and the formatter will include full JSON rows for reasonably small results (≤ 2,000 rows).
+- Guidance for planner: Use `return_full_rows=true` only for compact targets (e.g., “find methyltransferases in genome GX…”). For broader, multi‑marker searches, keep compact summaries.
+- Caution: Full rows can be very large on bigger datasets; prefer compact unless you truly need row‑level detail.
+
+Evidence matrix (recommended presentation)
+- For synthesis, include a small summary table per marker (marker → total rows, optional per‑genome counts, and 3 examples). Full lists are still available via tool cache.
+
+Debugging & Guardrails
+- Context debug log: We emit a single line summarizing how many lists were collected and the top largest lists with row counts. This quickly pinpoints bloat sources.
+- Trim messages: We log when duplicate discovered_proteins rows were dropped during collection.
+- Tool cache: Large raw lists can be cached on disk (session tool cache) and referenced by ID in notes when needed, keeping the model context small.
+
+Planner Language (concise)
+- “Prefer compact evidence (counts + examples). If full row detail is essential and the target is small, set `return_full_rows=true` on AnnotationDiscovery. For broad probes, keep compact to prevent excessive context.”
+
+Next tighten‑ups (optional; off by default)
+- Example cap: Soft‑cap displayed examples to 10 per marker; store full lists in cache and reference by ID.
+- Aggregation: For very large runs, aggregate across overlapping markers (counts + union examples) while keeping full detailed lists in the cache.
 
 Scaling Note
 - Final synthesis can target large-context models (e.g., Sonnet 4 with 1M context). Macro results are already structured to enable efficient summarization without overwhelming the context window.

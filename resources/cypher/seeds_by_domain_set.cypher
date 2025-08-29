@@ -3,18 +3,18 @@
 // Returns same shape as seeds_by_marker.cypher for compatibility
 
 // PFAM side
-CALL {
-  WITH $pfam_ids AS pfams
-  WITH [x IN pfams WHERE x IS NOT NULL] AS pfams
-  WITH [x IN pfams | toLower(x)] AS lowers
+WITH $pfam_ids AS pfams
+WITH [x IN pfams WHERE x IS NOT NULL] AS pfams
+WITH [x IN pfams | toLower(x)] AS lowers
+CALL (lowers) {
   MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
   WHERE toLower(d.id) IN lowers OR (d.pfamAccession IS NOT NULL AND toLower(d.pfamAccession) IN lowers)
   RETURN DISTINCT p
   LIMIT $limit
-} WITH p
+}
+WITH p
 MATCH (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(gen:Genome)
-CALL {
-  WITH g
+CALL (g) {
   MATCH (h:Gene {contig: g.contig})
   RETURN max(toInteger(h.endCoordinate)) AS max_end,
          min(toInteger(h.startCoordinate)) AS min_start
@@ -32,18 +32,18 @@ LIMIT $limit
 UNION
 
 // KO side
-CALL {
-  WITH $ko_ids AS kos
-  WITH [x IN kos WHERE x IS NOT NULL] AS kos
-  WITH [x IN kos | toLower(x)] AS lowers
+WITH $ko_ids AS kos
+WITH [x IN kos WHERE x IS NOT NULL] AS kos
+WITH [x IN kos | toLower(x)] AS lowers
+CALL (lowers) {
   MATCH (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)
   WHERE toLower(ko.id) IN lowers
   RETURN DISTINCT p
   LIMIT $limit
-} WITH p
+}
+WITH p
 MATCH (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(gen:Genome)
-CALL {
-  WITH g
+CALL (g) {
   MATCH (h:Gene {contig: g.contig})
   RETURN max(toInteger(h.endCoordinate)) AS max_end,
          min(toInteger(h.startCoordinate)) AS min_start

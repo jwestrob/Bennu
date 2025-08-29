@@ -74,7 +74,7 @@ class TaskExecutor:
             bool: Whether to chunk the data
         """
         # NEW: Token-based chunking instead of item-based
-        # Only chunk if we would exceed o3's 30k token limit
+        # Only chunk if we would exceed the premium model's ~30k token limit (gpt-5)
         
         # Skip chunking if dataset is small (< 1000 items unlikely to exceed 30k tokens)
         if data_size <= 1000:

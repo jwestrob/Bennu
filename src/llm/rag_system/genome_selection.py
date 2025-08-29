@@ -269,7 +269,7 @@ class UnifiedGenomeSelector:
         
         from .dspy_signatures import GenomeSelectionSignature
         response = self.model_allocator.create_context_managed_call(
-            task_name="biological_interpretation",  # COMPLEX = o3 for biological reasoning
+            task_name="biological_interpretation",  # COMPLEX = gpt-5 for biological reasoning
             signature_class=GenomeSelectionSignature,
             module_call_func=analyze_call,
             query=query,

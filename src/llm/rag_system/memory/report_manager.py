@@ -73,7 +73,7 @@ class ReportPlanner:
         Initialize report planner.
         
         Args:
-            max_tokens_per_part: Maximum tokens per report part (leaving buffer for o3)
+            max_tokens_per_part: Maximum tokens per report part (leaving buffer for gpt-5)
         """
         self.max_tokens_per_part = max_tokens_per_part
         self.base_tokens = 2000  # Introduction, conclusions, formatting

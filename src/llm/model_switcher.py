@@ -46,8 +46,8 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             current_model = config.get_current_model()
             model_string = f"openai/{current_model}"
             
-            # Special handling for OpenAI reasoning models (o1, o3)
-            if current_model.startswith(('o1', 'o3')):
+            # Special handling for OpenAI reasoning models (gpt-5, o1)
+            if current_model.startswith(('gpt-5', 'o1')):
                 lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
                 logger.info(f"🎯 DSPy reconfigured with reasoning model: {model_string}")
             else:
@@ -62,7 +62,7 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             
             current_model = config.get_current_model()
             # Map to Anthropic models if needed
-            if current_model.startswith(('gpt', 'o1', 'o3')):
+            if current_model.startswith(('gpt', 'o1')):
                 anthropic_model = "claude-3-haiku-20240307" if config.model_mode == "cost_effective" else "claude-3-opus-20240229"
             else:
                 anthropic_model = current_model
@@ -98,7 +98,7 @@ def switch_to_premium() -> None:
     """
     Switch to premium model globally.
     
-    Uses o3 (or configured premium model) for all tasks.
+    Uses gpt-5 (or configured premium model) for all tasks.
     Best for final results, complex analysis, and publication-quality output.
     """
     config = get_config()

@@ -3,8 +3,7 @@
 WITH [x IN $markers | toLower(x)] AS lowers
 
 // PFAM/Domain side (bounded early to avoid heavy scans)
-CALL {
-  WITH lowers
+CALL (lowers) {
   MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
   WHERE toLower(d.id) IN lowers
      OR (d.pfamAccession IS NOT NULL AND toLower(d.pfamAccession) IN lowers)
@@ -13,8 +12,7 @@ CALL {
   LIMIT $limit
 }
 MATCH (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(gen:Genome)
-CALL {
-  WITH g
+CALL (g) {
   MATCH (h:Gene {contig: g.contig})
   RETURN max(toInteger(h.endCoordinate)) AS max_end,
          min(toInteger(h.startCoordinate)) AS min_start
@@ -33,8 +31,7 @@ UNION
 
 // KO side (bounded early to avoid heavy scans)
 WITH [x IN $markers | toLower(x)] AS lowers
-CALL {
-  WITH lowers
+CALL (lowers) {
   MATCH (p:Protein)-[:HASFUNCTION]->(ko:KEGGOrtholog)
   WHERE toLower(ko.id) IN lowers
      OR any(m IN lowers WHERE toLower(coalesce(ko.description, '')) CONTAINS m)
@@ -42,8 +39,7 @@ CALL {
   LIMIT $limit
 }
 MATCH (p)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(gen:Genome)
-CALL {
-  WITH g
+CALL (g) {
   MATCH (h:Gene {contig: g.contig})
   RETURN max(toInteger(h.endCoordinate)) AS max_end,
          min(toInteger(h.startCoordinate)) AS min_start

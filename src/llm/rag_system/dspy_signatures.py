@@ -479,9 +479,13 @@ class MacroPlannerSignature(dspy.Signature):
     Allowed operators are listed in operator_catalog (JSON). Do not invent operators.
 
     Planner rubric (breadth-first reminder):
-    - Prefer breadth-first exploration across both KO and PFAM namespaces when probing a functional capability.
-    - PFAM Domain.id and description are keyword-searchable and are often richer than KO terms in metagenomes; consider PFAM or a PFAM+KO union early.
+    - Prefer breadth-first exploration across available annotation namespaces when probing a functional capability.
+    - Two-stage search pattern (generic): First run catalog search to map natural-language terms to precise identifiers; then perform exact, identifier-based retrieval. Only fall back to substring/keyword queries if no identifiers were found.
+    - Result formatting: For large searches, prefer compact evidence (counts + examples). For small, targeted queries where full detail is needed (e.g., a specific enzyme family in a small genome), you MAY request full JSON rows by setting `return_full_rows=true` on AnnotationDiscovery. Be cautious: full rows can be very large on bigger datasets.
+    - Include a lightweight evidence assessment step (e.g., row counts) and, when evidence is insufficient, add a compact follow-up proposal step requesting minimal additional inputs (e.g., scope hints, aliases) rather than large data dumps.
+    - PFAM domain identifiers and descriptions are often richer than KO terms in metagenomes; consider domain- and ortholog-level catalog searches early.
     - When searching for hallmark enzymes, include both long-form names and common gene symbols/abbreviations in your probe terms, and treat matches as case-insensitive.
+    - CAZyme routing: When the question mentions CAZyme/CAZy or families GH/GT/PL/CE/AA/CBM, prefer dedicated CAZyme operators (e.g., QueryCazymesByGenome, CountCazymeFamilies) rather than generic PFAM keyword discovery.
     - When choosing KEGG completeness, use canonical map IDs (mapxxxxx) or compute unfiltered and filter downstream; completeness is optional.
     - Avoid repeating the same operator+term; diversify probes and include a corroboration step (e.g., neighborhood/contig window) if any hits are found.
     """
@@ -490,6 +494,7 @@ class MacroPlannerSignature(dspy.Signature):
     operator_catalog = dspy.InputField(desc="JSON catalog of allowed operators: names, inputs, outputs, params")
     constraints = dspy.InputField(desc="Constraints: max_steps, prefer native totals, include SM evidence if relevant")
     ko_reference = dspy.InputField(desc="Optional compact KO reference: one line per KO as 'Kxxxxx: definition' to assist keyword/operator selection")
+    pfam_reference = dspy.InputField(desc="Optional compact PFAM reference: one line per PFAM as 'PFxxxxx: short_name; description' to assist keyword/operator selection")
     plan_json = dspy.OutputField(desc="Return ONLY the strict JSON plan (no commentary)")
 
 class GenomicSynthesizer(dspy.Signature):

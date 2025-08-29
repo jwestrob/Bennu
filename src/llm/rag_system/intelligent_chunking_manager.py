@@ -56,7 +56,7 @@ class IntelligentChunkingManager:
         Args:
             max_chunks: Maximum number of chunks to create (3-5 recommended)
             min_chunk_size: Minimum items per chunk to avoid micro-chunks
-            use_premium_models: Whether to use premium models (GPT-4/o3) for complex analysis
+            use_premium_models: Whether to use premium models (GPT-5) for complex analysis
             max_tokens_per_chunk: Maximum tokens per chunk before recursive subdivision
         """
         self.max_chunks = max_chunks
@@ -566,7 +566,7 @@ class IntelligentChunkingManager:
         """
         logger.info(f"🚀 Executing {len(chunks)} chunks in parallel")
         
-        # For complex biological analysis tasks, we should use premium models (GPT-4/o3)
+        # For complex biological analysis tasks, we should use premium models (GPT-5)
         # instead of GPT-4.1-mini which has proven inadequate for complex analytical reasoning
         if self.use_premium_models:
             logger.info("🧠 Using premium models for complex biological analysis tasks")

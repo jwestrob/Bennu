@@ -1,7 +1,7 @@
 """
 LLM-First Tool Selection for Genomic Analysis Tasks.
 
-Uses sophisticated biological reasoning (o3) to select appropriate tools based on:
+Uses sophisticated biological reasoning (gpt-5) to select appropriate tools based on:
 - Analysis type (spatial vs functional vs comparative)
 - Query scope (global vs targeted vs lookup)
 - Scientific intent (discovery vs annotation vs quantification)
@@ -120,7 +120,7 @@ class IntelligentToolSelector:
         self.tool_capabilities = TOOL_CAPABILITIES
         
         if DSPY_AVAILABLE:
-            logger.info("🧠 LLM-first tool selector initialized - o3 has full authority over tool selection")
+            logger.info("🧠 LLM-first tool selector initialized - gpt-5 has full authority over tool selection")
         else:
             logger.error("❌ DSPy not available - tool selection requires LLM capabilities")
             raise RuntimeError("LLM-first tool selector requires DSPy for biological reasoning")
@@ -170,7 +170,7 @@ class IntelligentToolSelector:
         # Prepare enhanced tool capabilities with decision criteria
         available_tools_json = json.dumps(self.tool_capabilities, indent=2)
         
-        # Use model allocation for intelligent tool selection (complex biological reasoning = o3)
+        # Use model allocation for intelligent tool selection (complex biological reasoning = gpt-5)
         def selection_call(module):
             return module(
                 user_query=original_user_query,
@@ -179,10 +179,10 @@ class IntelligentToolSelector:
                 analysis_context=previous_task_context
             )
         
-        # Use o3 for sophisticated biological tool selection
+        # Use gpt-5 for sophisticated biological tool selection
         logger.debug(f"🧠 o3_biological_reasoning: task='{task_description[:50]}...', query='{original_user_query[:50]}...'")
         result = self.model_allocator.create_context_managed_call(
-            task_name="tool_selection",  # Maps to COMPLEX = o3
+            task_name="tool_selection",  # Maps to COMPLEX = gpt-5
             signature_class=BiologicalToolSelector,
             module_call_func=selection_call,
             query=original_user_query,

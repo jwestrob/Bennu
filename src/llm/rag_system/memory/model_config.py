@@ -28,12 +28,12 @@ class ModelConfigManager:
         """
         Set to cost-optimized mode.
         
-        Uses gpt-4.1-mini for most tasks, o3 only for complex synthesis.
+        Uses gpt-4.1-mini for most tasks, gpt-5 only for complex synthesis.
         Estimated cost savings: 70-80% compared to premium everywhere.
         """
         self.allocator.switch_to_optimized_mode()
         self.current_mode = "optimized"
-        logger.info("🎯 Switched to OPTIMIZED mode: gpt-4.1-mini for most tasks, o3 for synthesis")
+        logger.info("🎯 Switched to OPTIMIZED mode: gpt-4.1-mini for most tasks, gpt-5 for synthesis")
         
         # Print allocation summary
         summary = self.allocator.get_allocation_summary()
@@ -44,11 +44,11 @@ class ModelConfigManager:
         """
         Set to premium mode.
         
-        Uses o3 for all tasks. Maximum quality but highest cost.
+        Uses gpt-5 for all tasks. Maximum quality but highest cost.
         """
         self.allocator.switch_to_premium_mode()
         self.current_mode = "premium"
-        logger.info("🔥 Switched to PREMIUM mode: o3 for all tasks (maximum quality, highest cost)")
+        logger.info("🔥 Switched to PREMIUM mode: gpt-5 for all tasks (maximum quality, highest cost)")
     
     def set_testing_mode(self):
         """
@@ -78,10 +78,10 @@ class ModelConfigManager:
             status["cost_savings"] = summary['cost_savings_vs_premium']
             status["primary_models"] = {
                 "simple_tasks": "gpt-4.1-mini",
-                "complex_tasks": "o3"
+                "complex_tasks": "gpt-5-2025-08-07"
             }
         else:
-            status["primary_model"] = "o3"
+            status["primary_model"] = "gpt-5-2025-08-07"
             status["cost_multiplier"] = "100x baseline"
         
         return status
@@ -142,8 +142,8 @@ def get_config_manager() -> ModelConfigManager:
 
 # Convenience functions for quick switching
 def quick_switch_to_o3():
-    """Quick switch to o3 everywhere - for when you need maximum quality."""
-    print("🔥 Switching to o3 everywhere for maximum quality...")
+    """Quick switch to gpt-5 everywhere - for when you need maximum quality."""
+    print("🔥 Switching to gpt-5 everywhere for maximum quality...")
     set_premium_mode()
     print_model_status()
 

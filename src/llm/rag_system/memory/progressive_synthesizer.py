@@ -8,6 +8,7 @@ with token-based decision making for optimal model utilization.
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+import os
 import tiktoken
 import concurrent.futures
 
@@ -78,6 +79,26 @@ class ProgressiveSynthesizer:
         self._update_model_aware_limits()
         
         logger.info("🏗️ ProgressiveSynthesizer initialized with Map-Reduce architecture and caching")
+
+        # Guardrails to prevent unverifiable claims in synthesis
+        self._guardrails_text = (
+            "CRITICAL GUARDRAILS:\n"
+            "- Only mention coverage/read depth, genomic coordinates, contig/scaffold IDs, or 'representative contigs' if they appear explicitly in the provided data. Do not infer or invent.\n"
+            "- Whenever you mention any locus or cluster, include the full, unabbreviated contig/scaffold identifier exactly as it appears in the data. If such an identifier is not present, do not mention a locus.\n"
+            "- If locus/coverage information is missing, say 'not provided' and avoid locus/coverage claims.\n"
+        )
+
+        # Example display cap for compact mode (env override via SUMMARY_EXAMPLE_CAP)
+        try:
+            self.example_cap = max(1, int(os.getenv("SUMMARY_EXAMPLE_CAP", "10")))
+        except Exception:
+            self.example_cap = 10
+
+    def _with_guardrails(self, context: str) -> str:
+        try:
+            return f"{self._guardrails_text}\n\n{context}" if context else self._guardrails_text
+        except Exception:
+            return context
     
     def _update_model_aware_limits(self):
         """Update chunk limits based on actual model capabilities."""
@@ -86,7 +107,7 @@ class ProgressiveSynthesizer:
             _, final_synthesis_model = self.model_allocator.get_model_for_task("final_synthesis", "")
             _, map_step_model = self.model_allocator.get_model_for_task("genomic_summarization", "")
             
-            # Set direct synthesis limit to respect OpenAI's 30K TPM rate limit for o3
+        # Set direct synthesis limit to respect OpenAI's ~30K token limit for premium (gpt-5)
             self.direct_synthesis_limit = min(25000, int(final_synthesis_model.max_context * 0.8))
             
             # Set map chunk limit to respect 30K TPM limit (not model context)
@@ -486,7 +507,7 @@ class ProgressiveSynthesizer:
         Returns:
             Token threshold above which tool results should be compressed
         """
-        # Respect OpenAI's 30K tokens per minute rate limit for o3
+        # Respect OpenAI's ~30K token budget for premium (gpt-5)
         # Use conservative limit to avoid rate limiting errors
         return 20000
     
@@ -583,11 +604,13 @@ class ProgressiveSynthesizer:
         prefix = f"QUESTION: {question}\n\n"
         tg = ("TASK GRAPH:\n" + task_graph_text + "\n\n") if task_graph_text else ""
         body = f"DATA:\n{formatted_data}"
-        synthesis_context = prefix + tg + body
+        synthesis_context = self._with_guardrails(prefix + tg + body)
+        # Save exact final synthesis context for auditing
+        self._save_debug_data("final_synthesis_context_direct", synthesis_context, "Exact input to final LLM (direct mode)")
         return self._call_synthesis_model(
             context=synthesis_context,
             question=question,
-            task_name="final_synthesis",  # Use o3 for complex biological reasoning
+            task_name="final_synthesis",  # Use gpt-5 for complex biological reasoning
             focus="comprehensive biological analysis with full context"
         )
     
@@ -624,13 +647,15 @@ class ProgressiveSynthesizer:
             prefix = f"QUESTION: {question}\n\n"
             tg = ("TASK GRAPH:\n" + task_graph_text + "\n\n") if task_graph_text else ""
             body = f"DATA:\n{formatted_context}"
-            synthesis_context = prefix + tg + body
+            synthesis_context = self._with_guardrails(prefix + tg + body)
+            # Save exact final synthesis context for auditing
+            self._save_debug_data("final_synthesis_context_single_chunk", synthesis_context, "Exact input to final LLM (single-chunk bypass)")
             
             # Use high-capability model for direct synthesis
             final_result = self._call_synthesis_model(
                 context=synthesis_context,
                 question=question,
-                task_name="final_synthesis",  # Use o3 for complex synthesis
+                task_name="final_synthesis",  # Use gpt-5 for complex synthesis
                 focus="comprehensive biological analysis with full data context",
                 synthesis_type="summarization"  # Use regular synthesis, not Map-Reduce
             )
@@ -701,6 +726,25 @@ class ProgressiveSynthesizer:
         processed_data = []
         
         for i, item in enumerate(data):
+            # Pre-compact large macro_result items before token counting
+            try:
+                if isinstance(item, dict) and item.get('type') == 'macro_result' and item.get('format') != 'full':
+                    name = item.get('name', 'result')
+                    rows = item.get('rows') or []
+                    total = len(rows)
+                    # Keep only up to N examples to cap size
+                    examples = rows[: self.example_cap]
+                    item = {
+                        'type': 'macro_result',
+                        'name': name,
+                        'rows': examples,
+                        'total_rows': total,
+                        'format': 'compact',
+                        'note': 'pre-compacted for context control (set return_full_rows=true for full JSON on small targets)'
+                    }
+            except Exception:
+                pass
+
             item_tokens = self._count_data_tokens([item])
             
             if item_tokens > self.map_chunk_limit:
@@ -939,11 +983,15 @@ class ProgressiveSynthesizer:
             formatted_chunk = self._format_data_for_synthesis(chunk)
             
             # Use cheaper model for Map step (data extraction task)
+            focus = (
+                f"preserve specific loci details and identifiers from chunk {chunk_id}; "
+                "do not mention loci/coverage unless present; always include full contig IDs when present"
+            )
             summary = self._call_synthesis_model(
                 context=formatted_chunk,
                 question=question,
                 task_name="genomic_summarization",  # Use cheaper model for chunk summarization
-                focus=f"preserve specific loci details and identifiers from chunk {chunk_id}",
+                focus=focus,
                 synthesis_type="map_extraction"
             )
             
@@ -982,7 +1030,9 @@ class ProgressiveSynthesizer:
         header = f"QUESTION: {question}\n\nCHUNK SUMMARIES ({len(chunk_summaries)} chunks):\n{combined_context}\n\n"
         tg = ("TASK GRAPH:\n" + task_graph_text + "\n") if task_graph_text else ""
         footer = "SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.\n"
-        synthesis_context = header + tg + footer
+        synthesis_context = self._with_guardrails(header + tg + footer)
+        # Save exact final synthesis context for auditing
+        self._save_debug_data("final_synthesis_context_reduce", synthesis_context, "Exact input to final LLM (reduce phase)")
         
         # Use original question directly for intelligent selection
         
@@ -990,7 +1040,7 @@ class ProgressiveSynthesizer:
         final_synthesis = self._call_synthesis_model(
             context=synthesis_context,
             question=question,
-            task_name="final_synthesis",  # Use o3 for complex integration
+            task_name="final_synthesis",  # Use gpt-5 for complex integration
             focus="intelligent biological prioritization",
             synthesis_type="reduce_selection"
         )
@@ -1066,6 +1116,50 @@ class ProgressiveSynthesizer:
                     connections = [f"{conn['connected_task']} ({conn['connection_type']})" 
                                  for conn in item['cross_task_connections']]
                     formatted_item += f"Connections: {'; '.join(connections)}\n"
+            elif item.get('type') == 'macro_result':
+                # Compact by default; allow full JSON when explicitly requested and reasonably small
+                name = item.get('name', 'result')
+                rows = item.get('rows') or []
+                # Prefer true total if provided by pre-compaction
+                try:
+                    total = int(item.get('total_rows')) if item.get('total_rows') is not None else len(rows)
+                except Exception:
+                    total = len(rows)
+                want_full = (item.get('format') == 'full')
+                FULL_MAX_ROWS = 2000  # guardrail to avoid blow-ups
+                formatted_item = f"Result: {name} (rows={total})\n"
+                if want_full and total <= FULL_MAX_ROWS:
+                    try:
+                        import json
+                        formatted_item += "Full rows (JSONL):\n"
+                        for ex in rows:
+                            try:
+                                formatted_item += json.dumps(ex, default=str)[:2000] + "\n"
+                            except Exception:
+                                formatted_item += str(ex)[:2000] + "\n"
+                    except Exception:
+                        want_full = False
+                if not want_full or total > FULL_MAX_ROWS:
+                    # Show up to N compact examples
+                    try:
+                        examples = rows[: self.example_cap]
+                        if examples:
+                            formatted_item += f"Examples (up to {self.example_cap}):\n"
+                            for ex in examples:
+                                if isinstance(ex, dict):
+                                    gid = ex.get('genome_id', '')
+                                    pid = ex.get('protein_id', '')
+                                    pf = ex.get('pfams', [])
+                                    ko = ex.get('kos', [])
+                                    pf_show = ",".join(pf[:2]) if isinstance(pf, list) else ""
+                                    ko_show = ",".join(ko[:2]) if isinstance(ko, list) else ""
+                                    formatted_item += f"  - genome={gid} protein={pid} pfams=[{pf_show}] kos=[{ko_show}]\n"
+                                else:
+                                    formatted_item += f"  - {str(ex)[:200]}\n"
+                        formatted_item += ("Note: For small, targeted queries you may request full JSON rows by setting return_full_rows=true on AnnotationDiscovery. "
+                                           "For larger datasets, compact summaries are used to avoid excessive context.")
+                    except Exception:
+                        pass
             elif item.get('type') == 'task_metadata':
                 formatted_item = f"Task Metadata ({item['task_count']} tasks):\n"
                 formatted_item += f"Key Insights: {'; '.join(item['key_insights'][:5])}\n"
@@ -1073,6 +1167,34 @@ class ProgressiveSynthesizer:
                     connections = [f"{conn['from_task']} → {conn['to_task']}" 
                                  for conn in item['cross_connections'][:3]]
                     formatted_item += f"Cross-connections: {'; '.join(connections)}\n"
+            elif item.get('type') == 'followup_request':
+                formatted_item = "NEXT PASS PROPOSAL:\n"
+                try:
+                    reason = item.get('reason', '')
+                    if reason:
+                        formatted_item += f"Reason: {reason}\n"
+                    steps = item.get('next_task', {}).get('steps', [])
+                    if steps:
+                        formatted_item += "Suggested Steps:\n"
+                        for idx, st in enumerate(steps, 1):
+                            op = st.get('op')
+                            params = st.get('params', {})
+                            bind = st.get('bind', '')
+                            formatted_item += f"  {idx}. {op} params={params} bind={bind}\n"
+                    inputs = item.get('inputs_needed', [])
+                    if inputs:
+                        formatted_item += "Inputs Needed:\n"
+                        for inp in inputs:
+                            nm = inp.get('name', '?')
+                            desc = inp.get('desc', '')
+                            ex = inp.get('examples', [])
+                            exs = ", ".join(ex[:3]) if isinstance(ex, list) else ""
+                            formatted_item += f"  - {nm}: {desc}"
+                            if exs:
+                                formatted_item += f" (e.g., {exs})"
+                            formatted_item += "\n"
+                except Exception:
+                    formatted_item += str(item) + "\n"
             elif isinstance(item, dict) and 'cards' in item:
                 # Structured locus cards from fast path; include PFAM/KO when present
                 cards = item.get('cards') or []

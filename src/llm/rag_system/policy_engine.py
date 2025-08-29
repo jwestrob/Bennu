@@ -18,8 +18,8 @@ class PolicyConfig:
     """Configuration for user preferences and policies."""
     
     # Performance and cost policies
-    max_tokens_per_query: int = 30000   # Match OpenAI's 30K TPM rate limit for o3
-    max_latency_seconds: int = 600      # 10 minutes for complex o3 reasoning
+    max_tokens_per_query: int = 30000   # Match OpenAI's 30K TPM rate limit for premium (gpt-5)
+    max_latency_seconds: int = 600      # 10 minutes for complex gpt-5 reasoning
     allow_expensive_tools: bool = True
     max_refinement_depth: int = 10      # Higher limit to allow proper recursive analysis when needed
     

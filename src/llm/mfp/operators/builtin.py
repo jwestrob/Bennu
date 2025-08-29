@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .base import OperatorContext, OperatorSpec, register_operator
 from ...options.template_runner import FileCypherRunner
+from .catalog_search import _search_pfam, _search_ko
 from ...kegg.pathway_mapping import load_ko_pathway_maps
 
 
@@ -107,119 +108,57 @@ def _cazyme_family_counts(ctx: OperatorContext, inputs: Dict[str, Any], params: 
     return {"cazyme_family_counts": rows or []}
 
 
-def _find_proteins_by_pfam_keyword(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    runner = FileCypherRunner(ctx.neo4j_driver)
-    q = str(params.get("q") or params.get("keyword") or "").strip()
-    if not q:
-        return {"pfam_keyword_proteins": []}
-    try:
-        limit = int(params.get("limit", 500))
-    except Exception:
-        limit = 500
-    genome_ids = params.get("genome_ids") or []
-    def tokens(s: str) -> list[str]:
-        import re
-        ws = re.split(r"[^A-Za-z0-9_]+", s.lower())
-        toks = [t for t in ws if len(t) >= 4]
-        # keep original if specific
-        if len(s) >= 4 and s.lower() not in toks:
-            toks.append(s.lower())
-        # dedupe preserve order
-        seen = set()
-        out = []
-        for t in toks:
-            if t not in seen:
-                seen.add(t)
-                out.append(t)
-        return out[:5]
-    all_rows = []
-    for term in tokens(q):
-        rr = runner.run_template(
-            "proteins_by_pfam_keyword.cypher",
-            {"q": term, "limit": max(50, limit // 3), "genome_ids": genome_ids},
-        ) or []
-        all_rows.extend(rr)
-    return {"pfam_keyword_proteins": all_rows or []}
-
-
-def _find_proteins_by_ko_keyword(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    runner = FileCypherRunner(ctx.neo4j_driver)
-    q = str(params.get("q") or params.get("keyword") or "").strip()
-    if not q:
-        return {"ko_keyword_proteins": []}
-    try:
-        limit = int(params.get("limit", 500))
-    except Exception:
-        limit = 500
-    genome_ids = params.get("genome_ids") or []
-    def tokens(s: str) -> list[str]:
-        import re
-        ws = re.split(r"[^A-Za-z0-9_]+", s.lower())
-        toks = [t for t in ws if len(t) >= 4]
-        if len(s) >= 4 and s.lower() not in toks:
-            toks.append(s.lower())
-        seen = set()
-        out = []
-        for t in toks:
-            if t not in seen:
-                seen.add(t)
-                out.append(t)
-        return out[:5]
-    all_rows = []
-    for term in tokens(q):
-        rr = runner.run_template(
-            "proteins_by_ko_keyword.cypher",
-            {"q": term, "limit": max(50, limit // 3), "genome_ids": genome_ids},
-        ) or []
-        all_rows.extend(rr)
-    return {"ko_keyword_proteins": all_rows or []}
-
-
 def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    """PFAM+KO keyword discovery (DB-backed; no external tools).
+    """PFAM+KO discovery via two-stage flow (catalog → IDs → exact retrieval).
 
-    - Searches PFAM domains and KEGG KOs by keyword
-    - Returns union of proteins matched by either, deduplicated with provenance
+    - Uses local catalogs (PFAM and KO) to map natural-language keywords to precise IDs
+    - Retrieves proteins by exact ID matches (IN filters), deduplicating with PFAM/KO provenance
     """
     runner = FileCypherRunner(ctx.neo4j_driver)
     q = str(params.get("keyword") or params.get("q") or "").strip()
     if not q:
         return {"discovered_proteins": []}
     try:
-        limit = int(params.get("limit", 500))
+        limit = int(params.get("limit", 1000))
     except Exception:
-        limit = 500
+        limit = 1000
+    return_full = bool(params.get("return_full_rows") or False)
     genome_ids = params.get("genome_ids") or []
 
-    def tokens(s: str) -> list[str]:
-        import re
-        ws = re.split(r"[^A-Za-z0-9_]+", s.lower())
-        toks = [t for t in ws if len(t) >= 4]
-        if len(s) >= 4 and s.lower() not in toks:
-            toks.append(s.lower())
-        seen = set()
-        out = []
-        for t in toks:
-            if t not in seen:
-                seen.add(t)
-                out.append(t)
-        return out[:6]
-    pfam_rows = []
+    # Stage 1: catalog fuzzy search
+    pf_hits = _search_pfam(q, ctx.project_root, top_n=50)
+    ko_hits = _search_ko(q, ctx.project_root, top_n=50)
+    # Accept both accessions (PFxxxxx) and short names for robust matching
+    pfam_ids = []
+    seen = set()
+    for h in pf_hits:
+        acc = (h.get("pfam_id") or "").strip()
+        short = (h.get("short") or "").strip()
+        if acc and acc not in seen:
+            pfam_ids.append(acc)
+            seen.add(acc)
+        if short and short not in seen:
+            pfam_ids.append(short)
+            seen.add(short)
+    ko_ids = [h.get("ko_id") for h in ko_hits if h.get("ko_id")]
+
+    # Stage 2: exact ID retrieval
+    pf_rows = []
     ko_rows = []
-    terms = tokens(q)
-    for term in terms:
-        pfam_rows.extend(runner.run_template(
-            "proteins_by_pfam_keyword.cypher",
-            {"q": term, "limit": max(50, limit // max(1,len(terms))), "genome_ids": genome_ids},
-        ) or [])
-        ko_rows.extend(runner.run_template(
-            "proteins_by_ko_keyword.cypher",
-            {"q": term, "limit": max(50, limit // max(1,len(terms))), "genome_ids": genome_ids},
-        ) or [])
+    if pfam_ids:
+        pf_rows = runner.run_template(
+            "proteins_by_pfam_ids.cypher",
+            {"pfam_ids": pfam_ids, "genome_ids": genome_ids, "limit": limit},
+        ) or []
+    if ko_ids:
+        ko_rows = runner.run_template(
+            "proteins_by_ko_ids.cypher",
+            {"ko_ids": ko_ids, "genome_ids": genome_ids, "limit": limit},
+        ) or []
 
     # Merge with provenance; key by (genome_id, protein_id)
     merged: Dict[str, Dict[str, Any]] = {}
-    for r in pfam_rows:
+    for r in pf_rows:
         gid = str(r.get("genome_id"))
         pid = str(r.get("protein_id"))
         key = f"{gid}\t{pid}"
@@ -237,9 +176,11 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             entry["kos"].append(koid)
 
     out = list(merged.values())
-    # Keep deterministic order
     out.sort(key=lambda x: (x.get("genome_id", ""), x.get("protein_id", "")))
-    return {"discovered_proteins": out}
+    res = {"discovered_proteins": out}
+    if return_full:
+        res["_format"] = "full"
+    return res
 
 # Register operators
 register_operator(OperatorSpec(
@@ -299,29 +240,13 @@ register_operator(OperatorSpec(
     description="Global count of CAZy families across proteins.",
 ))
 
-register_operator(OperatorSpec(
-    name="FindProteinsByPfamKeyword",
-    inputs=[],
-    outputs=["pfam_keyword_proteins"],
-    params={"q": "str", "limit": "int | null", "genome_ids": "List[str] | null"},
-    run=_find_proteins_by_pfam_keyword,
-    description="Find proteins whose PFAM domains match a keyword (id/accession/description).",
-))
-
-register_operator(OperatorSpec(
-    name="FindProteinsByKoKeyword",
-    inputs=[],
-    outputs=["ko_keyword_proteins"],
-    params={"q": "str", "limit": "int | null", "genome_ids": "List[str] | null"},
-    run=_find_proteins_by_ko_keyword,
-    description="Find proteins whose KEGG Ortholog annotations match a keyword (id/description).",
-))
+## Removed legacy keyword operators in favor of catalog→ID→exact retrieval inside AnnotationDiscovery
 
 register_operator(OperatorSpec(
     name="AnnotationDiscovery",
     inputs=[],
     outputs=["discovered_proteins"],
-    params={"keyword": "str", "limit": "int | null", "genome_ids": "List[str] | null"},
+    params={"keyword": "str", "limit": "int | null", "genome_ids": "List[str] | null", "return_full_rows": "bool | null (default False)"},
     run=_annotation_discovery,
-    description="Keyword search across PFAM + KO; returns union of matched proteins with PFAM/KO provenance.",
+    description="Two-stage discovery (catalog→IDs→exact) across PFAM+KO; returns union with PFAM/KO provenance.",
 ))

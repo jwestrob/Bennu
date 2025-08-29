@@ -1247,7 +1247,7 @@ class UnifiedAgentExecutor:
             "synthesize": "cheap"
         })
         
-        # Use model allocation for agent decisions (o3 for complex reasoning)
+        # Use model allocation for agent decisions (gpt-5 for complex reasoning)
         # Build progress_state JSON (advisory)
         try:
             progress_state = {
@@ -1283,7 +1283,7 @@ class UnifiedAgentExecutor:
         logger.debug(f"🧠 Agent making decision for step {len(steps) + 1}")
         
         result = self.model_allocator.create_context_managed_call(
-            task_name="agent_decision",  # Maps to COMPLEX = o3
+            task_name="agent_decision",  # Maps to COMPLEX = gpt-5
             signature_class=AgentDecisionMaker,
             module_call_func=decision_call,
             query=question,

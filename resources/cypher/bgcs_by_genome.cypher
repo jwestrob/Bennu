@@ -10,14 +10,12 @@
 MATCH (gen:Genome)
 WHERE ($genome_id IS NULL OR gen.id = $genome_id)
   AND ($genome_ids IS NULL OR size($genome_ids) = 0 OR gen.id IN $genome_ids)
-CALL {
-  WITH gen
+CALL (gen) {
   MATCH (gen)<-[:BELONGSTOGENOME]-(gene:Gene)-[rbgc]->(bgc)
   WHERE any(l IN labels(bgc) WHERE toLower(l) IN ['bgc','biosyntheticgenecluster','bgcluster'])
     AND toLower(type(rbgc)) CONTAINS 'bgc'
   RETURN bgc
   UNION
-  WITH gen
   MATCH (gen)-[rel]->(bgc)
   WHERE any(l IN labels(bgc) WHERE toLower(l) IN ['bgc','biosyntheticgenecluster','bgcluster'])
     AND toLower(type(rel)) CONTAINS 'bgc'

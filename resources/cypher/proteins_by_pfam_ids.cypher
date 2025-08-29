@@ -1,15 +1,15 @@
-// Proteins annotated with PFAM domains matching a keyword (global or filtered by genomes)
+// Proteins annotated with specific PFAM IDs (exact match on Domain.id or pfamAccession)
 // Params:
-//   $q          : string (keyword; matches Domain.id, pfamAccession, or description)
-//   $limit      : integer (max rows)
-//   $genome_ids : [string] (optional; empty/null means global)
+//   $pfam_ids  : [string] (PFxxxxx or family IDs; case-insensitive)
+//   $genome_ids: [string] (optional; empty/null means global)
+//   $limit     : integer (max rows)
 
+WITH [x IN $pfam_ids WHERE x IS NOT NULL] AS pfams
+WITH [x IN pfams | toLower(x)] AS lowers
+UNWIND lowers AS pf
 MATCH (d:Domain)
-WHERE toLower(d.id) CONTAINS toLower($q)
-   OR (d.pfamAccession IS NOT NULL AND toLower(d.pfamAccession) CONTAINS toLower($q))
-   OR toLower(coalesce(d.description, '')) CONTAINS toLower($q)
-WITH collect(DISTINCT d) AS domains
-UNWIND domains AS d
+WHERE toLower(d.id) = pf OR (d.pfamAccession IS NOT NULL AND toLower(d.pfamAccession) = pf)
+WITH DISTINCT d
 MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(d)
 MATCH (p)-[:ENCODEDBY]->(:Gene)-[:BELONGSTOGENOME]->(g:Genome)
 WHERE $genome_ids IS NULL OR size($genome_ids) = 0 OR g.id IN $genome_ids

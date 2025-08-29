@@ -28,13 +28,13 @@ class LLMConfig(BaseModel):
     
     # LLM provider settings
     llm_provider: str = Field(default="openai", description="LLM provider (openai, anthropic, local)")
-    llm_model: str = Field(default="o3", description="LLM model name")
+    llm_model: str = Field(default="gpt-5-2025-08-07", description="LLM model name")
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
     
     # Model selection configuration
     cost_effective_model: str = Field(default="gpt-4.1-mini", description="Cost-effective model for development and testing")
-    premium_model: str = Field(default="o3", description="Premium model for production and final synthesis")
+    premium_model: str = Field(default="gpt-5-2025-08-07", description="Premium model for production and final synthesis")
     model_mode: str = Field(default="cost_effective", description="Current model mode: 'cost_effective' or 'premium'")
     
     # Embedding settings
@@ -61,9 +61,12 @@ class LLMConfig(BaseModel):
     FAIL_FAST_ON_GRAMMAR_ERROR: bool = Field(default=True, description="If grammar parse fails for fast-path intent, abort instead of falling back to FSM.")
     FAIL_FAST_ON_TOOL_ERROR: bool = Field(default=True, description="If a tool step fails to compile/execute (e.g., template missing), abort agent workflow immediately.")
     # Agent control flags
-    DISABLE_FSM: bool = Field(default=False, description="Disable FSM-based agent workflow entirely.")
+    DISABLE_FSM: bool = Field(default=True, description="Disable FSM-based agent workflow entirely.")
     DISABLE_WHOLE_GENOME_READER: bool = Field(default=True, description="Disable whole_genome_reader tool (blocks global genome reads).")
     WGR_MAX_TOTAL_GENES: int = Field(default=100000, description="Hard cap on total genes for whole_genome_reader global runs.")
+    # Follow-up behavior
+    EMIT_FOLLOWUP_REQUESTS: bool = Field(default=True, description="Emit a follow-up proposal when evidence is thin")
+    FOLLOWUP_MIN_ROWS: int = Field(default=5, description="Minimum rows threshold to avoid follow-up proposal")
     
     @classmethod
     def from_env(cls) -> 'LLMConfig':
@@ -117,6 +120,13 @@ class LLMConfig(BaseModel):
         if os.getenv('WGR_MAX_TOTAL_GENES'):
             try:
                 config_data['WGR_MAX_TOTAL_GENES'] = int(os.getenv('WGR_MAX_TOTAL_GENES'))
+            except Exception:
+                pass
+        if os.getenv('EMIT_FOLLOWUP_REQUESTS') is not None:
+            config_data['EMIT_FOLLOWUP_REQUESTS'] = os.getenv('EMIT_FOLLOWUP_REQUESTS') not in ('0', 'false', 'False')
+        if os.getenv('FOLLOWUP_MIN_ROWS'):
+            try:
+                config_data['FOLLOWUP_MIN_ROWS'] = int(os.getenv('FOLLOWUP_MIN_ROWS'))
             except Exception:
                 pass
         # Native/CI totals toggles

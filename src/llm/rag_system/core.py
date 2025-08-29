@@ -46,6 +46,8 @@ from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
 from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
 from ..mfp.operators import builtin as _mfp_builtin  # noqa: F401  # register builtins
+from ..mfp.operators import catalog_search as _mfp_catalog_search  # noqa: F401  # register catalog search ops
+from ..mfp.operators import planning_utils as _mfp_planning_utils  # noqa: F401  # register planning utility ops
 from ..mfp.operators.base import operator_catalog, OperatorContext
 from ..mfp.executor import execute_plan
 from .query_validator import QueryValidator
@@ -141,26 +143,32 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             if self.config.llm_provider == "openai" and api_key:
                 import os
                 os.environ['OPENAI_API_KEY'] = api_key
+                # Pull policy max tokens for sensible defaults
+                try:
+                    from .policy_engine import get_policy_engine
+                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+                except Exception:
+                    policy_max = 30000
                 
                 # Use model allocation system for intelligent model selection
                 if self.model_allocator.use_premium_everywhere:
-                    # Premium mode: use o3 for all tasks
-                    model_name, model_config = self.model_allocator.get_model_for_task("final_synthesis")  # Gets o3
+                    # Premium mode: use gpt-5 for all tasks
+                    model_name, model_config = self.model_allocator.get_model_for_task("final_synthesis")  # Gets gpt-5
                     model_string = f"openai/{model_name}"
                     
-                    if model_name.startswith(('o1', 'o3')):
-                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
-                        logger.info(f"🎯 DSPy configured with premium reasoning model: {model_string} (temp=1.0, max_tokens=20000)")
+                    if (model_name.startswith('gpt-5') or model_name.startswith('o1')):
+                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=policy_max)
+                        logger.info(f"🎯 DSPy configured with premium reasoning model: {model_string} (temp=1.0, max_tokens={policy_max})")
                     else:
-                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
-                        logger.info(f"🎯 DSPy configured with premium model: {model_string}")
+                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=policy_max)
+                        logger.info(f"🎯 DSPy configured with premium model: {model_string} (max_tokens={policy_max})")
                 else:
                     # Cost-effective mode: use ultra-cheap fallback as global default
                     # Individual tasks will use model allocation for intelligent selection
                     fallback_model = "gpt-4.1-nano"
                     model_string = f"openai/{fallback_model}"
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=8000)
-                    logger.info(f"🎯 DSPy configured with ultra-cheap fallback: {model_string} (temp=0.0, max_tokens=8000)")
+                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=policy_max)
+                    logger.info(f"🎯 DSPy configured with ultra-cheap fallback: {model_string} (temp=0.0, max_tokens={policy_max})")
                     logger.info(f"💡 Model allocation will override this fallback for complex tasks")
                 
                 dspy.settings.configure(lm=lm)
@@ -175,7 +183,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 
                 # Log available models
                 logger.info(f"💡 Cost-effective option: gpt-4.1-mini")
-                logger.info(f"🔥 Premium option: o3")
+                logger.info(f"🔥 Premium option: gpt-5")
                 
             elif self.config.llm_provider == "anthropic" and api_key:
                 # Anthropic configuration
@@ -184,7 +192,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 
                 current_model = self.config.get_current_model()
                 # Map to Anthropic models if needed
-                if current_model.startswith(('gpt', 'o1', 'o3')):
+                if current_model.startswith(('gpt', 'o1')):
                     # Use Anthropic equivalent
                     anthropic_model = "claude-3-haiku-20240307" if self.config.model_mode == "cost_effective" else "claude-3-opus-20240229"
                 else:
@@ -293,61 +301,96 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         logger.info("🧭 Operator catalog loaded: %d operators (examples: %s)", len(op_names), ", ".join(op_names[:5]))
                     except Exception:
                         pass
-                    # Load compact KO reference (knum + definition) to aid keyword selection
-                    def _load_ko_reference(max_lines: int = 3000) -> str:
+                    # Do NOT include large KO/PFAM reference blobs in planner context by default.
+                    # We rely on local catalog search operators instead of stuffing catalogs into prompts.
+                    ko_ref = ""
+                    pf_ref = ""
+                    if os.getenv('INCLUDE_REFERENCE_IN_PLANNER') in ("1", "true", "True"):
+                        # Optional, user-forced inclusion with optional caps
                         try:
-                            import csv
-                            path = os.path.join(os.getcwd(), 'data', 'reference', 'ko_list')
-                            if not os.path.exists(path):
-                                return ""
-                            lines = []
-                            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                                # Try CSV/TSV with header first, fallback to space-delimited
-                                sample = f.read(4096)
-                                f.seek(0)
-                                dialect = None
-                                try:
-                                    dialect = csv.Sniffer().sniff(sample)
-                                except Exception:
-                                    dialect = None
-                                if dialect:
-                                    reader = csv.DictReader(f, dialect=dialect)
-                                    # Normalize column names
-                                    cols = {k.lower(): k for k in (reader.fieldnames or [])}
-                                    for i, row in enumerate(reader):
-                                        if i >= max_lines:
-                                            break
-                                        knum = (row.get(cols.get('knum', ''), '') or row.get(cols.get('ko', ''), '')).strip()
-                                        defin = (row.get(cols.get('definition', ''), '') or row.get(cols.get('name', ''), '')).strip()
-                                        if knum and defin:
-                                            lines.append(f"{knum}: {defin}")
-                                else:
-                                    # Fallback: simple parsing assuming first token is Kxxxxx and rest is definition
-                                    for i, raw in enumerate(f):
-                                        if i >= max_lines:
-                                            break
-                                        raw = raw.strip()
-                                        if not raw:
-                                            continue
-                                        parts = raw.split('\t') if '\t' in raw else raw.split(None, 1)
-                                        if not parts:
-                                            continue
-                                        knum = parts[0].strip()
-                                        defin = parts[1].strip() if len(parts) > 1 else ''
-                                        if knum and defin and (knum.startswith('K') or knum.lower().startswith('ko:')):
-                                            lines.append(f"{knum}: {defin}")
-                            # Keep to budget and return
-                            return "\n".join(lines)
+                            import csv  # noqa: F401
+                            _ko_max = os.getenv('KO_REFERENCE_MAX_LINES')
+                            ko_max_lines = int(_ko_max) if _ko_max not in (None, '', 'none', 'all') else None
                         except Exception:
-                            return ""
-
-                    ko_ref = _load_ko_reference()
+                            ko_max_lines = None
+                        try:
+                            _pf_max = os.getenv('PFAM_REFERENCE_MAX_LINES')
+                            pf_max_lines = int(_pf_max) if _pf_max not in (None, '', 'none', 'all') else None
+                        except Exception:
+                            pf_max_lines = None
+                        try:
+                            # Local small loaders to avoid imports when unused
+                            def _ld_ko(max_lines=None):
+                                import csv
+                                path = os.path.join(os.getcwd(), 'data', 'reference', 'ko_list')
+                                if not os.path.exists(path):
+                                    return ""
+                                lines = []
+                                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    sample = f.read(4096)
+                                    f.seek(0)
+                                    try:
+                                        dialect = csv.Sniffer().sniff(sample)
+                                    except Exception:
+                                        dialect = None
+                                    if dialect:
+                                        reader = csv.DictReader(f, dialect=dialect)
+                                        cols = {k.lower(): k for k in (reader.fieldnames or [])}
+                                        for i, row in enumerate(reader):
+                                            if max_lines is not None and i >= max_lines:
+                                                break
+                                            knum = (row.get(cols.get('knum', ''), '') or row.get(cols.get('ko', ''), '')).strip()
+                                            sdef = (row.get(cols.get('simplified_definition', ''), '') or row.get(cols.get('definition', ''), '')).strip()
+                                            if knum and sdef:
+                                                lines.append(f"{knum}: {sdef}")
+                                    else:
+                                        for i, raw in enumerate(f):
+                                            if max_lines is not None and i >= max_lines:
+                                                break
+                                            raw = raw.strip()
+                                            if not raw:
+                                                continue
+                                            parts = raw.split('\t') if '\t' in raw else raw.split(None, 1)
+                                            knum = parts[0].strip() if parts else ''
+                                            defin = parts[1].strip() if len(parts) > 1 else ''
+                                            if knum and defin and (knum.startswith('K') or knum.lower().startswith('ko:')):
+                                                lines.append(f"{knum}: {defin}")
+                                return "\n".join(lines)
+                            def _ld_pfam(max_lines=None):
+                                import csv
+                                path = os.path.join(os.getcwd(), 'data', 'reference', 'pfam_id_desc.tsv')
+                                if not os.path.exists(path):
+                                    return ""
+                                lines = []
+                                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    reader = csv.reader(f, delimiter='\t')
+                                    for i, row in enumerate(reader):
+                                        if max_lines is not None and i >= max_lines:
+                                            break
+                                        if not row:
+                                            continue
+                                        pfid = (row[0] if len(row) > 0 else '').strip()
+                                        short = (row[1] if len(row) > 1 else '').strip()
+                                        desc = (row[2] if len(row) > 2 else '').strip()
+                                        if pfid and (short or desc):
+                                            if short and desc and short not in desc:
+                                                lines.append(f"{pfid}: {short}; {desc}")
+                                            elif short and not desc:
+                                                lines.append(f"{pfid}: {short}")
+                                            else:
+                                                lines.append(f"{pfid}: {desc}")
+                                return "\n".join(lines)
+                            ko_ref = _ld_ko(ko_max_lines)
+                            pf_ref = _ld_pfam(pf_max_lines)
+                        except Exception:
+                            ko_ref = pf_ref = ""
                     def planner_call(module):
                         return module(
                             question=question,
                             operator_catalog=json.dumps(operator_catalog()),
                             constraints="",
-                            ko_reference=ko_ref
+                            ko_reference=ko_ref,
+                            pfam_reference=pf_ref
                         )
                     plan_res = self.model_allocator.create_context_managed_call(
                         task_name="agentic_planning",
@@ -380,10 +423,60 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
 
                         def _collect_macro_raw_items(env_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
                             items: List[Dict[str, Any]] = []
+                            seen_proteins: set = set()
                             try:
+                                # Only include whitelisted list bindings to avoid massive context
+                                allowed_list_keys = {
+                                    'discovered_proteins',
+                                    'pathway_completeness',
+                                    'bgcs',
+                                    'cazymes',
+                                    'cazyme_family_counts',
+                                }
                                 for k, v in (env_dict or {}).items():
                                     if isinstance(v, list):
-                                        items.append({'type': 'macro_result', 'name': k, 'rows': v})
+                                        if k in allowed_list_keys:
+                                            rows = v
+                                            # Deduplicate discovered_proteins globally across items
+                                            if k == 'discovered_proteins':
+                                                filtered = []
+                                                dropped = 0
+                                                for r in rows:
+                                                    gid = str(r.get('genome_id',''))
+                                                    pid = str(r.get('protein_id',''))
+                                                    sig = (gid, pid)
+                                                    if sig in seen_proteins:
+                                                        dropped += 1
+                                                        continue
+                                                    seen_proteins.add(sig)
+                                                    filtered.append(r)
+                                                rows = filtered
+                                                if dropped:
+                                                    logger.info(f"Context trim: dropped {dropped} duplicate discovered_proteins rows (binding='{k}')")
+                                            items.append({'type': 'macro_result', 'name': k, 'rows': rows})
+                                    elif isinstance(v, dict):
+                                        # Allow planner-produced structured items (e.g., followup_request)
+                                        if isinstance(v.get('type'), str):
+                                            items.append(v)
+                                        # Also extract common list payloads from bound dicts
+                                        for key in ('discovered_proteins',):
+                                            rows2 = v.get(key)
+                                            if isinstance(rows2, list) and rows2:
+                                                # Deduplicate globally
+                                                filtered2 = []
+                                                dropped2 = 0
+                                                for r in rows2:
+                                                    gid = str(r.get('genome_id',''))
+                                                    pid = str(r.get('protein_id',''))
+                                                    sig = (gid, pid)
+                                                    if sig in seen_proteins:
+                                                        dropped2 += 1
+                                                        continue
+                                                    seen_proteins.add(sig)
+                                                    filtered2.append(r)
+                                                if dropped2:
+                                                    logger.info(f"Context trim: dropped {dropped2} duplicate discovered_proteins rows (binding='{k}.{key}')")
+                                                items.append({'type': 'macro_result', 'name': f"{k}.{key}", 'rows': filtered2, 'format': v.get('_format')})
                             except Exception:
                                 pass
                             return items
@@ -423,7 +516,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                     question=question,
                                     operator_catalog=json.dumps(operator_catalog()),
                                     constraints="allow_keyword_discovery=1",
-                                    ko_reference=ko_ref
+                                    ko_reference=ko_ref,
+                                    pfam_reference=pf_ref
                                 )
                             plan_res2 = self.model_allocator.create_context_managed_call(
                                 task_name="agentic_planning",
@@ -441,9 +535,28 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             attempts += 1
                             if attempts >= max_attempts:
                                 break
+                        # Follow-up proposals (if any) should come from planned operators,
+                        # not decided here. The synthesizer is invoked only at the end.
+
                         # Always synthesize at the end (with whatever we gathered)
                         if not self.progressive_synthesizer:
                             self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
+                        # Debug: summarize raw items sizes to pinpoint context inflation sources
+                        try:
+                            summary = []
+                            for it in all_raw_items:
+                                if isinstance(it, dict) and it.get('type') == 'macro_result':
+                                    name = it.get('name','')
+                                    rows = it.get('rows') or []
+                                    summary.append((name, len(rows)))
+                            if summary:
+                                summary.sort(key=lambda x: x[1], reverse=True)
+                                top = ", ".join([f"{n}:{c}" for n,c in summary[:10]])
+                                total_rows = sum(c for _, c in summary)
+                                logger.info(f"Context debug: {len(summary)} result lists, total_rows={total_rows}. Top lists: {top}")
+                        except Exception:
+                            pass
+
                         final_answer = self.progressive_synthesizer.synthesize_progressive(
                             task_notes=[],
                             question=question,
@@ -487,21 +600,24 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         }
                     # If fast path seeded steps for FSM, continue using the same executor
                     if getattr(fp_agent, "_seed_steps", None):
-                        console.print("🚦 [bold cyan]Fast Path seed ready → continuing with FSM[/bold cyan]")
-                        agent_res = await fp_agent._execute_agent_workflow_fsm(question, selected_genome=None)
-                        return {
-                            "question": question,
-                            "answer": agent_res.final_answer,
-                            "confidence": agent_res.confidence,
-                            "citations": agent_res.citations,
-                            "query_metadata": {
-                                "execution_mode": "macro_fast_path_seeded_fsm",
-                                "total_steps": agent_res.total_steps,
-                                "tools_used": agent_res.tools_used,
-                                "execution_time": agent_res.total_execution_time,
-                                "note_taking_enabled": self.note_keeper is not None,
-                            },
-                        }
+                        if getattr(self.config, 'DISABLE_FSM', False):
+                            logger.info("FSM disabled by configuration; ignoring fast-path seed steps and continuing without FSM")
+                        else:
+                            console.print("🚦 [bold cyan]Fast Path seed ready → continuing with FSM[/bold cyan]")
+                            agent_res = await fp_agent._execute_agent_workflow_fsm(question, selected_genome=None)
+                            return {
+                                "question": question,
+                                "answer": agent_res.final_answer,
+                                "confidence": agent_res.confidence,
+                                "citations": agent_res.citations,
+                                "query_metadata": {
+                                    "execution_mode": "macro_fast_path_seeded_fsm",
+                                    "total_steps": agent_res.total_steps,
+                                    "tools_used": agent_res.tools_used,
+                                    "execution_time": agent_res.total_execution_time,
+                                    "note_taking_enabled": self.note_keeper is not None,
+                                },
+                            }
             except Exception as e:
                 # Respect fail-fast on grammar/tool compile errors
                 if getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
@@ -523,14 +639,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 }
             console.print("🤖 [bold]Using LLM-based execution planning[/bold]")
             
-            # Use model allocation for planning (o3 for complex planning tasks)
+            # Use model allocation for planning (gpt-5 for complex planning tasks)
             logger.info("🧠 Using model allocation for intelligent planning")
             
             def planning_call(module):
                 return module(user_query=question)
             
             planning_result = self.model_allocator.create_context_managed_call(
-                task_name="agentic_planning",  # Maps to COMPLEX = o3
+                task_name="agentic_planning",  # Maps to COMPLEX = gpt-5
                 signature_class=PlannerAgent,
                 module_call_func=planning_call,
                 query=question,
@@ -814,13 +930,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             if mapped is not None:
                 return mapped
 
-        # Step 1: Classify the query type using model allocation (o3 for biological reasoning)
+        # Step 1: Classify the query type using model allocation (gpt-5 for biological reasoning)
         def classification_call(module):
             return module(question=question)
         
         from .dspy_signatures import QueryClassifier
         classification = self.model_allocator.create_context_managed_call(
-            task_name="query_classification",  # Now maps to COMPLEX = o3
+            task_name="query_classification",  # Now maps to COMPLEX = gpt-5
             signature_class=QueryClassifier,
             module_call_func=classification_call
         )
@@ -835,7 +951,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Ensure there's a default LM configured for fallback
             if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                 logger.warning("No default LM configured, setting up fallback")
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                try:
+                    from .policy_engine import get_policy_engine
+                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+                except Exception:
+                    policy_max = 30000
+                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
                 dspy.settings.configure(lm=fallback_lm)
             classification = self._run("query_classification", QueryClassifier, question=question)
         
@@ -891,7 +1012,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         from .dspy_signatures import ContextRetriever
         retrieval_plan = self.model_allocator.create_context_managed_call(
-            task_name="context_preparation",  # Now maps to COMPLEX = o3
+            task_name="context_preparation",  # Now maps to COMPLEX = gpt-5
             signature_class=ContextRetriever,
             module_call_func=retrieval_call
         )
@@ -901,7 +1022,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Ensure there's a default LM configured for fallback
             if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                 logger.warning("No default LM configured, setting up fallback")
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                try:
+                    from .policy_engine import get_policy_engine
+                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+                except Exception:
+                    policy_max = 30000
+                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
                 dspy.settings.configure(lm=fallback_lm)
             retrieval_plan = self._run("context_preparation", ContextRetriever,
                 db_schema=NEO4J_SCHEMA,
@@ -1020,7 +1146,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         from .dspy_signatures import GenomicAnswerer
         answer_result = self.model_allocator.create_context_managed_call(
-            task_name="biological_interpretation",  # Maps to COMPLEX = o3
+            task_name="biological_interpretation",  # Maps to COMPLEX = gpt-5
             signature_class=GenomicAnswerer,
             module_call_func=answer_call
         )
@@ -1030,7 +1156,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Ensure there's a default LM configured for fallback
             if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                 logger.warning("No default LM configured, setting up fallback")
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                try:
+                    from .policy_engine import get_policy_engine
+                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+                except Exception:
+                    policy_max = 30000
+                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
                 dspy.settings.configure(lm=fallback_lm)
             
             answer_result = self._run("biological_interpretation", GenomicAnswerer,
@@ -1790,7 +1921,7 @@ print("Data available: {data_summary}")
             
             from .dspy_signatures import GenomicAnswerer
             answer_result = self.model_allocator.create_context_managed_call(
-                task_name="biological_interpretation",  # Maps to COMPLEX = o3
+                task_name="biological_interpretation",  # Maps to COMPLEX = gpt-5
                 signature_class=GenomicAnswerer,
                 module_call_func=answerer_call
             )
@@ -1800,7 +1931,12 @@ print("Data available: {data_summary}")
                 logger.warning("Model allocation failed for answer generation, falling back to default")
                 if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
                     logger.warning("No default LM configured, setting up fallback")
-                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
+                    try:
+                        from .policy_engine import get_policy_engine
+                        policy_max = int(get_policy_engine().policies.max_tokens_per_query)
+                    except Exception:
+                        policy_max = 30000
+                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
                     dspy.settings.configure(lm=fallback_lm)
                 
                 answer_result = self._run("biological_interpretation", GenomicAnswerer,
