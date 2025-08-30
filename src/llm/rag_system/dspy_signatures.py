@@ -518,6 +518,31 @@ class GenomicSynthesizer(dspy.Signature):
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
     summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
+
+
+# === IRB Editor/Repair Signatures ===
+class PatchProposalSignature(dspy.Signature):
+    """Propose RFC6902 patches restricted to the provided anchor section."""
+    anchor_snippet = dspy.InputField(desc="JSON of the target section only (compact).")
+    batch_summary = dspy.InputField(desc="IDs, totals, up to N examples; DO NOT list raw rows; reference cache IDs.")
+    open_obligations = dspy.InputField(desc="Obligations this batch can close.")
+    schema_reminder = dspy.InputField(desc="Patch envelope JSON schema; MUST include at least one 'test' op.")
+    editor_instructions = dspy.InputField(desc="Strict editorial constraints (how to structure the patch and what to avoid)")
+    patch_envelope = dspy.OutputField(desc="JSON {anchor, obligations, patch, evidence, rationale, risk}")
+
+
+class MultiPatchProposalSignature(dspy.Signature):
+    """Propose RFC6902 patches for MULTIPLE anchors in one call.
+
+    Input anchors_json is a JSON array of objects:
+    [{"anchor": str, "anchor_snippet": json, "batch_summary": json}, ...]
+
+    Output patch_envelopes is a JSON array of PatchEnvelope objects matching the schema reminder.
+    """
+    anchors_json = dspy.InputField(desc="JSON array of {anchor, anchor_snippet, batch_summary}")
+    schema_reminder = dspy.InputField(desc="Patch envelope JSON schema; include 'test' ops per anchor")
+    editor_instructions = dspy.InputField(desc="Strict editorial constraints (how to structure each patch and what to avoid)")
+    patch_envelopes = dspy.OutputField(desc="JSON array of envelopes [{anchor, obligations, patch, evidence, rationale, risk}, ...]")
     key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data - no abbreviations or partial names allowed.")
 
 class GenomicDataExtractor(dspy.Signature):

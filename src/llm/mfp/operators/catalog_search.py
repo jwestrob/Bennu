@@ -201,6 +201,34 @@ def _query_proteins_by_ids(ctx: OperatorContext, inputs: Dict[str, Any], params:
     except Exception:
         limit = 1000
 
+    # Normalize PFAM tokens while preserving meaningful short names.
+    # - Extract canonical accessions (PFxxxxx) when present
+    # - Also keep lowercased short-name tokens like 'rubisco_large' to match d.id
+    def _norm_tokens(tokens: List[Any]) -> List[str]:
+        import re
+        out: List[str] = []
+        seen: set[str] = set()
+        for tok in tokens:
+            s = str(tok or '').strip()
+            if not s:
+                continue
+            m = re.search(r"(PF\d{5})", s, re.IGNORECASE)
+            if m:
+                acc = m.group(1).upper()
+                if acc not in seen:
+                    seen.add(acc)
+                    out.append(acc)
+            else:
+                # keep concise alphabetic/underscore names (avoid long descriptions)
+                name = s.lower()
+                if 2 <= len(name) <= 64 and all(ch.isalnum() or ch in {'_','-'} for ch in name):
+                    if name not in seen:
+                        seen.add(name)
+                        out.append(name)
+        return out
+    if pfam_ids:
+        pfam_ids = _norm_tokens(pfam_ids)
+
     pf_rows = []
     ko_rows = []
     if pfam_ids:

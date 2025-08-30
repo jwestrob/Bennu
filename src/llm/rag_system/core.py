@@ -137,6 +137,16 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             return
             
         try:
+            # Quiet noisy external loggers around API calls unless explicitly enabled
+            try:
+                import logging as _lg, os as _os
+                _lg.getLogger("LiteLLM").setLevel(_lg.WARNING)
+                _lg.getLogger("httpx").setLevel(_lg.WARNING)
+                _lg.getLogger("dspy.adapters.json_adapter").setLevel(_lg.ERROR)
+                # Also set LiteLLM env if respected
+                _os.environ.setdefault('LITELLM_LOG', 'WARNING')
+            except Exception:
+                pass
             # Configure based on available API keys
             api_key = self.config.get_api_key()
             
@@ -539,8 +549,10 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         # not decided here. The synthesizer is invoked only at the end.
 
                         # Always synthesize at the end (with whatever we gathered)
-                        if not self.progressive_synthesizer:
-                            self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
+                        # Avoid initializing ProgressiveSynthesizer when IRB is enabled
+                        if not getattr(self.config, 'IRB_ENABLED', True):
+                            if not self.progressive_synthesizer:
+                                self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
                         # Debug: summarize raw items sizes to pinpoint context inflation sources
                         try:
                             summary = []
@@ -553,15 +565,112 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 summary.sort(key=lambda x: x[1], reverse=True)
                                 top = ", ".join([f"{n}:{c}" for n,c in summary[:10]])
                                 total_rows = sum(c for _, c in summary)
-                                logger.info(f"Context debug: {len(summary)} result lists, total_rows={total_rows}. Top lists: {top}")
+                                logger.debug(f"Context debug: {len(summary)} result lists, total_rows={total_rows}. Top lists: {top}")
                         except Exception:
                             pass
 
-                        final_answer = self.progressive_synthesizer.synthesize_progressive(
-                            task_notes=[],
-                            question=question,
-                            raw_data=all_raw_items,
-                        )
+                        # Decide whether to bypass IRB based on token budget (small contexts go straight to final synthesis)
+                        def _estimate_tokens(s: str) -> int:
+                            try:
+                                import tiktoken
+                                enc = tiktoken.encoding_for_model(getattr(self.config, 'llm_model', 'gpt-4.1-mini'))
+                                return len(enc.encode(s or ''))
+                            except Exception:
+                                try:
+                                    # Rough heuristic
+                                    return max(1, int(len(s or '') / 4))
+                                except Exception:
+                                    return 1000000
+
+                        # Pretty-print a simple task graph for final synthesis context
+                        def _render_task_graph(plan_dict: dict) -> str:
+                            try:
+                                steps = plan_dict.get('steps', []) if isinstance(plan_dict, dict) else []
+                                lines = ["TASK GRAPH:"]
+                                for i, st in enumerate(steps, 1):
+                                    op = st.get('op')
+                                    params = st.get('params') or {}
+                                    # Keep params compact
+                                    import json as _json
+                                    p = _json.dumps(params, separators=(',',':'))[:200]
+                                    lines.append(f"{i}. {op} params={p}")
+                                return "\n".join(lines)
+                            except Exception:
+                                return ""
+
+                        # Compute raw context size once
+                        import json as _json
+                        raw_context_json = _json.dumps(all_raw_items, default=str, separators=(',',':'))
+                        bypass_cap = 0
+                        try:
+                            import os as _os
+                            bypass_cap = int(_os.getenv('IRB_BYPASS_TOKENS', '6000'))
+                        except Exception:
+                            bypass_cap = 6000
+                        should_bypass_irb = (not getattr(self.config, 'IRB_ENABLED', True)) or (_estimate_tokens(raw_context_json) <= bypass_cap)
+
+                        report_context = None
+                        task_graph_text = _render_task_graph(plan)
+
+                        if should_bypass_irb:
+                            # Bypass IRB: synthesize directly from compact JSON context
+                            report_context = (task_graph_text + "\n\nCONTEXT (JSON):\n" + raw_context_json)
+                        else:
+                            # IRB (Incremental Report Builder) path
+                            try:
+                                from .memory.incremental_report_builder import IncrementalReportBuilder
+                                from .memory.doc_ast import to_markdown as _to_md
+                            except Exception as e:
+                                logger.error(f"IRB import failed: {e}")
+                                raise
+                            # Build tool cache compatible with NoteKeeper
+                            trc = None
+                            try:
+                                if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                                    from .memory.tool_result_cache import ToolResultCache
+                                    trc = ToolResultCache(str(self.note_keeper.session_path))
+                            except Exception:
+                                trc = None
+                            irb = IncrementalReportBuilder(self.note_keeper, self.model_allocator, trc, self.config)
+                            doc = irb.run(all_raw_items, obligations=[])
+                            if getattr(irb, 'failed', False):
+                                raise RuntimeError(f"IRB bug-out: {getattr(irb, 'fail_reason', 'unknown')}")
+                            irb_markdown = _to_md(doc)
+                            report_context = (task_graph_text + "\n\n" + irb_markdown)
+
+                        # Final report generation (GPT-5 via DSPy) using GenomicSynthesizer
+                        final_answer = None
+                        try:
+                            from .dspy_signatures import GenomicSynthesizer
+                            def _final_call(module):
+                                return module(
+                                    question=question,
+                                    context=report_context,
+                                    task_graph=task_graph_text,
+                                    synthesis_mode="comprehensive_report",
+                                )
+                            synth_res = self.model_allocator.create_context_managed_call(
+                                task_name="final_synthesis",
+                                signature_class=GenomicSynthesizer,
+                                module_call_func=_final_call,
+                                query=question,
+                                task_context="Final report synthesis",
+                            )
+                            if synth_res and hasattr(synth_res, 'summary'):
+                                final_answer = synth_res.summary
+                        except Exception as e:
+                            logger.warning(f"Final report synthesis call failed or unavailable: {e}")
+
+                        # Fallbacks if synthesis not available
+                        if not final_answer:
+                            if not should_bypass_irb:
+                                # IRB markdown is a reasonable fallback
+                                final_answer = irb_markdown
+                            else:
+                                # As a last resort, emit a compact JSON summary
+                                final_answer = (
+                                    "Report synthesis unavailable; returning compact context.\n\n" + report_context[:20000]
+                                )
                         return {
                             "question": question,
                             "answer": final_answer,
@@ -1542,14 +1651,15 @@ print("Data available: {data_summary}")
                                     total_neighbors = 0
                             ps_lines.append(f"- Queried seeds: {total_seeds}; topk: {topk}")
                             ps_lines.append(f"- Neighbors after filtering: {total_neighbors}")
-                            # Show up to 5 per-seed counts
+                            # List per-seed neighbor counts without artificial cap
                             if isinstance(counts, dict) and counts:
-                                shown = 0
-                                for sid, cnt in counts.items():
-                                    if shown >= 5:
-                                        break
-                                    ps_lines.append(f"  • {sid}: {cnt}")
-                                    shown += 1
+                                # Stable order: sort by count desc, then seed id
+                                try:
+                                    for sid, cnt in sorted(counts.items(), key=lambda kv: (-int(kv[1] or 0), str(kv[0]))):
+                                        ps_lines.append(f"  • {sid}: {cnt}")
+                                except Exception:
+                                    for sid, cnt in counts.items():
+                                        ps_lines.append(f"  • {sid}: {cnt}")
                         else:
                             ps_lines.append("- kNN stage executed; no statistics available")
                     # Signature witness section

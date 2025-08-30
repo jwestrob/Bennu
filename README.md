@@ -113,7 +113,7 @@ which quast.py; which prodigal; which dfast_qc; which mash; which skani
 
 **Start Neo4j Database:**
 ```bash
-# Option 1: Using Docker (recommended)
+# Option 1: Using Docker (quick start)
 docker run -d \
     --name neo4j-bennu \
     -p 7474:7474 -p 7687:7687 \
@@ -121,9 +121,28 @@ docker run -d \
     -v neo4j_data:/data \
     neo4j:5.0
 
-# Option 2: Local Neo4j installation
-# Follow Neo4j installation guide for your platform
+# Option 2: Local install (Homebrew on macOS)
+brew install neo4j            # if not already installed
+
+# (One‑time) Set initial password BEFORE first start
+# If your DB is new and has no password set yet, run:
+neo4j-admin dbms set-initial-password 'your_new_password'
+
+# Start/stop/status (foreground process under your user)
+neo4j start
+neo4j status
+# Or run as a background service (managed by launchctl)
+brew services start neo4j
+brew services list | grep neo4j
+
+# Verify connectivity
+cypher-shell -u neo4j -p 'your_new_password' "RETURN 1 AS ok"
 ```
+
+Notes (local install):
+- Binaries: typically under `/opt/homebrew/bin/{neo4j,cypher-shell}`.
+- Data/logs: `/opt/homebrew/var/neo4j/data`, logs in `/opt/homebrew/var/log/neo4j`.
+- Config: `.../Cellar/neo4j/*/libexec/conf/neo4j.conf`.
 
 **Configure Database Connection:**
 Create `.env` file in project root:
@@ -131,6 +150,11 @@ Create `.env` file in project root:
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
+```
+
+For your local non‑Docker setup, set:
+```bash
+NEO4J_PASSWORD=your_new_password
 ```
 
 ### Step 3: Code Interpreter Setup
@@ -162,6 +186,10 @@ python -c "from src.llm.query_processor import QueryProcessor; qp = QueryProcess
 # Test code interpreter
 python -c "import requests; print('Code interpreter:', requests.get('http://localhost:8000/health').status_code == 200)"
 ```
+
+Tip: Python interpreter selection
+- After `conda activate genome-kg`, prefer `python` over `python3` to ensure the conda interpreter is used (some macOS setups have pyenv shims for `python3`).
+- You can always force it with: `conda run -n genome-kg python -m src.cli ask "..."`.
 
 ## Getting Started
 

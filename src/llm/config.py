@@ -51,6 +51,11 @@ class LLMConfig(BaseModel):
     cache_enabled: bool = Field(default=True, description="Enable query result caching")
 
     # Feature flags
+    IRB_ENABLED: bool = Field(default=True, description="Enable Incremental Report Builder (IRB) for synthesis; replaces ProgressiveSynthesizer when true.")
+    IRB_ALLOW_NLI: bool = Field(default=False, description="Allow optional NLI check for high-risk patches during IRB validation.")
+    IRB_EDITOR_TIER: str = Field(default="premium", description="Editor model tier for IRB (nano|mini|standard|premium). Default: premium (gpt-5 minimal).")
+    IRB_EDITOR_MAX_TOKENS: int = Field(default=800, description="Max tokens for each IRB editor call (keeps GPT-5 minimal). Default: 800")
+    IRB_MAX_EDITOR_CALLS: int = Field(default=30, description="Max number of IRB editor calls per run. Default: 30")
     FAST_PATH_ENABLED: bool = Field(default=True, description="Enable deterministic macro options for common queries; bypass per-step LLM.")
     USE_MFP_PLANNER: bool = Field(default=True, description="Enable agent-designed macro plan (operators) executed by Macro Fast Path.")
     USE_CODE_INTERPRETER_IN_FAST_PATH: bool = Field(default=False, description="If true, run code interpreter post-processing in fast path when supported.")
@@ -105,6 +110,22 @@ class LLMConfig(BaseModel):
         if os.getenv('TIMEOUT_SECONDS'):
             config_data['timeout_seconds'] = int(os.getenv('TIMEOUT_SECONDS'))
         # Feature flags
+        if os.getenv('IRB_ENABLED') is not None:
+            config_data['IRB_ENABLED'] = os.getenv('IRB_ENABLED') not in ('0', 'false', 'False')
+        if os.getenv('IRB_ALLOW_NLI') is not None:
+            config_data['IRB_ALLOW_NLI'] = os.getenv('IRB_ALLOW_NLI') not in ('0', 'false', 'False')
+        if os.getenv('IRB_EDITOR_TIER') is not None:
+            config_data['IRB_EDITOR_TIER'] = os.getenv('IRB_EDITOR_TIER')
+        if os.getenv('IRB_EDITOR_MAX_TOKENS') is not None:
+            try:
+                config_data['IRB_EDITOR_MAX_TOKENS'] = int(os.getenv('IRB_EDITOR_MAX_TOKENS'))
+            except Exception:
+                pass
+        if os.getenv('IRB_MAX_EDITOR_CALLS') is not None:
+            try:
+                config_data['IRB_MAX_EDITOR_CALLS'] = int(os.getenv('IRB_MAX_EDITOR_CALLS'))
+            except Exception:
+                pass
         if os.getenv('FAST_PATH_ENABLED') is not None:
             config_data['FAST_PATH_ENABLED'] = os.getenv('FAST_PATH_ENABLED') not in ('0', 'false', 'False')
         if os.getenv('SKEPTIC_ENABLED') is not None:

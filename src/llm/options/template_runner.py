@@ -42,7 +42,8 @@ class FileCypherRunner:
             # concise, high-signal instrumentation
             try:
                 pkeys = list((params or {}).keys())
-                self.logger.info(f"DB_TEMPLATE_EXECUTE: name={name} param_keys={pkeys}")
+                # reduce noise: log at DEBUG level
+                self.logger.debug(f"DB_TEMPLATE_EXECUTE: name={name} param_keys={pkeys}")
             except Exception:
                 pass
             result = session.run(cypher, params)

@@ -125,6 +125,8 @@ class ModelAllocation:
             "agent_decision": TaskComplexity.COMPLEX,           # FSM decision making
             "agent_decision_repair": TaskComplexity.COMPLEX,    # Repair of decision parameters
             "code_generation": TaskComplexity.MEDIUM,           # Generate analysis code based on user questions
+            # IRB editor proposals are compact, anchor-scoped
+            "irb_patch_proposal": TaskComplexity.MEDIUM,
         }
         
         # Define model allocation based on complexity (COST OPTIMIZED)
@@ -229,6 +231,24 @@ class ModelAllocation:
         # Get context-aware task complexity
         complexity = self.get_task_complexity(task_name, query, task_context)
         
+        # IRB editor override: allow explicit tier for patch proposals (default: NANO = minimal)
+        if task_name.startswith('irb_patch_proposal'):
+            # Parse suffix: irb_patch_proposal_<tier>
+            tier_token = None
+            parts = task_name.split('_')
+            if len(parts) >= 3:
+                tier_token = parts[-1].lower()
+            tier_map = {
+                'nano': ModelTier.NANO,
+                'mini': ModelTier.MINI,
+                'standard': ModelTier.STANDARD,
+                'premium': ModelTier.PREMIUM,
+            }
+            tier = tier_map.get(tier_token or 'nano', ModelTier.NANO)
+            model_config = self.models[tier]
+            logger.info(f"🧩 IRB editor tier: {tier.value} → {model_config.model_name}")
+            return model_config.model_name, model_config
+
         # Check if this is a premium task that requires gpt-5
         if task_name in self.premium_tasks:
             tier = ModelTier.PREMIUM
@@ -357,6 +377,9 @@ class ModelAllocation:
             except Exception:
                 policy_max = 30000
             t = (task or "").lower()
+            # Minimal cap for IRB editor to keep GPT-5 short and fast
+            if t.startswith('irb_patch_proposal'):
+                return 800
             if t in {"genomic_summarization", "genomic_synthesis", "detailed_report_synthesis"}:
                 return policy_max
             return policy_max
@@ -367,13 +390,10 @@ class ModelAllocation:
                 model_string = f"openai/{model_name}"
                 # Special handling for reasoning models
                 if (model_name.startswith('gpt-5') or model_name.startswith('o1')):
-                    # Use policy max to avoid truncation for reasoning outputs
-                    try:
-                        from ..policy_engine import get_policy_engine
-                        policy_max = int(get_policy_engine().policies.max_tokens_per_query)
-                    except Exception:
-                        policy_max = 30000
-                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=policy_max)
+                    # Use per-task caps (IRB editor kept minimal)
+                    cap = _max_tokens_for_task(task_name, 8000)
+                    # Explicit temperature for GPT-5/o1 per LiteLLM contract (must be 1)
+                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=cap)
                 else:
                     lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=_max_tokens_for_task(task_name, 8000))
             elif model_config.provider == "anthropic":
@@ -401,12 +421,20 @@ class ModelAllocation:
             if "RateLimitError" in str(e) or "Request too large" in str(e) or "tokens per min" in str(e):
                 logger.warning(f"🚫 Token limit exceeded for {task_name}, forcing fallback to smaller model")
                 try:
-                    # Force fallback to mini model for token limit issues
-                    fallback_lm = dspy.LM(
-                        model="openai/gpt-4.1-mini",
-                        temperature=0.0,
-                        max_tokens=_max_tokens_for_task(task_name, 8000),
-                    )
+                    # Prefer same-tier minimal fallback for IRB editor (gpt-5 with smaller cap)
+                    if task_name.startswith('irb_patch_proposal') and (model_name.startswith('gpt-5') or model_name.startswith('o1')):
+                        fallback_lm = dspy.LM(
+                            model=f"openai/{model_name}",
+                            temperature=1.0,
+                            max_tokens=min(400, _max_tokens_for_task(task_name, 8000)),
+                        )
+                    else:
+                        # Default: mini fallback
+                        fallback_lm = dspy.LM(
+                            model="openai/gpt-4.1-mini",
+                            temperature=0.0,
+                            max_tokens=_max_tokens_for_task(task_name, 8000),
+                        )
                     fallback_module = dspy.Predict(signature_class)
                     with dspy.context(lm=fallback_lm):
                         result = module_call_func(fallback_module)

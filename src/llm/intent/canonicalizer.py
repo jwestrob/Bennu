@@ -91,7 +91,7 @@ def canonicalize(natural_query: str, note_keeper, model_allocator=None) -> Tuple
             )
         except TypeError:
             # dspy.LM may not accept GPT-5-specific kwargs; try minimal args
-            lm = dspy.LM(model="openai/gpt-5-2025-08-07", temperature=0.0)
+            lm = dspy.LM(model="openai/gpt-5-2025-08-07", temperature=1.0)
         module = dspy.Predict(CanonicalizerSignature)
         with dspy.context(lm=lm):
             result = call(module)

@@ -51,8 +51,10 @@ class ProgressiveSynthesizer:
         
         # Map-Reduce configuration - Model-aware limits
         # We'll set final limits after model allocator is available
-        self.direct_synthesis_limit = 20000  # Will be updated based on actual model limits
-        self.map_chunk_limit = 15000  # Will be updated based on actual model limits
+        # Aim for large, near-limit chunks by default
+        self.chunk_utilization = 0.93  # target fraction of model context per chunk
+        self.direct_synthesis_limit = 28000  # placeholder until updated
+        self.map_chunk_limit = 26000  # placeholder until updated
         
         # Initialize tokenizer for accurate token counting
         try:
@@ -105,13 +107,11 @@ class ProgressiveSynthesizer:
         try:
             # Get limits for the models we'll be using
             _, final_synthesis_model = self.model_allocator.get_model_for_task("final_synthesis", "")
-            _, map_step_model = self.model_allocator.get_model_for_task("genomic_summarization", "")
-            
-        # Set direct synthesis limit to respect OpenAI's ~30K token limit for premium (gpt-5)
-            self.direct_synthesis_limit = min(25000, int(final_synthesis_model.max_context * 0.8))
-            
-            # Set map chunk limit to respect 30K TPM limit (not model context)
-            self.map_chunk_limit = min(25000, int(map_step_model.max_context * 0.4))
+            # Tune limits close to model context to reduce number of chunks
+            max_ctx = int(getattr(final_synthesis_model, 'max_context', 30000) or 30000)
+            util = float(getattr(self, 'chunk_utilization', 0.93) or 0.93)
+            self.direct_synthesis_limit = max(1000, int(max_ctx * util))
+            self.map_chunk_limit = max(1000, int(max_ctx * util))
             
             logger.info(f"📊 Model-aware limits updated: direct={self.direct_synthesis_limit:,}, chunk={self.map_chunk_limit:,}")
             logger.info(f"📊 Models: final_synthesis={final_synthesis_model.model_name}, map_step={map_step_model.model_name}")
@@ -761,24 +761,25 @@ class ProgressiveSynthesizer:
         
         logger.info(f"✅ Pre-processing complete: {len(processed_data)} items ready for chunking")
         
-        # Step 2: Main chunking logic (now guaranteed that no item exceeds chunk limit)
-        chunks = []
-        current_chunk = []
-        current_tokens = 0
-        
+        # Step 2: Size-aware packing to produce fewer, larger chunks (Next-Fit Decreasing)
+        sized_items = []
         for item in processed_data:
-            item_tokens = self._count_data_tokens([item])
-            
-            # Check if adding this item would exceed chunk limit
-            if current_tokens + item_tokens > self.map_chunk_limit and current_chunk:
+            sized_items.append((item, self._count_data_tokens([item])))
+        # Sort by descending size
+        sized_items.sort(key=lambda x: x[1], reverse=True)
+
+        chunks: List[List[Dict[str, Any]]] = []
+        current_chunk: List[Dict[str, Any]] = []
+        current_tokens = 0
+
+        for item, sz in sized_items:
+            if current_chunk and current_tokens + sz > self.map_chunk_limit:
                 chunks.append(current_chunk)
                 current_chunk = []
                 current_tokens = 0
-            
             current_chunk.append(item)
-            current_tokens += item_tokens
-        
-        # Add final chunk if not empty
+            current_tokens += sz
+
         if current_chunk:
             chunks.append(current_chunk)
         

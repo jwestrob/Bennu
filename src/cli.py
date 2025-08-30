@@ -14,28 +14,13 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
-# Import pipeline stages
-import importlib
-prepare_inputs_module = importlib.import_module('src.ingest.00_prepare_inputs')
-run_quast_module = importlib.import_module('src.ingest.01_run_quast')
-run_dfast_qc_module = importlib.import_module('src.ingest.02_dfast_qc')
-run_prodigal_module = importlib.import_module('src.ingest.03_prodigal')
-run_astra_scan_module = importlib.import_module('src.ingest.04_astra_scan')
-run_gecco_module = importlib.import_module('src.ingest.gecco_bgc')
-run_dbcan_module = importlib.import_module('src.ingest.dbcan_cazyme')
-build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
-esm2_embeddings_module = importlib.import_module('src.ingest.06_esm2_embeddings')
-
-prepare_inputs = prepare_inputs_module.prepare_inputs
-run_quast = run_quast_module.run_quast
-run_dfast_qc = run_dfast_qc_module.call
-run_prodigal = run_prodigal_module.run_prodigal
-run_astra_scan = run_astra_scan_module.run_astra_scan
-run_gecco_analysis = run_gecco_module.gecco_bgc_detection
-run_dbcan_analysis = run_dbcan_module.run_dbcan_batch_analysis
-build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
-build_knowledge_graph_with_extended_annotations = build_kg_module.build_knowledge_graph_with_extended_annotations
-run_esm2_embeddings = esm2_embeddings_module.run_esm2_embeddings
+"""
+Lazy imports note:
+- Heavy pipeline modules (e.g., RDF graph builder via rdflib) are imported inside
+  the build() command to avoid requiring those dependencies for read-only commands
+  such as `ask`. This prevents ModuleNotFoundError when users only installed the
+  LLM/runtime deps but not RDF tooling.
+"""
 
 # Import LLM components
 from .llm.cli import ask_question
@@ -116,6 +101,29 @@ def build(
     console.print(f"Running stages {from_stage} to {to_stage}")
     console.print(f"Threads: {threads}")
     
+    # Import pipeline stages lazily to keep `ask` lightweight
+    import importlib
+    prepare_inputs_module = importlib.import_module('src.ingest.00_prepare_inputs')
+    run_quast_module = importlib.import_module('src.ingest.01_run_quast')
+    run_dfast_qc_module = importlib.import_module('src.ingest.02_dfast_qc')
+    run_prodigal_module = importlib.import_module('src.ingest.03_prodigal')
+    run_astra_scan_module = importlib.import_module('src.ingest.04_astra_scan')
+    run_gecco_module = importlib.import_module('src.ingest.gecco_bgc')
+    run_dbcan_module = importlib.import_module('src.ingest.dbcan_cazyme')
+    build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
+    esm2_embeddings_module = importlib.import_module('src.ingest.06_esm2_embeddings')
+
+    prepare_inputs = prepare_inputs_module.prepare_inputs
+    run_quast = run_quast_module.run_quast
+    run_dfast_qc = run_dfast_qc_module.call
+    run_prodigal = run_prodigal_module.run_prodigal
+    run_astra_scan = run_astra_scan_module.run_astra_scan
+    run_gecco_analysis = run_gecco_module.gecco_bgc_detection
+    run_dbcan_analysis = run_dbcan_module.run_dbcan_batch_analysis
+    build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
+    build_knowledge_graph_with_extended_annotations = build_kg_module.build_knowledge_graph_with_extended_annotations
+    run_esm2_embeddings = esm2_embeddings_module.run_esm2_embeddings
+
     # Validate input directory
     if not input_dir.exists():
         console.print(f"[red]Error: Input directory does not exist: {input_dir}[/red]")

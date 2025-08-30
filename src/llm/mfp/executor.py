@@ -30,8 +30,21 @@ def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
         params = step.get('params', {}) or {}
         # Materialize inputs
         provided: Dict[str, Any] = {}
+        def _normalize_ref(r: Any) -> str:
+            if not isinstance(r, str):
+                return str(r)
+            s = r.strip()
+            # Accept ${name}, $name, {name}, name
+            if s.startswith('${') and s.endswith('}'):
+                return s[2:-1].strip()
+            if s.startswith('{') and s.endswith('}'):
+                return s[1:-1].strip()
+            if s.startswith('$'):
+                return s[1:].strip()
+            return s
+
         for key in spec.inputs:
-            ref_name = inputs_ref.get(key)
+            ref_name = _normalize_ref(inputs_ref.get(key))
             if not ref_name:
                 raise PlanValidationError(f"Step {i} ('{name}') missing input binding for '{key}'")
             if ref_name not in env:
@@ -50,4 +63,3 @@ def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
             if out_key in result:
                 env[out_key] = result[out_key]
     return env
-
