@@ -293,6 +293,78 @@ proteins = rag.get_proteins_by_function("transporter")
 pathways = rag.get_pathways_by_genome("genome_id")
 ```
 
+## Model Selection
+
+You can pick different LLMs for each stage of the pipeline when running `ask`:
+
+- `--planner` / `-planner`: model for Planner and retrieval planning
+- `--irb` / `-irb`: model for IRB (Incremental Report Builder) editing
+- `--reporter` / `-reporter`: model for final report synthesis
+
+Examples
+
+```bash
+# Cost‑effective planner + IRB, premium reporter
+python -m src.cli ask "Summarize RuBisCO across MAGs" \
+  -planner 4.1-mini -irb gpt-4.1-mini -reporter gpt-5-high
+
+# Native Anthropic Sonnet 4 as reporter
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m src.cli ask "Which genomes encode PRK (K00855)?" \
+  -reporter anthropic/claude-sonnet-4
+
+# OpenRouter Sonnet 4 as reporter (OpenAI‑compatible endpoint)
+export OPENROUTER_API_KEY=sk-or-...
+python -m src.cli ask "Which genomes encode PRK (K00855)?" \
+  -reporter openrouter/claude-sonnet-4
+
+# All three with GPT‑5 planner/reporter and mini IRB
+python -m src.cli ask "Map RuBisCO and PRK co-occurrence" \
+  -planner gpt-5-high -irb gpt-4.1-mini -reporter gpt-5-high
+```
+
+Available models and aliases
+
+- GPT‑5 (OpenAI):
+  - `gpt-5-high`, `gpt-5-medium`, `gpt-5-minimal` → `openai/gpt-5-2025-08-07`
+- GPT‑4.1 family (OpenAI):
+  - `gpt-4.1-mini`, `4.1-mini` → `openai/gpt-4.1-mini`
+- Claude Sonnet 4 (Anthropic):
+  - Native: `anthropic/claude-sonnet-4` (uses `ANTHROPIC_API_KEY`)
+  - OpenRouter: `openrouter/claude-sonnet-4` (uses `OPENROUTER_API_KEY`, routed via OpenAI‑compatible endpoint)
+
+Defaults (if flags omitted)
+
+- Planner: `gpt-5-high`
+- IRB: `gpt-4.1-mini`
+- Reporter: `gpt-5-high`
+
+API keys and routing
+
+- `OPENAI_API_KEY` for OpenAI models
+- `ANTHROPIC_API_KEY` for native Anthropic models
+- `OPENROUTER_API_KEY` for OpenRouter (we route to `https://openrouter.ai/api/v1` under the hood)
+
+Notes and pitfalls
+
+- We do not pass `max_tokens`; DSPy may warn about truncation (internal defaults). This is expected.
+- GPT‑5 uses chat semantics (no responses/completions mode) to avoid endpoint mismatch.
+- For OpenRouter Sonnet 4 we force OpenAI‑compatible routing; use `openrouter/claude-sonnet-4`.
+
+Force IRB / disable fast‑path (to exercise the reporter)
+
+```bash
+export IRB_BYPASS_TOKENS=0   # Force IRB for small contexts
+export FAST_PATH_ENABLED=0   # Disable Macro Fast Path
+python -m src.cli ask "…" -planner gpt-5-high -irb 4.1-mini -reporter openrouter/claude-sonnet-4
+```
+
+Troubleshooting
+
+- “Chat model not supported in v1/completions” → the planner is already configured to chat mode; avoid forcing responses mode for GPT‑5.
+- “Missing Anthropic API Key” while using OpenRouter → ensure `openrouter/claude-sonnet-4` (not `anthropic/...`) and `OPENROUTER_API_KEY` is set.
+- LiteLLM atexit logging error → we suppress heavy logging in code; if needed: `export LITELLM_LOGGING=False LITELLM_DISABLE_COLD_STORAGE=1`.
+
 ## Data Products
 
 ### Knowledge Graph Schema

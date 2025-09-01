@@ -183,3 +183,44 @@ Next tighten‑ups (optional; off by default)
 
 Scaling Note
 - Final synthesis can target large-context models (e.g., Sonnet 4 with 1M context). Macro results are already structured to enable efficient summarization without overwhelming the context window.
+
+## New Model Integration (Internal Guide)
+
+Follow these steps when adding support for a new model or provider. These patterns avoid routing and logging pitfalls we’ve seen.
+
+1) Centralize routing in `src/llm/lm_factory.py`
+- Add a friendly alias in `_resolve_alias` (e.g., `gpt-5-high`, `4.1-mini`, `sonnet-4`).
+- Preserve explicit provider prefixes; if user passes `openrouter/...`, keep it so we route via OpenRouter explicitly.
+
+2) GPT‑5 (OpenAI) and chat models
+- Use `dspy.LM(model="openai/<id>")` with minimal args. Do not set `model_type="responses"` for planner/retrieval — LiteLLM may downroute to `/v1/completions` and 404 for chat models.
+- Do not pass `max_tokens` or `response_format`. If the adapter injects them, set `drop_params=True` with `additional_drop_params=["max_tokens","max_output_tokens","max_completion_tokens","response_format"]` and strip them from `lm.kwargs` defensively.
+
+3) OpenRouter (e.g., Anthropic Sonnet 4 via OpenAI‑compatible endpoint)
+- Inside the `openrouter/...` branch: set `OPENAI_API_BASE=https://openrouter.ai/api/v1` and `OPENAI_API_KEY` from `OPENROUTER_API_KEY`.
+- Force OpenAI‑compatible routing by using `dspy.LM(model="openai/<vendor>/<model>")` (e.g., `openai/anthropic/claude-sonnet-4`). This prevents LiteLLM from selecting the native Anthropic adapter even though `anthropic/` is present.
+- Do not use `dspy.OpenAI(...)` — it’s not guaranteed across DSPy versions.
+
+4) Native Anthropic
+- Only use `dspy.LM(model="anthropic/<id>")` when the user asked for native Anthropic and `ANTHROPIC_API_KEY` exists.
+
+5) Per‑step defaults and flags
+- Defaults: planner = `gpt-5-high`, irb = `gpt-4.1-mini`, reporter = `gpt-5-high`.
+- Flags override per run: `-planner`, `-irb`, `-reporter`.
+
+6) IRB bypass and fast‑path during testing
+- Small contexts bypass IRB. To exercise reporter/IRB reliably, export: `IRB_BYPASS_TOKENS=0` and `FAST_PATH_ENABLED=0` prior to running.
+
+7) LiteLLM logging controls
+- Suppress heavy logging/cold storage to avoid atexit errors:
+  - Loggers: set `LiteLLM`, `litellm`, `litellm.proxy` to CRITICAL.
+  - Env: `LITELLM_LOGGING=False`, `LITELLM_DISABLE_COLD_STORAGE=1`, `LITELLM_DISABLE_STANDARD_LOGGING=1`.
+
+8) Planner plan stability
+- Plans may reference inputs before they exist. The executor now tolerates missing inputs and lets operators handle empty lists. Prefer operators that treat missing `ko_ids`/`pfam_ids` as empty.
+
+9) Quick validation checklist
+- Add alias + provider routing in `lm_factory.py`.
+- Verify planner uses chat semantics (no responses) and no max tokens.
+- Verify OpenRouter path uses `openai/<vendor>/<model>` and honors `OPENROUTER_API_KEY` + `OPENAI_API_BASE`.
+- Run: `FAST_PATH_ENABLED=0 IRB_BYPASS_TOKENS=0` with `-planner`, `-irb`, `-reporter` pointing to the new model. Confirm no Anthropic key errors and no `/v1/completions` 404s.
