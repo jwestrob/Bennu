@@ -390,19 +390,17 @@ class ModelAllocation:
                 model_string = f"openai/{model_name}"
                 # Special handling for reasoning models
                 if (model_name.startswith('gpt-5') or model_name.startswith('o1')):
-                    # Use per-task caps (IRB editor kept minimal)
-                    cap = _max_tokens_for_task(task_name, 8000)
-                    # Explicit temperature for GPT-5/o1 per LiteLLM contract (must be 1)
-                    lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=cap)
+                    # GPT-5: no temperature, no max_tokens
+                    lm = dspy.LM(model=model_string)
                 else:
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=_max_tokens_for_task(task_name, 8000))
+                    lm = dspy.LM(model=model_string)
             elif model_config.provider == "anthropic":
                 model_string = f"anthropic/{model_name}"
-                lm = dspy.LM(model=model_string, max_tokens=_max_tokens_for_task(task_name, 8000))
+                lm = dspy.LM(model=model_string)
             else:
                 logger.warning(f"Unknown provider {model_config.provider}, using default")
                 model_string = f"openai/{model_name}"
-                lm = dspy.LM(model=model_string, max_tokens=_max_tokens_for_task(task_name, 8000))
+                lm = dspy.LM(model=model_string)
             
             # Create module and execute with context manager
             module = dspy.Predict(signature_class)
@@ -422,19 +420,11 @@ class ModelAllocation:
                 logger.warning(f"🚫 Token limit exceeded for {task_name}, forcing fallback to smaller model")
                 try:
                     # Prefer same-tier minimal fallback for IRB editor (gpt-5 with smaller cap)
+                    # Default: mini fallback, no caps
                     if task_name.startswith('irb_patch_proposal') and (model_name.startswith('gpt-5') or model_name.startswith('o1')):
-                        fallback_lm = dspy.LM(
-                            model=f"openai/{model_name}",
-                            temperature=1.0,
-                            max_tokens=min(400, _max_tokens_for_task(task_name, 8000)),
-                        )
+                        fallback_lm = dspy.LM(model=f"openai/{model_name}")
                     else:
-                        # Default: mini fallback
-                        fallback_lm = dspy.LM(
-                            model="openai/gpt-4.1-mini",
-                            temperature=0.0,
-                            max_tokens=_max_tokens_for_task(task_name, 8000),
-                        )
+                        fallback_lm = dspy.LM(model="openai/gpt-4.1-mini")
                     fallback_module = dspy.Predict(signature_class)
                     with dspy.context(lm=fallback_lm):
                         result = module_call_func(fallback_module)

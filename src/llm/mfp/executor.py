@@ -43,13 +43,24 @@ def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
                 return s[1:].strip()
             return s
 
+        # Flexible input provisioning:
+        # 1) If the plan provides an explicit mapping for a key and it's in env, pass it.
+        # 2) Otherwise, fall back to env[key] when available (implicit same-name binding).
+        # 3) If neither exist, omit the key (operators should handle missing/empty inputs gracefully).
         for key in spec.inputs:
-            ref_name = _normalize_ref(inputs_ref.get(key))
-            if not ref_name:
-                raise PlanValidationError(f"Step {i} ('{name}') missing input binding for '{key}'")
-            if ref_name not in env:
-                raise PlanValidationError(f"Step {i} input '{key}' refers to unknown binding '{ref_name}'")
-            provided[key] = env[ref_name]
+            if isinstance(inputs_ref, dict) and key in inputs_ref:
+                ref_name = _normalize_ref(inputs_ref.get(key))
+                if ref_name and ref_name in env:
+                    provided[key] = env[ref_name]
+                else:
+                    # Leave missing key out; downstream operator can interpret as absent
+                    pass
+            else:
+                if key in env:
+                    provided[key] = env[key]
+                else:
+                    # No binding; omit
+                    pass
         # Execute
         result = spec.run(ctx, provided, params)
         if not isinstance(result, dict):

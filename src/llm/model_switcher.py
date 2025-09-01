@@ -48,10 +48,10 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             
             # Special handling for OpenAI reasoning models (gpt-5, o1)
             if current_model.startswith(('gpt-5', 'o1')):
-                lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
+                lm = dspy.LM(model=model_string, temperature=1.0)
                 logger.info(f"🎯 DSPy reconfigured with reasoning model: {model_string}")
             else:
-                lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
+                lm = dspy.LM(model=model_string, temperature=0.0)
                 logger.info(f"🎯 DSPy reconfigured with standard model: {model_string}")
             
             dspy.settings.configure(lm=lm)
@@ -68,7 +68,7 @@ def reconfigure_dspy(config: LLMConfig) -> None:
                 anthropic_model = current_model
             
             model_string = f"anthropic/{anthropic_model}"
-            lm = dspy.LM(model=model_string, max_tokens=1000)
+            lm = dspy.LM(model=model_string)
             dspy.settings.configure(lm=lm)
             logger.info(f"🎯 DSPy reconfigured with Anthropic model: {model_string}")
             

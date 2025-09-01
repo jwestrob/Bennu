@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Tuple
 import uuid
 import os
 from .doc_ast import Document, new_document, serialize_section, append_claim_paragraph, to_markdown, Claim
+from ...lm_factory import make_lm
 import json
 from .patch_apply import apply_patch
 from .patch_types import PatchEnvelope, JsonPatchOp
@@ -14,7 +15,7 @@ from .evidence_ledger import append_claim as ledger_append
 class IncrementalReportBuilder:
     def __init__(self, note_keeper, model_allocator, tool_cache, config):
         self.nk = note_keeper
-        self.alloc = model_allocator
+        self.alloc = model_allocator  # preserved for compatibility; unused
         self.cache = tool_cache
         self.cfg = config
         self.failed = False
@@ -222,28 +223,15 @@ class IncrementalReportBuilder:
             "- Return JSON only (the PatchEnvelope)."
         )
         try:
-            # Direct minimal call for IRB editor only (use 4.1-mini for speed/stability)
+            # Direct minimal call for IRB editor; allow CLI override via config.irb_model
             import dspy
             from ..dspy_signatures import PatchProposalSignature
-            # Use LiteLLM-backed chat with param dropping; keep reasoning minimal
-            lm = dspy.LM(
-                model="openai/gpt-4.1-mini",
-                model_type="chat",
-                temperature=0.0,
-                # Use LiteLLM param dropping to strip any token caps for GPT-5 responses API
-                drop_params=True,
-                additional_drop_params=[
-                    "max_tokens",
-                    "max_completion_tokens",
-                    "max_output_tokens",
-                ],
-            )
-            # Surgical removal in case DSPy remaps internally
-            try:
-                for k in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
-                    lm.kwargs.pop(k, None)
-            except Exception:
-                pass
+            override = getattr(self.cfg, 'irb_model', None)
+            if override:
+                lm = make_lm(override, step="irb")
+            else:
+                # Default to cost-effective, non-reasoning model
+                lm = make_lm("openai/gpt-4.1-mini", step="irb")
             module = dspy.Predict(PatchProposalSignature)
             with dspy.context(lm=lm):
                 res = module(
@@ -384,23 +372,12 @@ class IncrementalReportBuilder:
                 "- Claims should include counts (batch_summary.total_rows) and representative example IDs; include provenance arrays (ids only).\n"
                 "- JSON only. No commentary."
             )
-            # Direct minimal call for multi-anchor proposal (switchable; default GPT-5 minimal for quality)
-            lm = dspy.LM(
-                model="openai/gpt-5-2025-08-07",
-                model_type="responses",
-                temperature=1.0,
-                drop_params=True,
-                additional_drop_params=[
-                    "max_tokens",
-                    "max_completion_tokens",
-                    "max_output_tokens",
-                ],
-            )
-            try:
-                for k in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
-                    lm.kwargs.pop(k, None)
-            except Exception:
-                pass
+            # Direct minimal call for multi-anchor proposal (switchable via config.irb_model)
+            override = getattr(self.cfg, 'irb_model', None)
+            if override:
+                lm = make_lm(override, step="irb")
+            else:
+                lm = make_lm("openai/gpt-5-2025-08-07", step="irb")
             module = dspy.Predict(MultiPatchProposalSignature)
             with dspy.context(lm=lm):
                 res = module(

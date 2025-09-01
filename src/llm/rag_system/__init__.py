@@ -6,8 +6,17 @@ Clean interface with separated concerns for maintainability.
 import os
 from .core import GenomicRAG
 from .utils import EXAMPLE_GENOMIC_QUESTIONS, ResultStreamer, safe_log_data, setup_debug_logging, GenomicContext
-from .agent_executor import UnifiedAgentExecutor
-from .external_tools import AVAILABLE_TOOLS, literature_search, code_interpreter_tool
+# Heavy modules imported lazily to avoid optional dependency issues
+try:
+    from .agent_executor import UnifiedAgentExecutor  # type: ignore
+except Exception:  # pragma: no cover
+    UnifiedAgentExecutor = None  # type: ignore
+try:
+    from .external_tools import AVAILABLE_TOOLS, literature_search, code_interpreter_tool  # type: ignore
+except Exception:  # pragma: no cover
+    AVAILABLE_TOOLS = []  # type: ignore
+    literature_search = None  # type: ignore
+    code_interpreter_tool = None  # type: ignore
 from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
 from .router import get_router, TwoStageRouter, RouterDecision
 

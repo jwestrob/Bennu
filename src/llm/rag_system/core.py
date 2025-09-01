@@ -25,6 +25,7 @@ except ImportError:
     logging.warning("DSPy not available - install dsp-ml package")
 
 from ..config import LLMConfig
+from ..lm_factory import make_lm
 from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
 from .dspy_signatures import NEO4J_SCHEMA
 from .utils import setup_debug_logging, GenomicContext
@@ -42,7 +43,7 @@ from .external_tools import AVAILABLE_TOOLS
 from .intelligent_routing import IntelligentRouter
 from .genome_selection import UnifiedGenomeSelector
 from ..context_compression import ContextCompressor
-from .memory import NoteKeeper, ProgressiveSynthesizer, get_model_allocator
+from .memory import NoteKeeper
 from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
 from ..mfp.operators import builtin as _mfp_builtin  # noqa: F401  # register builtins
@@ -95,8 +96,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         self.note_keeper = NoteKeeper() if enable_memory else None
         self.progressive_synthesizer = None  # Will be initialized when needed
         
-        # Initialize model allocation system
-        self.model_allocator = get_model_allocator()
+        # Manual per-step model selection; legacy allocator removed
         
         # Initialize policy engine
         self.policy_engine = get_policy_engine()
@@ -132,7 +132,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         logger.info(f"🔥 Model: {config.llm_model} ({config.model_mode} mode)")
     
     def _configure_dspy(self):
-        """Configure DSPy with model allocation system."""
+        """Minimal DSPy env setup. No global LM, no allocation, no max_tokens."""
         if not DSPY_AVAILABLE:
             return
             
@@ -140,98 +140,34 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             # Quiet noisy external loggers around API calls unless explicitly enabled
             try:
                 import logging as _lg, os as _os
-                _lg.getLogger("LiteLLM").setLevel(_lg.WARNING)
+                # Quieten noisy deps
+                _lg.getLogger("LiteLLM").setLevel(_lg.CRITICAL)
+                _lg.getLogger("litellm").setLevel(_lg.CRITICAL)
+                _lg.getLogger("litellm.proxy").setLevel(_lg.CRITICAL)
                 _lg.getLogger("httpx").setLevel(_lg.WARNING)
                 _lg.getLogger("dspy.adapters.json_adapter").setLevel(_lg.ERROR)
-                # Also set LiteLLM env if respected
-                _os.environ.setdefault('LITELLM_LOG', 'WARNING')
+                # Disable LiteLLM standard/cold storage logging to avoid atexit errors
+                _os.environ.setdefault('LITELLM_LOG', 'CRITICAL')
+                _os.environ.setdefault('LITELLM_LOGGING', 'False')
+                _os.environ.setdefault('LITELLM_PROXY_LOGGING', 'False')
+                _os.environ.setdefault('LITELLM_DISABLE_COLD_STORAGE', '1')
+                _os.environ.setdefault('LITELLM_DISABLE_STANDARD_LOGGING', '1')
             except Exception:
                 pass
-            # Configure based on available API keys
+            # Configure API keys only (no LM setup)
             api_key = self.config.get_api_key()
-            
+            import os as _os
             if self.config.llm_provider == "openai" and api_key:
-                import os
-                os.environ['OPENAI_API_KEY'] = api_key
-                # Pull policy max tokens for sensible defaults
-                try:
-                    from .policy_engine import get_policy_engine
-                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
-                except Exception:
-                    policy_max = 30000
-                
-                # Use model allocation system for intelligent model selection
-                if self.model_allocator.use_premium_everywhere:
-                    # Premium mode: use gpt-5 for all tasks
-                    model_name, model_config = self.model_allocator.get_model_for_task("final_synthesis")  # Gets gpt-5
-                    model_string = f"openai/{model_name}"
-                    
-                    if (model_name.startswith('gpt-5') or model_name.startswith('o1')):
-                        lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=policy_max)
-                        logger.info(f"🎯 DSPy configured with premium reasoning model: {model_string} (temp=1.0, max_tokens={policy_max})")
-                    else:
-                        lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=policy_max)
-                        logger.info(f"🎯 DSPy configured with premium model: {model_string} (max_tokens={policy_max})")
-                else:
-                    # Cost-effective mode: use ultra-cheap fallback as global default
-                    # Individual tasks will use model allocation for intelligent selection
-                    fallback_model = "gpt-4.1-nano"
-                    model_string = f"openai/{fallback_model}"
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=policy_max)
-                    logger.info(f"🎯 DSPy configured with ultra-cheap fallback: {model_string} (temp=0.0, max_tokens={policy_max})")
-                    logger.info(f"💡 Model allocation will override this fallback for complex tasks")
-                
-                dspy.settings.configure(lm=lm)
-                
-                # Log model allocation configuration
-                allocation_summary = self.model_allocator.get_allocation_summary()
-                logger.info(f"💰 Model allocation mode: {allocation_summary['mode']}")
-                if allocation_summary['mode'] == 'premium_everywhere':
-                    logger.info(f"🔥 Using {allocation_summary['primary_model']} for all tasks")
-                else:
-                    logger.info(f"💡 Using task-specific model allocation for cost optimization")
-                
-                # Log available models
-                logger.info(f"💡 Cost-effective option: gpt-4.1-mini")
-                logger.info(f"🔥 Premium option: gpt-5")
-                
+                _os.environ['OPENAI_API_KEY'] = api_key
             elif self.config.llm_provider == "anthropic" and api_key:
-                # Anthropic configuration
-                import os
-                os.environ['ANTHROPIC_API_KEY'] = api_key
-                
-                current_model = self.config.get_current_model()
-                # Map to Anthropic models if needed
-                if current_model.startswith(('gpt', 'o1')):
-                    # Use Anthropic equivalent
-                    anthropic_model = "claude-3-haiku-20240307" if self.config.model_mode == "cost_effective" else "claude-3-opus-20240229"
-                else:
-                    anthropic_model = current_model
-                
-                model_string = f"anthropic/{anthropic_model}"
-                lm = dspy.LM(model=model_string, max_tokens=1000)
-                dspy.settings.configure(lm=lm)
-                logger.info(f"🎯 DSPy configured with Anthropic model: {model_string}")
-                
+                _os.environ['ANTHROPIC_API_KEY'] = api_key
             else:
                 logger.warning("No LLM API key configured for DSPy")
                 
         except Exception as e:
             logger.error(f"Failed to configure DSPy: {e}")
-            
-            # Fallback to original configuration
-            try:
-                api_key = self.config.get_api_key()
-                if self.config.llm_provider == "openai" and api_key:
-                    import os
-                    os.environ['OPENAI_API_KEY'] = api_key
-                    model_name = getattr(self.config, 'llm_model', 'gpt-4o-mini')
-                    model_string = f"openai/{model_name}"
-                    lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
-                    dspy.settings.configure(lm=lm)
-                    logger.info(f"🔄 DSPy configured with fallback model: {model_string}")
-            except Exception as fallback_error:
-                logger.error(f"Fallback DSPy configuration also failed: {fallback_error}")
+            # No global fallback LM
+            pass
     
     def _run(self, task_name: str, signature_cls, **kwargs):
         """
@@ -241,13 +177,15 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         def _call(module):
             return module(**kwargs)
         
-        return self.model_allocator.create_context_managed_call(
-            task_name=task_name,
-            signature_class=signature_cls,
-            module_call_func=_call,
-            query=kwargs.get("question", "") or kwargs.get("user_query", ""),
-            task_context=kwargs.get("task_context", "")
-        )
+        try:
+            import dspy
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(signature_cls)
+            with dspy.context(lm=lm):
+                return _call(module)
+        except Exception as e:
+            logger.error(f"_run failed: {e}")
+            return None
     
     def health_check(self) -> Dict[str, bool]:
         """Check health of all system components."""
@@ -394,21 +332,26 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             pf_ref = _ld_pfam(pf_max_lines)
                         except Exception:
                             ko_ref = pf_ref = ""
-                    def planner_call(module):
-                        return module(
+                    def planner_call_inputs():
+                        return dict(
                             question=question,
                             operator_catalog=json.dumps(operator_catalog()),
                             constraints="",
                             ko_reference=ko_ref,
-                            pfam_reference=pf_ref
+                            pfam_reference=pf_ref,
                         )
-                    plan_res = self.model_allocator.create_context_managed_call(
-                        task_name="agentic_planning",
-                        signature_class=MacroPlannerSignature,
-                        module_call_func=planner_call,
-                        query=question,
-                        task_context="macro operator planning"
-                    )
+
+                    # Planner model (manual allocation): default to gpt-5-high
+                    plan_res = None
+                    try:
+                        import dspy
+                        model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
+                        lm = make_lm(model_id, step="planner")
+                        module = dspy.Predict(MacroPlannerSignature)
+                        with dspy.context(lm=lm):
+                            plan_res = module(**planner_call_inputs())
+                    except Exception as _e:
+                        logger.warning(f"Planner call failed: {_e}")
                     plan_text = getattr(plan_res, 'plan_json', '') if plan_res else ''
                     plan = None
                     if isinstance(plan_text, str) and plan_text.strip().startswith('{'):
@@ -529,13 +472,22 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                     ko_reference=ko_ref,
                                     pfam_reference=pf_ref
                                 )
-                            plan_res2 = self.model_allocator.create_context_managed_call(
-                                task_name="agentic_planning",
-                                signature_class=MacroPlannerSignature,
-                                module_call_func=planner_call_retry,
-                                query=question,
-                                task_context="macro operator planning (retry)"
-                            )
+                            try:
+                                import dspy
+                                model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
+                                lm = make_lm(model_id, step="planner")
+                                module = dspy.Predict(MacroPlannerSignature)
+                                with dspy.context(lm=lm):
+                                    plan_res2 = module(
+                                        question=question,
+                                        operator_catalog=json.dumps(operator_catalog()),
+                                        constraints="allow_keyword_discovery=1",
+                                        ko_reference=ko_ref,
+                                        pfam_reference=pf_ref,
+                                    )
+                            except Exception as _e3:
+                                logger.warning(f"Planner retry failed: {_e3}")
+                                plan_res2 = None
                             plan2_text = getattr(plan_res2, 'plan_json', '') if plan_res2 else ''
                             if isinstance(plan2_text, str) and plan2_text.strip().startswith('{'):
                                 try:
@@ -549,10 +501,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         # not decided here. The synthesizer is invoked only at the end.
 
                         # Always synthesize at the end (with whatever we gathered)
-                        # Avoid initializing ProgressiveSynthesizer when IRB is enabled
-                        if not getattr(self.config, 'IRB_ENABLED', True):
-                            if not self.progressive_synthesizer:
-                                self.progressive_synthesizer = ProgressiveSynthesizer(self.note_keeper)
+                        # ProgressiveSynthesizer is deprecated here; final synthesis handled later
                         # Debug: summarize raw items sizes to pinpoint context inflation sources
                         try:
                             summary = []
@@ -601,13 +550,35 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         # Compute raw context size once
                         import json as _json
                         raw_context_json = _json.dumps(all_raw_items, default=str, separators=(',',':'))
+                        # Bypass threshold defaults to 30k tokens; ensure it also fits target reporter context
                         bypass_cap = 0
                         try:
                             import os as _os
-                            bypass_cap = int(_os.getenv('IRB_BYPASS_TOKENS', '6000'))
+                            bypass_cap = int(_os.getenv('IRB_BYPASS_TOKENS', '30000'))
                         except Exception:
-                            bypass_cap = 6000
-                        should_bypass_irb = (not getattr(self.config, 'IRB_ENABLED', True)) or (_estimate_tokens(raw_context_json) <= bypass_cap)
+                            bypass_cap = 30000
+
+                        # Rough reporter context capacity
+                        def _reporter_cap() -> int:
+                            try:
+                                rep = getattr(self.config, 'reporter_model', None)
+                                if not rep:
+                                    # Use allocator's premium model default (gpt-5 ~30k)
+                                    return 30000
+                                low = rep.lower()
+                                if 'gpt-5' in low or '/o1' in low:
+                                    return 30000
+                                if 'gpt-4.1' in low:
+                                    return 1_000_000
+                                if 'claude-sonnet-4' in low:
+                                    return 200_000
+                                return 100_000
+                            except Exception:
+                                return 30000
+
+                        raw_tokens = _estimate_tokens(raw_context_json)
+                        fits_window = raw_tokens <= max(1, _reporter_cap() - 1000)
+                        should_bypass_irb = (not getattr(self.config, 'IRB_ENABLED', True)) or (raw_tokens <= bypass_cap and fits_window)
 
                         report_context = None
                         task_graph_text = _render_task_graph(plan)
@@ -631,7 +602,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                     trc = ToolResultCache(str(self.note_keeper.session_path))
                             except Exception:
                                 trc = None
-                            irb = IncrementalReportBuilder(self.note_keeper, self.model_allocator, trc, self.config)
+                            irb = IncrementalReportBuilder(self.note_keeper, None, trc, self.config)
                             doc = irb.run(all_raw_items, obligations=[])
                             if getattr(irb, 'failed', False):
                                 raise RuntimeError(f"IRB bug-out: {getattr(irb, 'fail_reason', 'unknown')}")
@@ -642,20 +613,17 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         final_answer = None
                         try:
                             from .dspy_signatures import GenomicSynthesizer
-                            def _final_call(module):
-                                return module(
+                            import dspy
+                            model_id = getattr(self.config, 'reporter_model', None) or 'gpt-5-high'
+                            lm = make_lm(model_id, step="reporter")
+                            module = dspy.Predict(GenomicSynthesizer)
+                            with dspy.context(lm=lm):
+                                synth_res = module(
                                     question=question,
                                     context=report_context,
                                     task_graph=task_graph_text,
                                     synthesis_mode="comprehensive_report",
                                 )
-                            synth_res = self.model_allocator.create_context_managed_call(
-                                task_name="final_synthesis",
-                                signature_class=GenomicSynthesizer,
-                                module_call_func=_final_call,
-                                query=question,
-                                task_context="Final report synthesis",
-                            )
                             if synth_res and hasattr(synth_res, 'summary'):
                                 final_answer = synth_res.summary
                         except Exception as e:
@@ -754,13 +722,16 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             def planning_call(module):
                 return module(user_query=question)
             
-            planning_result = self.model_allocator.create_context_managed_call(
-                task_name="agentic_planning",  # Maps to COMPLEX = gpt-5
-                signature_class=PlannerAgent,
-                module_call_func=planning_call,
-                query=question,
-                task_context="Agentic planning for user query"
-            )
+            planning_result = None
+            try:
+                import dspy
+                model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
+                lm = make_lm(model_id, step="planner")
+                module = dspy.Predict(PlannerAgent)
+                with dspy.context(lm=lm):
+                    planning_result = module(user_query=question)
+            except Exception as _e:
+                logger.warning(f"Planner call failed: {_e}")
             
             if planning_result is None:
                 logger.warning("Model allocation failed for planning, falling back to default")
@@ -1044,29 +1015,27 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             return module(question=question)
         
         from .dspy_signatures import QueryClassifier
-        classification = self.model_allocator.create_context_managed_call(
-            task_name="query_classification",  # Now maps to COMPLEX = gpt-5
-            signature_class=QueryClassifier,
-            module_call_func=classification_call
-        )
+        try:
+            import dspy
+            lm = make_lm(getattr(self.config, 'planner_model', None) or 'gpt-5-high', step="planner")
+            module = dspy.Predict(QueryClassifier)
+            with dspy.context(lm=lm):
+                classification = classification_call(module)
+        except Exception:
+            # Fallback to a small model
+            import dspy
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(QueryClassifier)
+            with dspy.context(lm=lm):
+                classification = classification_call(module)
         
         # Step 1.5: Determine analysis type for biological context
         analysis_type = self._determine_analysis_type(question)
         
         # Step 1.6: Stage A handled spatial routing already; proceed with standard flow
         
+        # classification should be set by now; if still missing, try minimal default
         if classification is None:
-            logger.warning("Model allocation failed for classification, falling back to default")
-            # Ensure there's a default LM configured for fallback
-            if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
-                logger.warning("No default LM configured, setting up fallback")
-                try:
-                    from .policy_engine import get_policy_engine
-                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
-                except Exception:
-                    policy_max = 30000
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
-                dspy.settings.configure(lm=fallback_lm)
             classification = self._run("query_classification", QueryClassifier, question=question)
         
         console.print(f"📊 Query type: {classification.query_type}")
@@ -1120,24 +1089,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             )
         
         from .dspy_signatures import ContextRetriever
-        retrieval_plan = self.model_allocator.create_context_managed_call(
-            task_name="context_preparation",  # Now maps to COMPLEX = gpt-5
-            signature_class=ContextRetriever,
-            module_call_func=retrieval_call
-        )
+        try:
+            import dspy
+            # Use planner model for retrieval planning (or default GPT-5)
+            lm = make_lm(getattr(self.config, 'planner_model', None) or 'gpt-5-high', step="planner")
+            module = dspy.Predict(ContextRetriever)
+            with dspy.context(lm=lm):
+                retrieval_plan = retrieval_call(module)
+        except Exception:
+            retrieval_plan = None
         
         if retrieval_plan is None:
-            logger.warning("Model allocation failed for retrieval, falling back to default")
-            # Ensure there's a default LM configured for fallback
-            if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
-                logger.warning("No default LM configured, setting up fallback")
-                try:
-                    from .policy_engine import get_policy_engine
-                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
-                except Exception:
-                    policy_max = 30000
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
-                dspy.settings.configure(lm=fallback_lm)
+            logger.warning("Retrieval planning fell back to minimal default")
             retrieval_plan = self._run("context_preparation", ContextRetriever,
                 db_schema=NEO4J_SCHEMA,
                 question=question,
@@ -1254,25 +1217,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             )
         
         from .dspy_signatures import GenomicAnswerer
-        answer_result = self.model_allocator.create_context_managed_call(
-            task_name="biological_interpretation",  # Maps to COMPLEX = gpt-5
-            signature_class=GenomicAnswerer,
-            module_call_func=answer_call
-        )
+        try:
+            import dspy
+            # Default to cost-effective model for intermediate answers
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(GenomicAnswerer)
+            with dspy.context(lm=lm):
+                answer_result = answer_call(module)
+        except Exception:
+            answer_result = None
         
         if answer_result is None:
             logger.warning("Model allocation failed for answer generation, falling back to default")
-            # Ensure there's a default LM configured for fallback
-            if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
-                logger.warning("No default LM configured, setting up fallback")
-                try:
-                    from .policy_engine import get_policy_engine
-                    policy_max = int(get_policy_engine().policies.max_tokens_per_query)
-                except Exception:
-                    policy_max = 30000
-                fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
-                dspy.settings.configure(lm=fallback_lm)
-            
             answer_result = self._run("biological_interpretation", GenomicAnswerer,
                 question=question,
                 context=formatted_context
@@ -1605,16 +1561,12 @@ print("Data available: {data_summary}")
                     pass
                 return "\n".join(lines)
             # Optional: single heavy synthesis over structured cards
-            if not self.progressive_synthesizer:
-                from .memory import ProgressiveSynthesizer, NoteKeeper
-                nk = self.note_keeper or NoteKeeper()
-                self.progressive_synthesizer = ProgressiveSynthesizer(nk)
-            # Heavy call: summarize loci context
+            # Deprecated heavy synthesis path removed; produce a simple structured summary
             payload = {
                 "cards": [c.__dict__ if hasattr(c, '__dict__') else c for c in (cards or [])],
                 "meta": meta or {},
             }
-            # Promote kNN neighbors to top-level keys the synthesizer can spot
+            # Promote kNN neighbors to top-level keys for summary
             try:
                 if isinstance(meta, dict):
                     if 'neighbors_full' in meta:
@@ -1625,12 +1577,9 @@ print("Data available: {data_summary}")
                         payload['knn_stats'] = meta.get('knn_stats')
             except Exception:
                 pass
-            result_text = self.progressive_synthesizer.synthesize_progressive(
-                task_notes=[],
-                question="Summarize loci from structured context",
-                synthesis_mode="report",
-                raw_data=[payload],
-            )
+            # Minimal textual summary
+            import json as _json
+            result_text = "LocusDiscovery summary (light):\n" + _json.dumps(payload, default=str, indent=2)[:8000]
             # Deterministic postscript: always report LanceDB stage outcome if present
             try:
                 ps_lines = []
@@ -2019,36 +1968,21 @@ print("Data available: {data_summary}")
         return None
     
     async def _synthesize_answer(self, question: str, formatted_context: str, query_type: str, analysis_type: str) -> Dict[str, Any]:
-        """Synthesize answer from formatted context using appropriate model allocation."""
+        """Synthesize answer from formatted context using manual model selection (no allocator)."""
         try:
-            # Use model allocation for biological interpretation
-            def answerer_call(module):
-                return module(
+            from .dspy_signatures import GenomicAnswerer
+            import dspy
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(GenomicAnswerer)
+            with dspy.context(lm=lm):
+                answer_result = module(
                     question=question,
                     context=formatted_context,
-                    analysis_type=analysis_type
+                    analysis_type=analysis_type,
                 )
             
-            from .dspy_signatures import GenomicAnswerer
-            answer_result = self.model_allocator.create_context_managed_call(
-                task_name="biological_interpretation",  # Maps to COMPLEX = gpt-5
-                signature_class=GenomicAnswerer,
-                module_call_func=answerer_call
-            )
-            
-            # Fallback if model allocation fails
+            # Fallback through _run if needed
             if answer_result is None:
-                logger.warning("Model allocation failed for answer generation, falling back to default")
-                if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
-                    logger.warning("No default LM configured, setting up fallback")
-                    try:
-                        from .policy_engine import get_policy_engine
-                        policy_max = int(get_policy_engine().policies.max_tokens_per_query)
-                    except Exception:
-                        policy_max = 30000
-                    fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=policy_max)
-                    dspy.settings.configure(lm=fallback_lm)
-                
                 answer_result = self._run("biological_interpretation", GenomicAnswerer,
                     question=question,
                     context=formatted_context,

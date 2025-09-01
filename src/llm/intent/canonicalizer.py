@@ -76,38 +76,19 @@ def canonicalize(natural_query: str, note_keeper, model_allocator=None) -> Tuple
     def call(module):
         return module(instruction=SYSTEM_PROMPT, natural_request=natural_query)
 
-    # Hard-wire GPT-5 with medium reasoning effort for canonicalization.
-    # Falls back to allocator (mini) if unsupported in this environment.
+    # Use GPT-5 with minimal arguments; no max_tokens. Fallback to 4.1-mini on error.
     result = None
     try:
-        lm = None
-        try:
-            # Preferred: GPT-5 (2025-08-07) with reasoning_effort=medium
-            lm = dspy.LM(
-                model="openai/gpt-5-2025-08-07",
-                temperature=0.0,
-                max_completion_tokens=8000,  # GPT-5 rejects max_tokens
-                reasoning_effort="medium",   # hint for reasoning models
-            )
-        except TypeError:
-            # dspy.LM may not accept GPT-5-specific kwargs; try minimal args
-            lm = dspy.LM(model="openai/gpt-5-2025-08-07", temperature=1.0)
+        lm = dspy.LM(model="openai/gpt-5-2025-08-07")
         module = dspy.Predict(CanonicalizerSignature)
         with dspy.context(lm=lm):
             result = call(module)
     except Exception as e:
-        # Fallback to allocator path (cost-optimized) if available
-        if model_allocator is None:
-            raise RuntimeError(f"Canonicalizer GPT-5 path failed and no allocator provided: {e}")
-        result = model_allocator.create_context_managed_call(
-            task_name="query_classification",
-            signature_class=CanonicalizerSignature,
-            module_call_func=call,
-            query=natural_query,
-            task_context="canonicalize to strict JSON (fallback)",
-        )
-        if result is None:
-            raise RuntimeError("Canonicalizer LLM call failed (fallback)")
+        # Fallback to a small OpenAI model
+        lm = dspy.LM(model="openai/gpt-4.1-mini")
+        module = dspy.Predict(CanonicalizerSignature)
+        with dspy.context(lm=lm):
+            result = call(module)
 
     raw = getattr(result, "canonical_json", None) or ""
     if not isinstance(raw, str) or not raw.strip():

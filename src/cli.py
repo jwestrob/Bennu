@@ -22,8 +22,7 @@ Lazy imports note:
   LLM/runtime deps but not RDF tooling.
 """
 
-# Import LLM components
-from .llm.cli import ask_question
+# Import LLM config (lightweight); import ask_question lazily inside ask()
 from .llm.config import LLMConfig
 
 app = typer.Typer(
@@ -295,6 +294,21 @@ def ask(
         "--output", "-o",
         help="Output file for answer (JSON format)"
     ),
+    planner: Optional[str] = typer.Option(
+        None,
+        "--planner", "-planner",
+        help="Override model for Planner step (e.g., gpt-5-high, gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-sonnet-4 [native], openrouter/claude-sonnet-4 [OpenRouter])"
+    ),
+    irb: Optional[str] = typer.Option(
+        None,
+        "--irb", "-irb",
+        help="Override model for IRB editor step (e.g., gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-sonnet-4, openrouter/claude-sonnet-4)"
+    ),
+    reporter: Optional[str] = typer.Option(
+        None,
+        "--reporter", "-reporter",
+        help="Override model for final report synthesis (e.g., gpt-5-high, anthropic/claude-sonnet-4 [native], openrouter/claude-sonnet-4 [OpenRouter])"
+    ),
     config_file: Optional[Path] = typer.Option(
         None,
         "--config", "-c",
@@ -319,6 +333,8 @@ def ask(
     """
     import asyncio
     import json
+    # Lazily import heavy LLM CLI only when executing this command
+    from .llm.cli import ask_question
     
     console.print("[bold blue]🧬 Genomic Question Answering[/bold blue]")
     console.print(f"[dim]Question: {question}[/dim]")
@@ -333,6 +349,14 @@ def ask(
         # Override Neo4j password if provided
         if neo4j_password:
             config.database.neo4j_password = neo4j_password
+
+        # Apply per-step model overrides from CLI flags
+        if planner:
+            setattr(config, 'planner_model', planner)
+        if irb:
+            setattr(config, 'irb_model', irb)
+        if reporter:
+            setattr(config, 'reporter_model', reporter)
         
         # Validate configuration
         status = config.validate_configuration()

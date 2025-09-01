@@ -15,9 +15,19 @@ from .note_schemas import (
     SessionMetadata,
     ConfidenceLevel
 )
-from .progressive_synthesizer import ProgressiveSynthesizer
-from .multipart_synthesizer import MultiPartReportSynthesizer
-from .task_based_synthesizer import TaskBasedSynthesizer
+# Heavy synthesizers may import optional model allocation; import lazily/defensively
+try:
+    from .progressive_synthesizer import ProgressiveSynthesizer  # type: ignore
+except Exception:  # pragma: no cover
+    ProgressiveSynthesizer = None  # type: ignore
+try:
+    from .multipart_synthesizer import MultiPartReportSynthesizer  # type: ignore
+except Exception:  # pragma: no cover
+    MultiPartReportSynthesizer = None  # type: ignore
+try:
+    from .task_based_synthesizer import TaskBasedSynthesizer  # type: ignore
+except Exception:  # pragma: no cover
+    TaskBasedSynthesizer = None  # type: ignore
 from .parallel_config import (
     set_parallel_profile,
     set_custom_parallel_config,
@@ -58,6 +68,7 @@ __all__ = [
     "CrossTaskConnection",
     "SessionMetadata",
     "ConfidenceLevel",
+    # Heavy synthesizers (may be None if optional deps missing)
     "ProgressiveSynthesizer",
     "MultiPartReportSynthesizer",
     "TaskBasedSynthesizer",

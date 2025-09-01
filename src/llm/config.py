@@ -72,6 +72,11 @@ class LLMConfig(BaseModel):
     # Follow-up behavior
     EMIT_FOLLOWUP_REQUESTS: bool = Field(default=True, description="Emit a follow-up proposal when evidence is thin")
     FOLLOWUP_MIN_ROWS: int = Field(default=5, description="Minimum rows threshold to avoid follow-up proposal")
+
+    # Per-step model overrides (optional CLI/env)
+    planner_model: Optional[str] = Field(default=None, description="Override model for planner step")
+    irb_model: Optional[str] = Field(default=None, description="Override model for IRB editor step")
+    reporter_model: Optional[str] = Field(default=None, description="Override model for final report synthesis")
     
     @classmethod
     def from_env(cls) -> 'LLMConfig':
@@ -150,6 +155,13 @@ class LLMConfig(BaseModel):
                 config_data['FOLLOWUP_MIN_ROWS'] = int(os.getenv('FOLLOWUP_MIN_ROWS'))
             except Exception:
                 pass
+        # Per-step model overrides via env (optional)
+        if os.getenv('PLANNER_MODEL'):
+            config_data['planner_model'] = os.getenv('PLANNER_MODEL')
+        if os.getenv('IRB_MODEL'):
+            config_data['irb_model'] = os.getenv('IRB_MODEL')
+        if os.getenv('REPORTER_MODEL'):
+            config_data['reporter_model'] = os.getenv('REPORTER_MODEL')
         # Native/CI totals toggles
         if os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') is not None:
             config_data['USE_NATIVE_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
