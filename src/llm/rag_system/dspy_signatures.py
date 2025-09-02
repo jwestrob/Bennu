@@ -25,15 +25,15 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 
 **Node Labels and ONLY Available Properties:**
 
-*   **`Genome`** - ONLY 2 properties available:
-    *   `id`: (String) Unique identifier (e.g., `PLM0_60_b1_sep16_Maxbin2_047_curated.contigs`)
+    *   **`Genome`** - ONLY 2 properties available:
+        *   `id`: (String) Unique identifier (e.g., `EXAMPLE_GENOME_ID.contigs`)
     *   `genomeId`: (String) Internal genome identifier
     *   **QUALITY METRICS**: Available via QualityMetrics node through HASQUALITYMETRICS relationship
 
 *   **`Protein`**
     *   Represents a protein sequence translated from a gene.
     *   **Properties:**
-        *   `id`: (String) Unique identifier for the protein (e.g., `protein:PLM0_60_b1_sep16_scaffold_10001_curated_1`).
+        *   `id`: (String) Unique identifier for the protein (e.g., `protein:EXAMPLE_CONTIG_00001_1`).
         *   `length`: (String) The length of the amino acid sequence.
         *   `proteinId`: (String) The protein identifier without prefix.
     *   **Note**: Gene coordinates (start, end, strand) are on Gene nodes, accessible via ENCODEDBY relationship.
@@ -41,7 +41,7 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 *   **`Gene`**
     *   Represents a protein-coding gene predicted from a genome.
     *   **Properties:**
-        *   `id`: (String) Unique identifier for the gene (e.g., `gene:PLM0_60_b1_sep16_scaffold_10001_curated_1`).
+        *   `id`: (String) Unique identifier for the gene (e.g., `gene:EXAMPLE_CONTIG_00001_1`).
         *   `geneId`: (String) The gene identifier without prefix.
         *   `startCoordinate`: (String) Start position of the gene on the contig.
         *   `endCoordinate`: (String) End position of the gene on the contig.
@@ -93,7 +93,7 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
     *   Represents a CAZyme (Carbohydrate-Active enZyme) annotation on a protein.
     *   IMPORTANT: To be used when users search for 'CAZymes' or similar, rather than searching by PFAM. Find entries where 'Cazymeannotation' has been populated.
     *   **Properties:**
-        *   `id`: (String) Unique annotation identifier (e.g., `cazyme:PLM0_60_b1_sep16_scaffold_12180_curated_2_GH176_401`).
+        *   `id`: (String) Unique annotation identifier (e.g., `cazyme:EXAMPLE_CONTIG_01234_2_GH176_401`).
         *   `cazymeType`: (String) CAZyme family type (e.g., `GH`, `GT`, `PL`, `CE`, `AA`, `CBM`).
         *   `familyId`: (String) Specific CAZyme family ID (e.g., `GH3`, `GT2`, `CBM50`).
         *   `substrateSpecificity`: (String) Substrate prediction (e.g., `peptidoglycan (peptidoglycan)`, `xyloglucan`).
@@ -434,7 +434,7 @@ class GenomicAnswerer(dspy.Signature):
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data and annotations")
     analysis_type = dspy.InputField(desc="Analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery")
-    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT abbreviated forms like 'scaffold_1705').")
+    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID' NOT abbreviated forms like 'scaffold_XXXX').")
     confidence = dspy.OutputField(desc="Confidence level: high, medium, or low")
     citations = dspy.OutputField(desc="Data sources and references used")
 
@@ -516,7 +516,7 @@ class GenomicSynthesizer(dspy.Signature):
     context = dspy.InputField(desc="Integrated context from multiple analysis tasks")
     task_graph = dspy.InputField(desc="JSON or pretty-printed task graph with ordered steps (if provided, include a 'TASK GRAPH' section at the top of the summary)")
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
-    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID' NOT 'scaffold_XXXX'). This is essential for independent verification.")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
 
 
@@ -557,7 +557,7 @@ class GenomicDataExtractor(dspy.Signature):
     genomic_data = dspy.InputField(desc="Genomic dataset chunk to extract key information from")
     focus_areas = dspy.InputField(desc="Specific biological aspects to emphasize")
     
-    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705') for all reported loci to enable verification.")
+    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'EXAMPLE_CONTIG_ID') for all reported loci to enable verification.")
     biological_context = dspy.OutputField(desc="Essential biological context and methodology used")
     quantitative_metrics = dspy.OutputField(desc="Counts, sizes, and numerical measurements")
 
@@ -707,7 +707,7 @@ class ReportSynthesisGenerator(dspy.Signature):
     cross_cutting_themes = dspy.InputField(desc="Themes that emerge across multiple parts")
     quantitative_integration = dspy.InputField(desc="Integrated quantitative analysis")
 
-    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705'). NO abbreviations like 'scaffold_1705' are permitted.")
+    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'EXAMPLE_CONTIG_ID'). NO abbreviations like 'scaffold_XXXX' are permitted.")
     biological_implications = dspy.OutputField(desc="Broader biological and evolutionary implications")
     recommendations = dspy.OutputField(desc="Recommendations for future research or applications")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in conclusions")

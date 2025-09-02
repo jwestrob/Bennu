@@ -266,7 +266,7 @@ class GenomicContext:
     
 # Example structured_data entry
 {
-    "protein_id": "RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_10964_1",
+    "protein_id": "EXAMPLE_CONTIG_ID_10964_1",
     "protein_length": 245,
     "gene_id": "gene_001",
     "start_coordinate": 1000,
@@ -493,7 +493,7 @@ Task 1: Initial Analysis → Task 2: Refinement → Task 3: Validation
 
 #### 1. Enhanced Task Descriptions
 Original: "Collect functional annotations"
-Enhanced: "For genome Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs: Collect functional annotations"
+Enhanced: "For genome EXAMPLE_GENOME_ID_contigs: Collect functional annotations"
 
 #### 2. Metadata Propagation
 ```python

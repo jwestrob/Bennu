@@ -10,7 +10,7 @@ Based on analysis of reference data in `knowledge_graphs/dummy_4genomes/stage05_
 - `id:ID` - Format: `{genome_name}`
 - `genomeId` - Same as ID
 
-**Example**: `Candidatus_Muproteobacteria_bacterium_RIFCSPHIGHO2_01_FULL_61_200_contigs`
+**Example**: `EXAMPLE_GENOME_ID_contigs`
 
 ### 2. Genes  
 **CSV**: `genes.csv`
@@ -34,7 +34,7 @@ Based on analysis of reference data in `knowledge_graphs/dummy_4genomes/stage05_
 - `length` - Integer
 - `proteinId` - Protein identifier (same as gene_id)
 
-**Example**: `protein:RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_2623_32`
+**Example**: `protein:EXAMPLE_CONTIG_ID_2623_32`
 
 ### 4. Functional Annotations
 **CSV**: `functionalannotations.csv`
@@ -44,7 +44,7 @@ Based on analysis of reference data in `knowledge_graphs/dummy_4genomes/stage05_
 - `confidence` - String (high/medium/low)
 - `evalue` - Scientific notation float
 
-**Example**: `protein:RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705_107/function/K03466`
+**Example**: `protein:EXAMPLE_CONTIG_ID_1705_107/function/K03466`
 
 ### 5. Domain Annotations
 **CSV**: `domainannotations.csv`

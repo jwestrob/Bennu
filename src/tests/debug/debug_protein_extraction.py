@@ -33,7 +33,7 @@ def debug_protein_extraction():
             'pfam_accessions': ['PF00231.24']
         },
         {
-            'protein_id': 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_2623_17',
+            'protein_id': 'EXAMPLE_CONTIG_ID_2623_17',
             'ko_id': 'K02115', 
             'ko_description': 'F-type H+-transporting ATPase subunit gamma',
             'start_coordinate': '11392',
@@ -90,7 +90,7 @@ def debug_protein_extraction():
     else:
         print("❌ First protein ID NOT found in enhanced code")
         
-    if 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_2623_17' in enhanced_code:
+    if 'EXAMPLE_CONTIG_ID_2623_17' in enhanced_code:
         print("✅ Second protein ID found in enhanced code")
     else:
         print("❌ Second protein ID NOT found in enhanced code")

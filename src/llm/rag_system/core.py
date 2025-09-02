@@ -608,6 +608,31 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 raise RuntimeError(f"IRB bug-out: {getattr(irb, 'fail_reason', 'unknown')}")
                             irb_markdown = _to_md(doc)
                             report_context = (task_graph_text + "\n\n" + irb_markdown)
+                            # Persist IRB outputs for inspection under session notes
+                            try:
+                                if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                    sdir = self.note_keeper.synthesis_notes_path
+                                    os.makedirs(sdir, exist_ok=True)
+                                    # Save the raw IRB markdown
+                                    with open(os.path.join(sdir, 'irb_report.md'), 'w', encoding='utf-8') as f_md:
+                                        f_md.write(irb_markdown)
+                                    # Save the exact report context handed to the reporter
+                                    with open(os.path.join(sdir, 'report_context.md'), 'w', encoding='utf-8') as f_ctx:
+                                        f_ctx.write(report_context)
+                                    # Save the IRB document AST as JSON for deeper inspection
+                                    try:
+                                        import json as _json
+                                        payload = None
+                                        try:
+                                            payload = doc.model_dump()
+                                        except Exception:
+                                            payload = getattr(doc, 'dict', lambda: {})()
+                                        with open(os.path.join(sdir, 'irb_report.json'), 'w', encoding='utf-8') as f_js:
+                                            _json.dump(payload, f_js, indent=2, default=str)
+                                    except Exception as _serr:
+                                        logger.info(f"IRB AST serialization skipped: {_serr}")
+                            except Exception as _save_err:
+                                logger.info(f"IRB report save skipped: {_save_err}")
 
                         # Final report generation (GPT-5 via DSPy) using GenomicSynthesizer
                         final_answer = None

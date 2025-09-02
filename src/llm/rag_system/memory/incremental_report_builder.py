@@ -66,16 +66,33 @@ class IncrementalReportBuilder:
             # Try multi-anchor editor call first
             envs = self._call_editor_multi(pack, obligations)
             if isinstance(envs, list) and envs:
+                applied = 0
                 for env_dict in envs:
                     try:
                         env = PatchEnvelope(**env_dict)
                         res = validate_patch(env, self.doc, neo4j=getattr(self.cfg, 'database', None), sql=None, lancedb=None, allow_nli=getattr(self.cfg, 'IRB_ALLOW_NLI', False))
                         if res.ok:
                             self.doc = self._apply_anchor_envelope(self.doc, env)
+                            applied += 1
                     except Exception:
                         # Ignore malformed envelopes from multi-call
                         pass
+                # Count one editor call for the multi-anchor attempt
                 self.editor_calls += 1
+                # If nothing applied from multi-call, fall back to single-anchor editor per item in this pack
+                if applied == 0:
+                    for it in pack:
+                        env = self._call_editor(it['anchor'], it['snippet'], it['summary'], obligations)
+                        res = validate_patch(env, self.doc, neo4j=getattr(self.cfg, 'database', None), sql=None, lancedb=None, allow_nli=getattr(self.cfg, 'IRB_ALLOW_NLI', False))
+                        if res.ok:
+                            try:
+                                self.doc = self._apply_anchor_envelope(self.doc, env)
+                            except AssertionError as e:
+                                return self._bug_out(f"Patch application failed: {e}")
+                            self._record(env, it['rows'])
+                        else:
+                            self._fallback_append(it['anchor'], it['summary'])
+                # Done with this pack either way
                 continue
             # Fallback: single-anchor calls for each item in pack
             for it in pack:
@@ -229,10 +246,14 @@ class IncrementalReportBuilder:
             override = getattr(self.cfg, 'irb_model', None)
             if override:
                 lm = make_lm(override, step="irb")
+                self._log_info(f"IRB_EDITOR(single): using override model='{override}'")
             else:
                 # Default to cost-effective, non-reasoning model
                 lm = make_lm("openai/gpt-4.1-mini", step="irb")
+                self._log_info("IRB_EDITOR(single): using default model='openai/gpt-4.1-mini'")
             module = dspy.Predict(PatchProposalSignature)
+            import time as _t
+            _t0 = _t.time()
             with dspy.context(lm=lm):
                 res = module(
                     anchor_snippet=anchor_snippet,
@@ -241,6 +262,7 @@ class IncrementalReportBuilder:
                     schema_reminder=json.dumps(schema),
                     editor_instructions=editor_instructions
                 )
+            self._log_info(f"IRB_EDITOR(single): call_ms={( _t.time()-_t0 )*1000:.0f}")
             env_raw = getattr(res, 'patch_envelope', None) if res else None
             if isinstance(env_raw, (str, bytes)):
                 env_dict = json.loads(env_raw)
@@ -376,9 +398,13 @@ class IncrementalReportBuilder:
             override = getattr(self.cfg, 'irb_model', None)
             if override:
                 lm = make_lm(override, step="irb")
+                self._log_info(f"IRB_EDITOR(multi): using override model='{override}' for {len(pack)} anchors")
             else:
                 lm = make_lm("openai/gpt-5-2025-08-07", step="irb")
+                self._log_info(f"IRB_EDITOR(multi): using default model='openai/gpt-5-2025-08-07' for {len(pack)} anchors")
             module = dspy.Predict(MultiPatchProposalSignature)
+            import time as _t
+            _t0 = _t.time()
             with dspy.context(lm=lm):
                 res = module(
                     anchors_json=json.dumps(anchors_payload),
@@ -393,6 +419,7 @@ class IncrementalReportBuilder:
                         "- JSON only. Return an array of PatchEnvelopes."
                     )
                 )
+            self._log_info(f"IRB_EDITOR(multi): call_ms={( _t.time()-_t0 )*1000:.0f}")
             envs_raw = getattr(res, 'patch_envelopes', None)
             if isinstance(envs_raw, (str, bytes)):
                 return json.loads(envs_raw)

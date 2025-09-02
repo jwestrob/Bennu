@@ -382,17 +382,25 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         return cypher
     
     def _normalize_genome_ids(self, cypher: str) -> str:
-        """Normalize genome IDs to match the actual database format."""
-        # Fix PLM0 genome ID format: .contigs -> _contigs
-        if "PLM0_60_b1_sep16_Maxbin2_047_curated.contigs" in cypher:
-            logger.info("Normalizing PLM0 genome ID: .contigs -> _contigs")
-            cypher = cypher.replace(
-                "PLM0_60_b1_sep16_Maxbin2_047_curated.contigs",
-                "PLM0_60_b1_sep16_Maxbin2_047_curated_contigs"
-            )
-        
-        # Could add other genome ID normalizations here if needed
-        return cypher
+        """Normalize common genome ID literal formats in Cypher strings.
+
+        Generic rule: convert any string literal ending with `.contigs` to `_contigs`.
+        This avoids dataset-specific fixes (e.g., PLM0_...); it applies uniformly.
+        """
+        import re
+        def _fix_dq(m):
+            inner = m.group(1)
+            return '"' + inner.replace('.contigs', '_contigs') + '"'
+        def _fix_sq(m):
+            inner = m.group(1)
+            return "'" + inner.replace('.contigs', '_contigs') + "'"
+        # Double-quoted literals
+        cypher_new = re.sub(r'"([^"\\]*?\.contigs)"', _fix_dq, cypher)
+        # Single-quoted literals
+        cypher_new = re.sub(r"'([^'\\]*?\.contigs)'", _fix_sq, cypher_new)
+        if cypher_new != cypher:
+            logger.info("Normalizing genome ID literals: .contigs -> _contigs")
+        return cypher_new
     
     async def _get_genome_overview(self, genome_id: str) -> List[Dict[str, Any]]:
         """Get comprehensive genome information."""

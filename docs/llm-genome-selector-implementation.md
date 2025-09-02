@@ -100,7 +100,7 @@ You are a genomics expert analyzing user queries to determine genome selection i
 Available genomes in the database:
 - Burkholderiales_bacterium_RIFCSPHIGHO2_01_FULL_64_960_contigs
 - Candidatus_Muproteobacteria_bacterium_RIFCSPHIGHO2_01_FULL_61_200_contigs
-- Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs
+- EXAMPLE_GENOME_ID_contigs
 
 User query: "Find proteins in the Nomurabacteria genome"
 
@@ -112,7 +112,7 @@ Analyze this query and determine:
 
 Return JSON: {
   "intent": "specific",
-  "target_genomes": "Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs",
+  "target_genomes": "EXAMPLE_GENOME_ID_contigs",
   "reasoning": "User explicitly mentions 'Nomurabacteria genome' indicating specific genome targeting",
   "confidence": 0.95
 }
@@ -142,7 +142,7 @@ Query: "Find me operons containing probable prophage segments; we don't have vir
 ### Other Example Behaviors:
 
 #### Query: "Find proteins in the Nomurabacteria genome"
-- **LLM Analysis**: intent="specific", target_genomes=["Candidatus_Nomurabacteria_bacterium_RIFCSPLOWO2_01_FULL_41_220_contigs"]
+- **LLM Analysis**: intent="specific", target_genomes=["EXAMPLE_GENOME_ID_contigs"]
 - **Result**: Correctly targets specific genome
 
 #### Query: "Compare metabolic capabilities across all genomes"
