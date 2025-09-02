@@ -144,8 +144,18 @@ def make_lm(model_id: str, step: str = "") -> Any:
         return lm
 
     # Default: non-reasoning OpenAI models (4.1 family etc.)
-    lm = dspy.LM(
-        model=model,
-        temperature=0.0,
-    )
+    # To avoid truncation by dspy's default (e.g., 4000), explicitly set a high max_tokens.
+    # Applies to GPT-4.1 family and similar non-reasoning OpenAI models.
+    max_toks = 30000 if ("/gpt-4.1" in lower) else None
+    if max_toks is not None:
+        lm = dspy.LM(
+            model=model,
+            temperature=0.0,
+            max_tokens=max_toks,
+        )
+    else:
+        lm = dspy.LM(
+            model=model,
+            temperature=0.0,
+        )
     return lm
