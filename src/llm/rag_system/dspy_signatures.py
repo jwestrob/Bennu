@@ -343,6 +343,10 @@ class ContextRetriever(dspy.Signature):
     - Semicolons separating queries
 
     REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
+    
+    PFAM matching rules (avoid strict equality on PFxxxxx):
+    - When matching PFAM Domain families, use version-tolerant patterns: pfamAccession STARTS WITH token, Domain.id STARTS WITH token, or description CONTAINS normalized name terms.
+    - Prefer using the provided flexible operators/templates rather than hand-writing exact-equality PFAM filters.
 
     CAZYME QUERY DETECTION - MANDATORY:
     When user mentions CAZyme, carbohydrate, glycoside, carbohydrate-active, dbCAN:
@@ -488,6 +492,18 @@ class MacroPlannerSignature(dspy.Signature):
     - CAZyme routing: When the question mentions CAZyme/CAZy or families GH/GT/PL/CE/AA/CBM, prefer dedicated CAZyme operators (e.g., QueryCazymesByGenome, CountCazymeFamilies) rather than generic PFAM keyword discovery.
     - When choosing KEGG completeness, use canonical map IDs (mapxxxxx) or compute unfiltered and filter downstream; completeness is optional.
     - Avoid repeating the same operator+term; diversify probes and include a corroboration step (e.g., neighborhood/contig window) if any hits are found.
+    
+    PFAM matching policy (CRITICAL to avoid misses due to versioned accessions):
+    - Never rely on exact string equality for PFAM accessions (PFxxxxx). Databases often store versioned accessions (e.g., PF00016.26) and/or name IDs (e.g., RuBisCO_large).
+    - When retrieving proteins by PFAM, prefer flexible matching:
+      * pfamAccession STARTS WITH the accession token (e.g., "PF00016" matches "PF00016.26").
+      * Domain.id STARTS WITH the accession token or CONTAINS relevant short-name tokens (e.g., "rubisco_large").
+      * Description CONTAINS normalized name terms (e.g., "ribulose bisphosphate carboxylase").
+    - Use flexible operators/templates for retrieval (do not generate exact-equality PFAM queries):
+      * proteins_with_pfam (exact=false), or proteins_by_pfam_keyword.
+      * If an exact-ID attempt returns zero, fall back to flexible PFAM search for that term.
+    - Include both accession and short-name tokens from the PFAM catalog (e.g., ["PF00016", "PF00101", "rubisco_large", "rubisco_small"]) to maximize recall.
+    - Example: For "RuBisCO" queries, do not emit strict equality on "PF00016"; use accession-prefix and name/description substring matching via the flexible operators.
     """
 
     question = dspy.InputField(desc="User question to answer with a macro plan")
