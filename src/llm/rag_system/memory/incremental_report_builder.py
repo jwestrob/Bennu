@@ -361,71 +361,121 @@ class IncrementalReportBuilder:
         return apply_patch(Document.parse_obj(base), {'patch': rewritten})
 
     def _call_editor_multi(self, pack: List[Dict[str, Any]], obligations: List[str]):
+        """Multi-anchor editor: emit minimal JSON per anchor; build patches locally.
+
+        Expected model output (JSON array):
+        [
+          {"anchor": "sec:module:rubisco", "claims": ["one-sentence claim", ...], "analysis": "1–2 sentences"},
+          ...
+        ]
+        """
         try:
-            import dspy, json
+            import dspy, json, time as _t
             from ..dspy_signatures import MultiPatchProposalSignature
+
+            # Prepare compact payload (avoid giant snippets; summaries carry counts/IDs)
             anchors_payload = []
+            summary_by_anchor = {}
             for it in pack:
-                anchors_payload.append({
+                payload = {
                     "anchor": it["anchor"],
-                    "anchor_snippet": it["snippet"],
                     "batch_summary": it["summary"],
-                })
-            schema = {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["anchor", "patch", "evidence", "rationale"],
-                    "properties": {
-                        "anchor": {"type": "string"},
-                        "obligations": {"type": "array", "items": {"type": "string"}},
-                        "patch": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-                        "evidence": {"type": "object"},
-                        "rationale": {"type": "string"},
-                        "risk": {"type": "string"}
-                    }
                 }
-            }
+                anchors_payload.append(payload)
+                summary_by_anchor[it["anchor"]] = it["summary"]
+
+            # Editor prompt: minimal JSON per anchor; no RFC6902 in the model output
             editor_instructions = (
-                "You are editing multiple sections. For EACH item, output ONE PatchEnvelope. Constraints:\n"
-                "- Edit ONLY the provided anchor section for that item.\n"
-                "- Include test ops for '/type'=='section' and '/data/id'==anchor per envelope.\n"
-                "- Add exactly one paragraph with claims per section: path '/children/-', value {type:'paragraph', data:{claims:[...]} }.\n"
-                "- Claims should include counts (batch_summary.total_rows) and representative example IDs; include provenance arrays (ids only).\n"
-                "- JSON only. No commentary."
+                "For EACH item in anchors_json, output ONE object with keys: anchor (string), claims (array of 1–3 short, single-sentence strings), analysis (1–2 sentences).\n"
+                "Use ONLY the provided batch_summary for counts/IDs (do not fabricate).\n"
+                "Return a STRICT JSON array (no comments, no trailing text)."
             )
-            # Direct minimal call for multi-anchor proposal (switchable via config.irb_model)
+
+            # Model selection
             override = getattr(self.cfg, 'irb_model', None)
             if override:
                 lm = make_lm(override, step="irb")
                 self._log_info(f"IRB_EDITOR(multi): using override model='{override}' for {len(pack)} anchors")
             else:
-                lm = make_lm("openai/gpt-5-2025-08-07", step="irb")
-                self._log_info(f"IRB_EDITOR(multi): using default model='openai/gpt-5-2025-08-07' for {len(pack)} anchors")
+                lm = make_lm("openai/gpt-4.1-mini", step="irb")
+                self._log_info(f"IRB_EDITOR(multi): using default model='openai/gpt-4.1-mini' for {len(pack)} anchors")
+
             module = dspy.Predict(MultiPatchProposalSignature)
-            import time as _t
+
             _t0 = _t.time()
             with dspy.context(lm=lm):
                 res = module(
                     anchors_json=json.dumps(anchors_payload),
-                    schema_reminder=json.dumps(schema),
-                    editor_instructions=(
-                        "You are editing multiple sections. For EACH item, output ONE PatchEnvelope.\n"
-                        "Constraints:\n"
-                        "- Edit ONLY that item's anchor section; include test ops for '/type'=='section' and '/data/id'==anchor per envelope.\n"
-                        "- Add exactly TWO paragraphs per envelope (claims paragraph first, then a light analysis paragraph).\n"
-                        "  * Claims paragraph uses Claim objects (one sentence each), mentions total_rows, and includes representative example IDs; no raw lists.\n"
-                        "  * Analysis paragraph is concise (1–2 sentences), referencing unique_pfams/unique_kos when present for context.\n"
-                        "- JSON only. Return an array of PatchEnvelopes."
-                    )
+                    schema_reminder="[]",  # unused in this mode
+                    editor_instructions=editor_instructions,
                 )
             self._log_info(f"IRB_EDITOR(multi): call_ms={( _t.time()-_t0 )*1000:.0f}")
-            envs_raw = getattr(res, 'patch_envelopes', None)
-            if isinstance(envs_raw, (str, bytes)):
-                return json.loads(envs_raw)
-            if isinstance(envs_raw, list):
-                return envs_raw
-            return None
+
+            raw = getattr(res, 'patch_envelopes', None)
+            # Parse model output to Python list of {anchor, claims, analysis}
+            if isinstance(raw, (str, bytes)):
+                try:
+                    items = json.loads(raw)
+                except Exception:
+                    return None
+            elif isinstance(raw, list):
+                items = raw
+            else:
+                return None
+
+            # Convert minimal JSON to RFC6902 PatchEnvelopes locally
+            envelopes: List[Dict[str, Any]] = []
+            for item in items:
+                try:
+                    anchor = str(item.get('anchor') or '').strip()
+                    if not anchor:
+                        continue
+                    # Claims text lines
+                    claims_txt = item.get('claims') or item.get('claim_lines') or []
+                    if not isinstance(claims_txt, list):
+                        claims_txt = [str(claims_txt)] if claims_txt else []
+                    claims_objs = []
+                    for ct in claims_txt[:3]:
+                        try:
+                            claims_objs.append(Claim(claim_id=str(uuid.uuid4()), type="observation", text=str(ct), provenance={"neo4j": [], "sql": [], "lancedb": []}, metrics={}))
+                        except Exception:
+                            continue
+                    analysis_text = item.get('analysis') or item.get('text') or ''
+
+                    # Build patch ops for this anchor
+                    patch_ops = [
+                        JsonPatchOp(op="test", path="/type", value="section"),
+                        JsonPatchOp(op="test", path="/data/id", value=anchor),
+                    ]
+                    if claims_objs:
+                        patch_ops.append(
+                            JsonPatchOp(op="add", path="/children/-", value={
+                                "type": "paragraph",
+                                "data": {"claims": [c.dict() for c in claims_objs]},
+                                "children": []
+                            })
+                        )
+                    if analysis_text:
+                        patch_ops.append(
+                            JsonPatchOp(op="add", path="/children/-", value={
+                                "type": "paragraph",
+                                "data": {"text": str(analysis_text)},
+                                "children": []
+                            })
+                        )
+                    env = {
+                        "anchor": anchor,
+                        "obligations": obligations,
+                        "patch": [op.__dict__ for op in patch_ops],
+                        "evidence": {"neo4j": [], "sql": [], "lancedb": []},
+                        "rationale": "local_patch_from_minimal_json",
+                        "risk": "low",
+                    }
+                    envelopes.append(env)
+                except Exception:
+                    continue
+
+            return envelopes if envelopes else None
         except Exception:
             return None
 
