@@ -487,14 +487,21 @@ class MacroPlannerSignature(dspy.Signature):
     Planner rubric (breadth-first reminder):
     - Prefer breadth-first exploration across available annotation namespaces when probing a functional capability.
     - Two-stage search pattern (generic): First run catalog search to map natural-language terms to precise identifiers; then perform exact, identifier-based retrieval. Only fall back to substring/keyword queries if no identifiers were found.
-    - Result formatting: For large searches, prefer compact evidence (counts + examples). For small, targeted queries where full detail is needed (e.g., a specific enzyme family in a small genome), you MAY request full JSON rows by setting `return_full_rows=true` on AnnotationDiscovery. Be cautious: full rows can be very large on bigger datasets.
+    - Result formatting (facet-first): Prefer compact facet summaries over raw rows. Use AnnotationDiscovery with `output_profile='facet_summary'` and set quantity explicitly via `return_mode` and `top_k` per group. Only request rowsets when you truly need per-protein details.
     - Include a lightweight evidence assessment step (e.g., row counts) and, when evidence is insufficient, add a compact follow-up proposal step requesting minimal additional inputs (e.g., scope hints, aliases) rather than large data dumps.
-    - PFAM domain identifiers and descriptions are often richer than KO terms in metagenomes; consider domain- and ortholog-level catalog searches early.
+    - PFAM domain identifiers and descriptions are often richer than KO terms in metagenomes; consider domain- and ortholog-level catalog searches early. Prefer accession tokens (PFxxxxx) and KO ids (Kxxxxx) when available.
     - When searching for hallmark enzymes, include both long-form names and common gene symbols/abbreviations in your probe terms, and treat matches as case-insensitive.
     - CAZyme routing: When the question mentions CAZyme/CAZy or families GH/GT/PL/CE/AA/CBM, prefer dedicated CAZyme operators (e.g., QueryCazymesByGenome, CountCazymeFamilies) rather than generic PFAM keyword discovery.
     - When choosing KEGG completeness, use canonical map IDs (mapxxxxx) or compute unfiltered and filter downstream; completeness is optional.
     - Avoid repeating the same operator+term; diversify probes and include a corroboration step (e.g., neighborhood/contig window) if any hits are found.
     
+    Facet-first planning policy (static, explicit controls):
+    - Separate KO and PFAM summary steps (do NOT use `group_by='both'`). For each biological theme (e.g., CBB, WL, rTCA, methanogenesis, methanotrophy, nitrogenase), schedule:
+      * KO facet summary: `output_profile='facet_summary'`, `group_by='ko'`, explicit `return_mode` ('all' for narrow filtered sets; otherwise 'top_k' with an explicit `ko_top_k`), and `fields=['id','count','score']`.
+      * PFAM facet summary: `output_profile='facet_summary'`, `group_by='pfam'`, explicit `return_mode` and `pfam_top_k`, and `fields=['id','count','score']`.
+    - Use FetchPresentKOs early and leverage its aggregated `present_summary` (per-KO present counts) to bias KO summaries or to select filtered KO id sets. Avoid per-genome expansions.
+    - When per-entity protein lists are needed, add a dedicated detail step (e.g., QueryProteinsByIds or AnnotationDiscovery with `output_profile='rowset'`) for selected KO/PF anchors with an explicit per-entity cap, rather than inflating summary `top_k`.
+
     PFAM matching policy (CRITICAL to avoid misses due to versioned accessions):
     - Never rely on exact string equality for PFAM accessions (PFxxxxx). Databases often store versioned accessions (e.g., PF00016.26) and/or name IDs (e.g., RuBisCO_large).
     - When retrieving proteins by PFAM, prefer flexible matching:
@@ -504,7 +511,7 @@ class MacroPlannerSignature(dspy.Signature):
     - Use flexible operators/templates for retrieval (do not generate exact-equality PFAM queries):
       * proteins_with_pfam (exact=false), or proteins_by_pfam_keyword.
       * If an exact-ID attempt returns zero, fall back to flexible PFAM search for that term.
-    - Include both accession and short-name tokens from the PFAM catalog (e.g., ["PF00016", "PF00101", "rubisco_large", "rubisco_small"]) to maximize recall.
+    - Include both accession and short-name tokens from the PFAM catalog (e.g., accession like "PF00016" and descriptive tokens like "rubisco_large") to maximize recall.
     - Example: For "RuBisCO" queries, do not emit strict equality on "PF00016"; use accession-prefix and name/description substring matching via the flexible operators.
     """
 

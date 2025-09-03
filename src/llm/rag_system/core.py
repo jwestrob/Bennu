@@ -5,6 +5,7 @@ Restored from backup with modular organization.
 """
 
 import logging
+import re
 from typing import List, Dict, Any, Optional
 import os
 import json
@@ -430,6 +431,28 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                                 if dropped2:
                                                     logger.info(f"Context trim: dropped {dropped2} duplicate discovered_proteins rows (binding='{k}.{key}')")
                                                 items.append({'type': 'macro_result', 'name': f"{k}.{key}", 'rows': filtered2, 'format': v.get('_format')})
+                                        # Pass facet_summary through as macro_result rows for KO/PFAM facets
+                                        try:
+                                            fs = v.get('facet_summary')
+                                            if isinstance(fs, dict):
+                                                kos = fs.get('kos')
+                                                if isinstance(kos, list) and kos:
+                                                    rows_k = []
+                                                    for it in kos:
+                                                        if isinstance(it, dict) and it.get('id'):
+                                                            rows_k.append({'kos': [str(it['id'])], 'count': int(it.get('count', 0) or 0)})
+                                                    if rows_k:
+                                                        items.append({'type': 'macro_result', 'name': f"{k}.facet_kos", 'rows': rows_k})
+                                                pfs = fs.get('pfams')
+                                                if isinstance(pfs, list) and pfs:
+                                                    rows_p = []
+                                                    for it in pfs:
+                                                        if isinstance(it, dict) and it.get('id'):
+                                                            rows_p.append({'pfams': [str(it['id'])], 'count': int(it.get('count', 0) or 0)})
+                                                    if rows_p:
+                                                        items.append({'type': 'macro_result', 'name': f"{k}.facet_pfams", 'rows': rows_p})
+                                        except Exception:
+                                            pass
                             except Exception:
                                 pass
                             return items
