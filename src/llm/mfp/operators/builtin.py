@@ -38,9 +38,21 @@ def _load_ko_totals(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[s
 
 
 def _compute_pathway_completeness(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    # Inputs: present (dict genome->list KO), totals (dict pathway->list KO)
-    present = inputs.get("present") or {}
-    totals = inputs.get("totals") or {}
+    # Inputs expected:
+    #  - present: { genome_id -> [KO ids] }
+    #  - totals:  { pathway_id -> [KO ids] }
+    # Be defensive: unwrap common envelope shapes like {'present': {...}, 'present_summary': [...]}
+    raw_present = inputs.get("present") or {}
+    if isinstance(raw_present, dict) and isinstance(raw_present.get("present"), dict):
+        present = raw_present.get("present") or {}
+    else:
+        present = raw_present
+
+    raw_totals = inputs.get("totals") or {}
+    if isinstance(raw_totals, dict) and isinstance(raw_totals.get("totals"), dict):
+        totals = raw_totals.get("totals") or {}
+    else:
+        totals = raw_totals
     pathways = params.get("pathways")  # optional list of map IDs
     min_c = params.get("min_completeness")
     try:
@@ -159,7 +171,12 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
         pfam_top_k = int(params.get("pfam_top_k", 20))
     except Exception:
         pfam_top_k = 20
-    fields = params.get("fields") or []
+    # Sanitize requested fields to known facet fields
+    fields_in = params.get("fields") or []
+    fields_allowed = {"id", "name", "count"}
+    fields = [f for f in fields_in if isinstance(f, str) and f in fields_allowed]
+    if not fields:
+        fields = ["id", "name", "count"]
     group_by = str(params.get("group_by") or "both").strip().lower()  # ko|pfam|both
     include_examples = str(params.get("include_examples") or "counts").strip().lower()  # none|counts|ids
     return_full = bool(params.get("return_full_rows") or False)
@@ -205,30 +222,61 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
     pfam_inputs = pfam_ids
     ko_inputs = ko_ids
     if use_counts:
+        # Optional planner-provided token caps
+        try:
+            pfam_tokens_top_n = int(params.get("pfam_tokens_top_n")) if params.get("pfam_tokens_top_n") is not None else None
+        except Exception:
+            pfam_tokens_top_n = None
+        try:
+            ko_tokens_top_n = int(params.get("ko_tokens_top_n")) if params.get("ko_tokens_top_n") is not None else None
+        except Exception:
+            ko_tokens_top_n = None
+
         if pfam_needed:
-            pfam_inputs = pfam_ids[:pfam_top_k]
+            pfam_inputs = pfam_ids[:pfam_tokens_top_n] if (pfam_tokens_top_n and pfam_tokens_top_n > 0) else pfam_ids
         else:
             pfam_inputs = []
         if ko_needed:
-            ko_inputs = ko_ids[:ko_top_k]
+            ko_inputs = ko_ids[:ko_tokens_top_n] if (ko_tokens_top_n and ko_tokens_top_n > 0) else ko_ids
         else:
             ko_inputs = []
 
     if use_counts:
         # Run count templates for selected facets only
+        pf_provenance: Dict[str, set] = {}
         if pfam_needed and pfam_inputs:
             __tpf = time.perf_counter()
+            # Candidate cap for domains per token (default 200)
+            try:
+                pfam_candidate_cap = int(params.get("pfam_candidate_cap")) if params.get("pfam_candidate_cap") is not None else 200
+            except Exception:
+                pfam_candidate_cap = 200
             cnt_pf = runner.run_template(
                 "count_proteins_by_pfam_tokens.cypher",
-                {"tokens": pfam_inputs, "genome_ids": genome_ids},
+                {"tokens": pfam_inputs, "genome_ids": genome_ids, "candidate_cap": pfam_candidate_cap},
             ) or []
             try:
                 logging.getLogger(__name__).info(
-                    f"AnnotationDiscovery: count_pf tokens={len(pfam_inputs)} genomes={len(genome_ids)} in {(time.perf_counter()-__tpf)*1000:.0f} ms")
+                    f"AnnotationDiscovery: count_pf tokens={len(pfam_inputs)} candidates={len(cnt_pf)} cap={pfam_candidate_cap} genomes={len(genome_ids)} in {(time.perf_counter()-__tpf)*1000:.0f} ms")
             except Exception:
                 pass
-            # Build facet entries from counts (prefer label)
-            pfam_facets = sorted(({"id": r.get("label") or r.get("token"), "count": int(r.get("count") or 0)} for r in cnt_pf), key=lambda d: (-d["count"], str(d["id"])) )
+            # Build facet entries from counts with stable id (PFxxxxx) and name label
+            # Deduplicate by id if multiple tokens resolve to same PFAM; keep max count
+            pf_map: Dict[str, Dict[str, Any]] = {}
+            for r in cnt_pf:
+                pid = r.get("pfam_id") or r.get("token")
+                lbl = r.get("label") or r.get("token")
+                cnt = int(r.get("count") or 0)
+                tok = r.get("token")
+                if not pid:
+                    continue
+                prev = pf_map.get(pid)
+                if (prev is None) or (cnt > int(prev.get("count", 0))):
+                    pf_map[pid] = {"id": pid, "name": lbl, "count": cnt}
+                if isinstance(tok, str) and tok:
+                    s = pf_provenance.setdefault(pid, set())
+                    s.add(tok)
+            pfam_facets = sorted(pf_map.values(), key=lambda d: (-int(d.get("count",0)), str(d.get("id",""))))
         if ko_needed and ko_inputs:
             __tko = time.perf_counter()
             cnt_ko = runner.run_template(
@@ -240,7 +288,14 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
                     f"AnnotationDiscovery: count_ko ids={len(ko_inputs)} genomes={len(genome_ids)} in {(time.perf_counter()-__tko)*1000:.0f} ms")
             except Exception:
                 pass
-            kos_facets = sorted(({"id": r.get("ko_id"), "count": int(r.get("count") or 0)} for r in cnt_ko), key=lambda d: (-d["count"], str(d["id"])) )
+            # Include KO description as name when available
+            kos_facets = []
+            for r in cnt_ko:
+                kid = r.get("ko_id")
+                if not kid:
+                    continue
+                kos_facets.append({"id": kid, "name": r.get("label"), "count": int(r.get("count") or 0)})
+            kos_facets.sort(key=lambda d: (-d["count"], str(d["id"])) )
     else:
         # Legacy rowset path: fetch rows for required facets only and aggregate locally
         pf_rows: List[Dict[str, Any]] = []
@@ -335,6 +390,18 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
     if pfam_needed:
         sel, sm = _apply_limit(pfam_facets, pfam_top_k)
         facets["pfams"] = sel
+        # Include token provenance for PFAMs when counts path was used
+        try:
+            if use_counts and pf_provenance and isinstance(sel, list):
+                prov = []
+                for it in sel:
+                    pid = it.get("id")
+                    if isinstance(pid, str) and pid in pf_provenance:
+                        prov.append({"id": pid, "tokens": sorted(list(pf_provenance.get(pid, set())))})
+                if prov:
+                    sm["token_provenance"] = prov
+        except Exception:
+            pass
         selection_meta["groups"]["pfam"] = sm
 
     # Compose result
@@ -419,11 +486,14 @@ register_operator(OperatorSpec(
         "return_mode": "top_k|all (default top_k)",
         "ko_top_k": "int (default 30)",
         "pfam_top_k": "int (default 20)",
-        "fields": "List[str] (requested fields for summaries; optional)",
+        "fields": "List[str] (requested fields for summaries; optional; valid: id,name,count)",
         "group_by": "ko|pfam|both (default both)",
         "include_examples": "none|counts|ids (ids only for contig/locus anchors)",
         "return_full_rows": "bool (legacy rowset include)",
         "genome_ids": "List[str] | null",
+        "pfam_tokens_top_n": "int | null (limit number of catalog PFAM tokens considered)",
+        "ko_tokens_top_n": "int | null (limit number of catalog KO tokens considered)",
+        "pfam_candidate_cap": "int | null (cap candidate PFAM domains per token in counts; default 200)",
     },
     run=_annotation_discovery,
     description="Facet-first annotation discovery: keyword→IDs→exact retrieval→KO/PFAM summaries (counts, top_k or all). Rowset optional.",

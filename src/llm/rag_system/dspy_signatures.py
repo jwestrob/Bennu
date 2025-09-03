@@ -513,6 +513,18 @@ class MacroPlannerSignature(dspy.Signature):
       * If an exact-ID attempt returns zero, fall back to flexible PFAM search for that term.
     - Include both accession and short-name tokens from the PFAM catalog (e.g., accession like "PF00016" and descriptive tokens like "rubisco_large") to maximize recall.
     - Example: For "RuBisCO" queries, do not emit strict equality on "PF00016"; use accession-prefix and name/description substring matching via the flexible operators.
+
+    Keyword discipline (to reduce generic noise without hard-coding):
+    - Avoid broad/generic enzyme classes in PFAM/KO probes (e.g., aldolase, epimerase, dehydrogenase, carboxylase) unless you are explicitly probing those classes.
+    - Prefer hallmark terms and accessions (PFxxxxx/Kxxxxx) with up to 1–2 concise synonyms per theme.
+    - Keep per-theme probes tight and separate; don’t mix themes in a single probe.
+
+    Agent-controlled quantity/candidate parameters (no hidden caps):
+    - Always set explicit caps in plans for facet work:
+      * pfam_tokens_top_n, ko_tokens_top_n: limit catalog tokens to consider (e.g., 20–30).
+      * pfam_candidate_cap: limit candidate PFAM families per token inside counts (default 200 if unspecified).
+      * pfam_top_k, ko_top_k: final facet sizes to display.
+    - Standardize facet fields to ['id','name','count'].
     """
 
     question = dspy.InputField(desc="User question to answer with a macro plan")

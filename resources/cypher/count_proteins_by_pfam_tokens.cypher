@@ -25,13 +25,21 @@ CALL (norm, gids) {
       toLower(coalesce(d.description,'')) CONTAINS norm
     )
   )
-  WITH d, gids LIMIT 200
+  WITH d, gids LIMIT toInteger($candidate_cap)
   MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d)
   OPTIONAL MATCH (p)-[:ENCODEDBY]->(:Gene)-[:BELONGSTOGENOME]->(g:Genome)
   WHERE gids IS NULL OR size(gids)=0 OR g.id IN gids
   WITH d, count(DISTINCT p) AS c
-  RETURN coalesce(d.name, d.description, d.id) AS label, c
+  RETURN coalesce(d.name, d.description, d.id) AS label,
+         coalesce(d.pfamAccession, d.id) AS acc,
+         c
   ORDER BY c DESC
-  LIMIT 1
 }
-RETURN norm AS token, coalesce(label, norm) AS label, coalesce(c, 0) AS count;
+WITH norm,
+     label,
+     CASE
+       WHEN acc =~ '(?i)^pf\\d{5}(?:\\.\\d+)?$' THEN toUpper(substring(acc,0,7))
+       ELSE acc
+     END AS pfam_id,
+     c
+RETURN norm AS token, pfam_id, coalesce(label, norm) AS label, coalesce(c, 0) AS count;

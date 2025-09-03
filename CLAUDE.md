@@ -435,3 +435,84 @@ Follow these steps when adding support for a new model or provider. These patter
 - Verify planner uses chat semantics (no responses) and no max tokens.
 - Verify OpenRouter path uses `openai/<vendor>/<model>` and honors `OPENROUTER_API_KEY` + `OPENAI_API_BASE`.
 - Run: `FAST_PATH_ENABLED=0 IRB_BYPASS_TOKENS=0` with `-planner`, `-irb`, `-reporter` pointing to the new model. Confirm no Anthropic key errors and no `/v1/completions` 404s.
+Policy Update — 2025‑09‑03 (Facet controls; no hidden caps)
+
+- No hidden caps in PFAM facet counts:
+  - Removed per-token “best match” cap (LIMIT 1) and pre-clamping of catalog tokens.
+  - Remaining internal cap: candidate PFAM families per token (default 200); now exposed to the agent as pfam_candidate_cap.
+- Agent‑controlled knobs for facet breadth/latency:
+  - pfam_tokens_top_n, ko_tokens_top_n: how many catalog tokens to carry into counts.
+  - pfam_candidate_cap: cap per token inside PFAM counts (default 200).
+  - pfam_top_k, ko_top_k: final facet sizes.
+- Facet schema: rows now standardize to {id, name, count}. “score” is not computed.
+- Keyword discipline (planner rubric reminder):
+  - Avoid generic enzyme classes (aldolase, epimerase, dehydrogenase, carboxylase) in PFAM/KO probes unless explicitly required.
+  - Prefer hallmark accessions/names with up to 1–2 concise synonyms.
+  - Keep per‑theme probes tight and separate.
+- Completeness semantics (current): KO‑based coverage; union scope for single‑genome runs. Multi‑genome semantics to be documented when test set is in use.
+
+Observability
+- PFAM count logs include tokens considered, total candidate PFAM rows returned (post‑cap), and elapsed time. This helps identify noisy tokens for planner tightening.
+
+Implementation Notes — 2025‑09‑03 (Progress + Latest Changes)
+
+Overview
+- Goal: Restore recall for hallmark markers (RuBisCO/PRK/nifHDK) while keeping the pipeline fast, static, and agent‑controllable (no hidden caps; no env flags; no theme‑specific hard‑coding).
+- Status: Facet discovery stabilized. Planner rubric updated. PFAM/KO facets now carry names. Completeness fixed. Indexes and Cypher made more index‑friendly.
+
+Key Changes (surgical, agent‑controllable)
+- AnnotationDiscovery (facet‑first)
+  - group_by controls PFAM vs KO (no mixed internal work). Rowset mode unchanged.
+  - New knobs (planner‑set): pfam_tokens_top_n, ko_tokens_top_n, pfam_candidate_cap (per‑token PFAM candidate cap; default 200), pfam_top_k, ko_top_k.
+  - Facet rows standardized to {id, name, count}. No "score" field.
+  - PFAM token provenance surfaced in selection_metadata when counts path is used (debugging aid only).
+
+- PFAM counts (resources/cypher/count_proteins_by_pfam_tokens.cypher)
+  - No hidden per‑token LIMIT 1 (removed); planner governs breadth via pfam_tokens_top_n and candidate cap.
+  - Parameterized $candidate_cap (default 200) for candidate domains per token; uses index‑friendly STARTS WITH for accessions and CONTAINS for names.
+
+- KO counts (resources/cypher/count_proteins_by_ko_ids.cypher)
+  - Deterministic UNWIND + equality on ko.id. Facet rows now include name (from description).
+
+- Planner rubric (MacroPlannerSignature)
+  - Keyword discipline: avoid generic enzyme classes in PFAM/KO probes (aldolase, epimerase, dehydrogenase, carboxylase); prefer hallmark accessions + 1–2 concise synonyms; keep probes per theme tight.
+  - Explicit caps: always set pfam_tokens_top_n, ko_tokens_top_n, pfam_candidate_cap, pfam_top_k, ko_top_k. Standardize fields to ['id','name','count'].
+
+- ComputePathwayCompleteness (operator)
+  - Defensively unwraps common envelopes (e.g., {present:{...}, present_summary:[...]}) for present/totals inputs. Restores non‑empty completeness when plans bind envelopes.
+
+- Logs & Observability
+  - Planner: latency logs (model id + reasoning_effort) for initial and retry calls.
+  - PFAM counts: logs include token_count, candidate_count (post‑cap), cap value, elapsed_ms.
+
+- Indexes + Cypher hygiene
+  - Added Domain.pfamAccession index; PFAM filters use accession STARTS WITH (version‑tolerant) and id STARTS WITH; keyword discovery remains in catalog stage.
+  - pfam_search/kofam_search moved to full‑text indexes (discovery step only). Count queries remain deterministic and index‑friendly.
+
+Reporter Guidance (no code path changes)
+- Consume facets as {id, name, count}. Render key callouts as "Kxxxxx (name)" / "PFxxxxx (name)"; avoid inferring names from prompts or theme text.
+- When PF00016/PF00101 appear but K01601/K01602 are absent, note RuBisCO‑like (Form IV) ambiguity explicitly — no pinning or whitelists.
+
+No Hidden Caps / No Env Flags / No Theme Lists
+- Hidden caps removed (best‑per‑token LIMIT 1, pre‑clamp). The only internal cap is the per‑token candidate cap (default 200) which is agent‑controllable.
+- Do not use env flags to steer behavior; all behavior is via static operators and explicit planner parameters.
+- No theme‑specific whitelists or hard‑coded IDs in prompts or code; all specificity comes from catalog‑first discovery plus accession‑priority and planner‑set caps.
+
+Files of Interest
+- src/llm/mfp/operators/builtin.py — AnnotationDiscovery (facet controls, field standardization, PFAM provenance), ComputePathwayCompleteness (unwrap).
+- resources/cypher/count_proteins_by_pfam_tokens.cypher — Parameterized candidate cap; no per‑token LIMIT 1.
+- resources/cypher/count_proteins_by_ko_ids.cypher — KO counts with label returned.
+- src/llm/kg/cypher_templates/*.cypher — Index‑friendly PFAM/KO templates; pfam_search/kofam_search use full‑text discovery.
+- src/llm/rag_system/dspy_signatures.py — Planner rubric updated (keyword discipline, explicit caps, field schema).
+- src/llm/rag_system/core.py — Planner latency logs; IRB bypass logic unchanged.
+- scripts/neo4j/indices.cypher — Domain.pfamAccession index added (and created at bulk load Step 6).
+
+Practical Defaults to Recommend (agent‑controlled)
+- pfam_tokens_top_n: 20–30 per theme probe.
+- ko_tokens_top_n: 20–30 per theme probe.
+- pfam_candidate_cap: 200 (raise only if tokens routinely hit the cap and hallmarks are still missed).
+- pfam_top_k / ko_top_k: 30–50 depending on desired summary breadth.
+
+Known Semantics & Caveats
+- Completeness: KO‑based union for single‑genome runs; not organism‑complete by itself. Multi‑genome semantics (per‑genome vs union vs mean) to be documented with multi‑genome test set.
+- PFAM generic families can still surface for broad tokens; planner should avoid generic tokens and keep per‑theme probes tight.
