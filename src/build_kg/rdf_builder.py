@@ -421,7 +421,9 @@ class GenomeKGBuilder:
             
             protein_uri = protein_uris[protein_id]
             domain_uri = PROTEIN[domain['domain_id']]
-            pfam_uri = PFAM[domain['pfam_id']]
+            # Use canonical unversioned PF accession for the PFAM family URI when available
+            pfam_key = str(domain.get('pfam_id') or '').strip()
+            pfam_uri = PFAM[pfam_key if pfam_key else str(domain.get('pfam_name') or 'unknown')]
             
             # Domain annotation instance
             self.graph.add((domain_uri, RDF.type, KG.DomainAnnotation))
@@ -434,7 +436,12 @@ class GenomeKGBuilder:
             
             # PFAM domain family reference
             self.graph.add((pfam_uri, RDF.type, KG.Domain))
-            self.graph.add((pfam_uri, KG.pfamAccession, Literal(domain['pfam_id'])))
+            # pfamAccession (canonical PFxxxxx)
+            if domain.get('pfam_id'):
+                self.graph.add((pfam_uri, KG.pfamAccession, Literal(domain['pfam_id'])))
+            # Optional short name for the family
+            if domain.get('pfam_name'):
+                self.graph.add((pfam_uri, KG.name, Literal(domain['pfam_name'])))
             
             # Link protein to domain
             self.graph.add((protein_uri, KG.hasDomain, domain_uri))

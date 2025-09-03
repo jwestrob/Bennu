@@ -200,6 +200,7 @@ def _query_proteins_by_ids(ctx: OperatorContext, inputs: Dict[str, Any], params:
         limit = int(params.get("limit", 1000))
     except Exception:
         limit = 1000
+    return_full = bool(params.get("return_full_rows") or False)
 
     # Normalize PFAM tokens while preserving meaningful short names.
     # - Extract canonical accessions (PFxxxxx) when present
@@ -249,9 +250,14 @@ def _query_proteins_by_ids(ctx: OperatorContext, inputs: Dict[str, Any], params:
         pid = str(r.get("protein_id"))
         key = f"{gid}\t{pid}"
         e = merged.setdefault(key, {"genome_id": gid, "protein_id": pid, "pfams": [], "kos": []})
-        pf = r.get("pfam_id") or r.get("domain_id")
-        if pf and pf not in e["pfams"]:
-            e["pfams"].append(pf)
+        pf_label = r.get("pfam_name") or r.get("domain_desc") or r.get("domain_id") or r.get("pfam_id")
+        pf_id = r.get("pfam_id") or r.get("domain_id")
+        if pf_label and pf_label not in e["pfams"]:
+            e["pfams"].append(pf_label)
+        if return_full and pf_id:
+            ids = e.setdefault("pfam_ids", [])
+            if pf_id not in ids:
+                ids.append(pf_id)
     for r in ko_rows:
         gid = str(r.get("genome_id"))
         pid = str(r.get("protein_id"))

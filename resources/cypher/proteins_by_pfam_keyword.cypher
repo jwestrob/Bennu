@@ -18,6 +18,7 @@ RETURN
   p.id AS protein_id,
   coalesce(d.pfamAccession, d.id) AS pfam_id,
   d.id AS domain_id,
+  d.name AS pfam_name,
   d.description AS domain_desc,
   da.evalue AS evalue,
   da.bitscore AS bitscore,

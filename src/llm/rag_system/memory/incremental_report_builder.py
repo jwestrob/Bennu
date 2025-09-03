@@ -50,6 +50,29 @@ class IncrementalReportBuilder:
             })
         packs = self._pack_items(items, limit=25000)
         self._log_info(f"IRB_PLAN: anchors={len(items)} packs={len(packs)} max_calls={self.max_editor_calls}")
+
+        # Phase 0 instrumentation: persist per-anchor debug summaries
+        try:
+            if self.nk and hasattr(self.nk, 'synthesis_notes_path'):
+                sdir = self.nk.synthesis_notes_path
+                os.makedirs(sdir, exist_ok=True)
+                anchors_debug: Dict[str, Any] = {}
+                for it in items:
+                    a = it.get('anchor')
+                    s = it.get('summary') or {}
+                    if not a:
+                        continue
+                    anchors_debug[a] = {
+                        'total_rows': s.get('total_rows', 0),
+                        'unique_pfams': (s.get('unique_pfams') or [])[:10],
+                        'unique_pfam_accessions': (s.get('unique_pfam_accessions') or [])[:10],
+                        'unique_kos': (s.get('unique_kos') or [])[:10],
+                        'examples': (s.get('examples') or [])[:5],
+                    }
+                with open(os.path.join(sdir, 'anchors_debug.json'), 'w', encoding='utf-8') as f_dbg:
+                    json.dump(anchors_debug, f_dbg, indent=2, default=str)
+        except Exception as _dbg_err:
+            self._log_info(f"anchors_debug save skipped: {_dbg_err}")
         if not batches and followups:
             # Write a Next Steps section so the report isn't empty
             anchor = "sec:community:next_steps"
@@ -171,6 +194,7 @@ class IncrementalReportBuilder:
         examples = []
         cap = int(getattr(self.cfg, 'SUMMARY_EXAMPLE_CAP', 10) or 10)
         uniq_pfams, uniq_kos = set(), set()
+        uniq_pf_acc = set()
         for r in rows:
             # Collect example IDs
             gid = r.get('genome_id')
@@ -179,11 +203,18 @@ class IncrementalReportBuilder:
                 examples.append({"genome_id": gid, "protein_id": pid})
             # Collect light context
             pf = r.get('pfams') or []
+            pf_ids = r.get('pfam_ids') or []
             ko = r.get('kos') or []
             if isinstance(pf, list):
                 for x in pf:
                     if isinstance(x, str) and x:
                         uniq_pfams.add(x)
+            if isinstance(pf_ids, list):
+                for x in pf_ids:
+                    if isinstance(x, str) and x:
+                        xl = x.lower()
+                        if xl.startswith('pf') and len(x) >= 7:
+                            uniq_pf_acc.add(x[:7].upper())
             if isinstance(ko, list):
                 for x in ko:
                     if isinstance(x, str) and x:
@@ -191,9 +222,12 @@ class IncrementalReportBuilder:
         return {
             "anchor": anchor,
             "total_rows": total,
+            "example_count": len(examples),
             "examples": examples,
             "unique_pfams": sorted(list(uniq_pfams))[:25],
             "unique_kos": sorted(list(uniq_kos))[:25],
+            # internal accessions for editor/hallmark logic (not printed)
+            "unique_pfam_accessions": sorted(list(uniq_pf_acc))[:25],
             "cache_refs": [],
         }
 
@@ -231,7 +265,9 @@ class IncrementalReportBuilder:
             "- Add exactly TWO paragraphs (two add ops to '/children/-') in this order:\n"
             "  1) Evidence paragraph with CLAIMS: value={type:'paragraph', data:{claims:[Claim,...]}, children:[]}\n"
             "     * Claim schema: {claim_id, type:[observation|inference|recommendation], text, provenance:{neo4j:[], sql:[], lancedb:[]}, metrics:{}}\n"
-            "     * Keep each claim to ONE sentence; mention batch_summary.total_rows and include representative example IDs (IDs only).\n"
+            "     * Keep each claim to ONE sentence; mention batch_summary.total_rows.\n"
+            "     * STRICTLY FORBIDDEN: Do NOT include any real identifiers (no protein IDs, contig names, locus strings).\n"
+            "     * If helpful, refer ONLY to counts: use batch_summary.example_count to say 'N representative proteins'.\n"
             "     * Prefer high-signal aggregation (no raw lists).\n"
             "  2) Light analysis paragraph (no claims): value={type:'paragraph', data:{text:'...'}, children:[]}\n"
             "     * 1–2 sentences on possible functional role, notable co-occurrences/absences, or pathway cues, strictly based on batch_summary and anchor_snippet.\n"
@@ -373,22 +409,39 @@ class IncrementalReportBuilder:
             import dspy, json, time as _t
             from ..dspy_signatures import MultiPatchProposalSignature
 
-            # Prepare compact payload (avoid giant snippets; summaries carry counts/IDs)
+            # Prepare compact payload with a pre-filled skeleton per anchor
+            # The model must fill ONLY the empty fields (claims/analysis), without reordering or dropping items.
             anchors_payload = []
             summary_by_anchor = {}
             for it in pack:
+                # Sanitize batch_summary to avoid exposing real IDs to the model
+                s = dict(it["summary"] or {})
+                if "examples" in s:
+                    # Remove explicit example IDs from the payload; keep count only
+                    s["examples"] = []
                 payload = {
                     "anchor": it["anchor"],
-                    "batch_summary": it["summary"],
+                    "batch_summary": s,
+                    # Provide example_count explicitly (counts-only referencing allowed)
+                    "example_count": int((it["summary"] or {}).get("example_count") or 0),
+                    # Pre-filled skeleton fields to be completed by the model
+                    "claims": [],
+                    "analysis": "",
                 }
                 anchors_payload.append(payload)
                 summary_by_anchor[it["anchor"]] = it["summary"]
 
             # Editor prompt: minimal JSON per anchor; no RFC6902 in the model output
+            expected_count = len(anchors_payload)
+            # Tight, skeleton-based instructions to reduce omissions and reordering
             editor_instructions = (
-                "For EACH item in anchors_json, output ONE object with keys: anchor (string), claims (array of 1–3 short, single-sentence strings), analysis (1–2 sentences).\n"
-                "Use ONLY the provided batch_summary for counts/IDs (do not fabricate).\n"
-                "Return a STRICT JSON array (no comments, no trailing text)."
+                "You are given a JSON ARRAY of skeleton objects. For EACH object, FILL ONLY: 'claims' and 'analysis'.\n"
+                "Do NOT add/remove/reorder items. Do NOT modify 'anchor', 'batch_summary', or 'example_count'.\n"
+                f"Return EXACTLY {expected_count} items, IN THE SAME ORDER. JSON ONLY (no prose, no code fences).\n"
+                "Per anchor limits: at most ONE claim (<=20 words) OR a short analysis (<=20 words).\n"
+                "STRICTLY FORBIDDEN: Do NOT include ANY real identifiers (no protein IDs, contig names, locus strings).\n"
+                "If helpful, refer ONLY to counts: use 'example_count' to say e.g., 'N representative proteins'. If unsure, leave claims empty and set analysis='insufficient evidence'.\n"
+                "Use ONLY 'batch_summary' for counts; do not fabricate or list raw rows."
             )
 
             # Model selection
@@ -495,12 +548,12 @@ class IncrementalReportBuilder:
         except Exception:
             rep_ids = []
 
-        # Message explicitly inlines a few example IDs when available
-        if rep_ids:
-            shown = "; ".join(rep_ids[:3])
+        # Counts-only phrasing; do not expose real IDs in the report
+        example_count = int(summary.get('example_count', 0) or 0)
+        if example_count > 0:
             claim_text = (
                 f"Detected {total} proteins contributing to this marker; "
-                f"examples: {shown}."
+                f"examples available ({example_count})."
             )
         else:
             claim_text = f"Detected {total} proteins contributing to this marker."
@@ -509,7 +562,7 @@ class IncrementalReportBuilder:
             claim_id=str(uuid.uuid4()),
             type="observation",
             text=claim_text,
-            provenance={"neo4j": rep_ids, "sql": [], "lancedb": []},
+            provenance={"neo4j": [], "sql": [], "lancedb": []},
         )
         append_claim_paragraph(self.doc, anchor, [claim])
         # Optional lightweight context paragraph (non-claim) for readability

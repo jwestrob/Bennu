@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict
+import os
 from pathlib import Path
 
 from .base import OperatorContext, OperatorSpec, register_operator
@@ -157,15 +158,23 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
         ) or []
 
     # Merge with provenance; key by (genome_id, protein_id)
+    debug_ann = str(os.getenv('DEBUG_ANN_DISCOVERY', '')).lower() not in ('', '0', 'false')
     merged: Dict[str, Dict[str, Any]] = {}
     for r in pf_rows:
         gid = str(r.get("genome_id"))
         pid = str(r.get("protein_id"))
         key = f"{gid}\t{pid}"
         entry = merged.setdefault(key, {"genome_id": gid, "protein_id": pid, "pfams": [], "kos": []})
-        pf = r.get("pfam_id") or r.get("domain_id")
-        if pf and pf not in entry["pfams"]:
-            entry["pfams"].append(pf)
+        pf_label = r.get("pfam_name") or r.get("domain_desc") or r.get("domain_id") or r.get("pfam_id")
+        if pf_label and pf_label not in entry["pfams"]:
+            entry["pfams"].append(pf_label)
+        # Optionally capture internal PFAM accessions for debugging/hallmark detection (never printed by default)
+        if debug_ann:
+            pf_acc = r.get("pfam_id")
+            if pf_acc:
+                ids = entry.setdefault("pfam_ids", [])
+                if pf_acc not in ids:
+                    ids.append(pf_acc)
     for r in ko_rows:
         gid = str(r.get("genome_id"))
         pid = str(r.get("protein_id"))

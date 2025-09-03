@@ -1,5 +1,216 @@
 Supersedes: previous CLAUDE note (2025-08-26) and pre‑compaction notes
 
+Agent Status — 2025‑09‑01 (compact)
+
+Where we are
+- Per‑step model overrides stable; IRB uses 4.1‑mini and now sets `max_tokens=30000` (prevents dspy 4k truncation).
+- IRB Option A shipped: multi‑anchor returns minimal JSON; patches built locally → 1 API call/pack, no 60+ call explosions.
+- IRB artifacts persisted: `data/session_notes/<session_id>/synthesis_notes/{irb_report.md, report_context.md, irb_report.json}`.
+- Prompt cleanup: dataset‑specific IDs removed from LLM prompts (placeholders used) to avoid contaminating outputs.
+- Planner rubric updated with PFAM policy: avoid exact equality on PFxxxxx; use accession‑prefix, short‑name, and description matching via flexible templates.
+
+Working on
+- AnnotationDiscovery fallback: if exact PFAM IDs return zero, automatically run flexible PFAM retrieval (prefix/name/description) and merge results (prevents RubisCO misses like PF00016.26/RuBisCO_large).
+- IRB performance knobs (pack size/grouped multi‑anchor) and guardrails; optional “multi‑only + deterministic” mode for predictable latency.
+- Optional: save planner JSON plan and compact macro items alongside IRB outputs for inspection.
+
+Next steps / TODOs
+- Implement flexible PFAM fallback in AnnotationDiscovery (accession prefix OR id prefix OR description contains) with token normalization (PF00016 ↔ PF00016.*, underscore→space).
+- Expose IRB pack/grouping flags and a per‑pack time/call cap; add smoke tests for new IRB path and PFAM fallback (RubisCO present).
+- Optional: small helper to dump planner plan and raw macro items into the session folder.
+
+Quick refs
+- RubisCO verified in current DB: PF00016.26 (RuBisCO_large) ~5 proteins; PF00101.25 (RuBisCO_small) ~1 protein; PRK K00855 present; rbcL/rbcS KOs absent in this snapshot.
+- Script: `scripts/search_rubisco.py` queries domains/KO presence (neo4j/your_new_password).
+
+Local Neo4j Credentials (dev)
+- URI: `bolt://localhost:7687`
+- User: `neo4j`
+- Password: `your_new_password`
+
+Problem Summary — 2025‑09‑02
+
+Observed
+- The database contains hallmark evidence for gas fixation in SRR6231169:
+  - PRK K00855: 6 proteins
+  - Nitrogenase nifH/D/K (K02588/K02586/K02591): 4 / 3 / 4 proteins
+  - RuBisCO PFAMs: PF00016.26 (RuBisCO_large; ~5 proteins), PF00101.25 (RuBisCO_small)
+- Final reports often claim “no PRK, no nitrogenase, no RuBisCO Pfams”. PFAM discovery now returns many families (substring), but specific Calvin/wl anchors don’t reflect PRK/RuBisCO/nif.
+
+Root Cause (dataflow)
+- MacroPlanner → IRB collector whitelisting (src/llm/rag_system/core.py, _collect_macro_raw_items):
+  - Only passes whitelisted list-shaped bindings into IRB: {discovered_proteins, pathway_completeness, bgcs, cazymes, cazyme_family_counts}.
+  - Drops FetchPresentKOs output (“present”), which is precisely where K00855 and nifHDK appear. IRB never sees these hallmarks.
+  - Global dedup across anchors removes repeated proteins. Evidence found under broad anchors gets removed from specific anchors (e.g., Calvin), starving those anchors of relevant rows.
+- PFAM display adjustments:
+  - We switched to names-only in discovered_proteins and hid pfam_ids (PFxxxxx) by default. Domain.name is NULL in this DB, so pfam_name falls back to description/id. The recognizer doesn’t see PF00016/PF00101 tokens it relies on, and the small RuBisCO signal gets lost in large substring result sets.
+
+Quick DB Proof (Cypher)
+- PRK: MATCH (p)-[:HASFUNCTION]->(:KEGGOrtholog {id:'K00855'})-[:<-]-() MATCH (p)-[:ENCODEDBY]->(:Gene)-[:BELONGSTOGENOME]->(:Genome {id:'SRR6231169'}) RETURN count(DISTINCT p) → 6
+- nifH/D/K: K02588=4, K02586=3, K02591=4 (scoped to SRR6231169)
+- RuBisCO PFAM: MATCH (d:Domain) WHERE toLower(d.pfamAccession) STARTS WITH 'pf00016' RETURN d.id,d.pfamAccession → RuBisCO_large PF00016.26; proteins with PF00016* = 5
+
+Consequence
+- IRB synthesizes from incomplete context (no “present” KOs, and anchor-specific evidence trimmed), leading to false negatives for gas-fixation capabilities despite their presence in the KG.
+
+Proposed Plan — Robust, Extensible Collector + Facet‑First IRB
+
+Phase 0 — Instrumentation (no behavior change)
+- Save full MacroPlanner environment before collection: synthesis_notes/all_env.json (keys, example rows).
+- Save per‑anchor summaries to synthesis_notes/anchors_debug.json: rows count; top 10 unique_pfams (names); top 10 unique_pfam_accessions (PFxxxxx); top 10 unique_kos; up to 5 example (genome_id, protein_id).
+- Add DEBUG_ANN_DISCOVERY=1 flag to include pfam_ids in discovered_proteins JSON (not printed), so IRB sees hallmark PF tokens.
+
+Phase 1 — Replace whitelist with Auto‑Adapter + Budget‑Aware Aggregator
+- Auto‑adapter (collector): For any binding value, infer a lightweight “evidence envelope”:
+  {
+    type: 'rowset' | 'enriched' | 'summary',
+    name: '<binding>',
+    rows: [...], // optional if summarized
+    facets: { proteins, pfams, pfam_ids, kos, pathways },
+    schema_version: 'v1',
+    provenance: [...] 
+  }
+- Facet extraction:
+  - proteins → [{genome_id, protein_id}]
+  - pfams → readable names (name > desc > id)
+  - pfam_ids → normalized PFxxxxx for internal hallmark use
+  - kos → ['Kxxxxx']
+  - pathways → KEGG map ids when present
+- Budget-aware aggregator:
+  - MAX_BINDINGS_PER_ANCHOR (e.g., 8); MAX_ROWS_PER_BINDING (e.g., 500)
+  - Summarize large sets into facets (unique_pfams, unique_kos, counts, examples). Keep rows optional (sampled) to stay within token budgets.
+- Dedup scoped per-binding/per-anchor only; never global. Preserve proteins across anchors when they are evidence for multiple capabilities.
+
+Phase 2 — IRB Facet‑First Summarization (names-only display)
+- IRB consumes facets rather than opaque bindings.
+- Names-only: present PFAM names in text; keep pfam_ids internally for recognition (never printed unless debug).
+- Integrate FetchPresentKOs by including its facets (kos) so PRK/nifHDK are always visible to the editor.
+- Add small hallmark detectors that read facets:
+  - rubisco: any pfam_ids startswith PF00016 or PF00101
+  - prk: 'K00855' in kos
+  - nif: 'K02588'/'K02586'/'K02591' in kos
+  - mcrA: 'K00399' in kos; rTCA: 'K15230','K15231' in kos
+
+Phase 3 — Query and Display Hygiene
+- Accession filters: For `PFxxxxx` tokens, prefer STARTS WITH on pfamAccession (index‑backed, version‑tolerant). Use CONTAINS for name/desc only.
+- Domain.name backfill (optional): load from data/reference/pfam_id_desc.tsv (pfamAccession STARTS WITH). Improves name rendering without altering logic.
+
+Phase 4 — Validation & Acceptance
+- DB sanity checks:
+  - PRK (K00855) and nifHDK present in SRR6231169; RuBisCO PFAMs present.
+- One ask run with instrumentation on; inspect:
+  - all_env.json contains 'present' KOs and reasonable size.
+  - anchors_debug.json for Calvin/N fixation anchors shows K00855 and PF00016/PF00101 in top facets; proteins ≥ expected counts.
+- Final report mentions PRK, nif, and RuBisCO when present, using names; no PFxxxxx printed.
+
+Rationale for Removing Whitelist
+- Original intent: control tokens, stabilize IRB input, reduce duplication.
+- Replacement (auto-adapter + caps + facets) keeps those benefits while eliminating brittle, manual allowlists and global dedup.
+- New tools “just work”: any row-shaped output gets summarized to facets; no IRB schema edits needed per tool.
+
+Flags & Rollback
+- DEBUG_ANN_DISCOVERY (include pfam_ids in JSON only).
+- NEW_COLLECTOR=0 (fallback to old collector if needed).
+- IRB_FACET_MODE=1 (enable facet-first summarization; switch off to revert).
+
+Action Items
+1) Add instrumentation (Phase 0) and run a single ask to capture combined_env + anchors_debug.
+2) Implement collector auto-adapter + budget caps; per-binding/per-anchor dedup (Phase 1).
+3) Switch IRB to facets and add hallmark detectors; keep names-only in display (Phase 2).
+4) Validate against SRR6231169 (Phase 4). Consider optional Domain.name backfill.
+
+Expected Outcome
+- Reports correctly reflect PRK/nif/RuBisCO when present in SRR6231169.
+- Adding new tools won’t require updating whitelists or IRB schemas; they’ll be summarized automatically with controlled token usage.
+
+Database Schema — Update (2025‑09‑02)
+
+- Domain nodes now carry accession metadata:
+  - Properties: `id` (family identifier; prefer canonical PFxxxxx), `pfamAccession` (PFxxxxx; indexed), `name` (short), `description`.
+  - Index: `CREATE INDEX domain_pfamAccession IF NOT EXISTS FOR (d:Domain) ON (d.pfamAccession)`.
+  - Query guidance: For accession-based retrieval, prefer `d.pfamAccession = 'PFxxxxx'`; use short-name/description for keyword discovery.
+
+PFAM Accession Field — Plan (2025‑09‑02)
+
+Summary
+- We need a dedicated, queryable Domain.pfamAccession property in Neo4j. Current graphs don’t consistently carry it, which causes misses for versioned PFAM families (e.g., RuBisCO PF00016.26) when matching by unversioned “PFxxxxx” tokens.
+- This plan adds pfamAccession end-to-end: Astra output → annotation processors → RDF → CSV → Neo4j, plus indexes and Cypher templates. No behavioral code changes are committed until approved; this section records the integration plan.
+
+Sources to inspect/adjust
+- Stage 04 (Astra output): `src/ingest/04_astra_scan.py` and `data/stage04_astra/pfam_results/PFAM_hits_df.tsv` columns.
+- Annotation processors: `src/build_kg/annotation_processors.py` (PfamProcessor).
+- RDF builder: `src/build_kg/rdf_builder.py` (PFAM triples; KG.pfamAccession).
+- RDF→CSV converter: `src/build_kg/rdf_to_csv_converter.py` (property passthrough).
+- Neo4j bulk load + tuning: `src/build_kg/neo4j_bulk_loader.py`, `src/build_kg/postload_tuning.py` (indexes/constraints).
+- Cypher templates: `resources/cypher/*.cypher`, `src/llm/kg/cypher_templates/*.cypher` that reference pfamAccession.
+
+Data model (proposed)
+- Domain node properties:
+  - id: PFAM family identifier used in URI (prefer canonical unversioned PFxxxxx; legacy graphs may contain versioned IDs like PFxxxxx.yy).
+  - pfamAccession: Unversioned accession “PFxxxxx” (string, indexed). Primary field for accession matching.
+  - pfamVersion: Optional version integer (e.g., 26) when known.
+  - name: Short name (e.g., RuBisCO_large), when available.
+  - description: Family description, when available.
+- DomainAnnotation nodes remain unchanged; they link Protein → Domain via DOMAINFAMILY.
+
+Pipeline changes (end-to-end)
+1) Astra output (Stage 04)
+   - Goal: ensure each PFAM hit carries both short name and accession (and version if available).
+   - Action: verify `PFAM_hits_df.tsv` columns. Target columns: `sequence_id`, `hmm_name` (short), `hmm_acc` (PFxxxxx[.yy]).
+   - If `hmm_acc` missing: update `astra search` flags (or postprocess) to include accession; otherwise join against `data/reference/pfam_id_desc.tsv` to map `hmm_name → PFxxxxx` (unversioned). Record uncertainties when names map to multiple accessions.
+
+2) Annotation processors
+   - File: `src/build_kg/annotation_processors.py` (PfamProcessor.create_domain_entities)
+   - Changes:
+     - Capture both `pfam_acc` and `pfam_name` fields from the PFAM hits. Prefer `hmm_acc` when present; else map from reference TSV.
+     - Normalize accession into `pfamAccession` (unversioned PFxxxxx) and `pfamVersion` (if the hit reports version, otherwise null).
+     - Keep `domain_id` stable and unique; continue emitting `start_pos`, `end_pos`, `bitscore`, `evalue` as-is.
+
+3) RDF builder
+   - File: `src/build_kg/rdf_builder.py`
+   - Changes:
+     - Domain family URI: use PFAM namespace + canonical unversioned accession (PFxxxxx) for stability.
+  - Add triples on the family node: `KG.pfamAccession` (PFxxxxx), and optionally `KG.name` (short name) and `KG.description` when available from reference.
+     - Continue linking DomainAnnotation → Domain via `KG.domainFamily` and Protein via `KG.hasDomain`.
+
+4) RDF→CSV converter
+   - File: `src/build_kg/rdf_to_csv_converter.py`
+  - No code change expected; it already preserves arbitrary node properties as columns. Confirm Domain CSVs include `pfamAccession`.
+
+5) Neo4j load + indexes
+   - Files: `src/build_kg/neo4j_bulk_loader.py`, `src/build_kg/postload_tuning.py`
+   - Add index: `CREATE INDEX domain_pfamAccession IF NOT EXISTS FOR (d:Domain) ON (d.pfamAccession)`.
+   - Keep existing uniqueness on `d.id`. Fulltext index remains on `[d.id, d.name, d.description]`.
+
+6) Cypher templates (GenomicRAG and legacy)
+   - Files: `resources/cypher/proteins_by_pfam_ids.cypher`, `resources/cypher/pfam_ids_by_query.cypher`, `resources/cypher/proteins_by_pfam_keyword.cypher`, and `src/llm/kg/cypher_templates/*`.
+   - Matching policy with pfamAccession:
+     - For accession tokens (`PFxxxxx`), match `d.pfamAccession = $pf` (exact) for best precision; use `STARTS WITH` only if you must tolerate partials.
+     - For short-name terms, prefer `LOWER(d.name) = term` or `d.description CONTAINS term`; keep `LOWER(d.id)` for legacy graphs.
+   - Backward compatibility: retain id/name/description search in templates until all environments are rebuilt with pfamAccession.
+
+7) Backfill strategy for existing Neo4j databases
+   - Option A (rebuild): Reconstruct RDF with updated builder and bulk-import anew (fastest path, lowest risk).
+   - Option B (in-place backfill):
+     - Load `pfam_id_desc.tsv` into Neo4j (LOAD CSV) and set `d.pfamAccession` by:
+     - If `d.id` matches `^PF\d{5}(?:\.\d+)?$`, set `pfamAccession = substringBefore(d.id, '.')`.
+       - Else join on short name and set `pfamAccession` accordingly; log conflicts for manual review.
+     - Create the `domain_pfamAccession` index.
+
+8) Validation
+   - Script: `scripts/search_rubisco.py` already checks RuBisCO presence across Domain and KO annotations; extend it to verify that `pfamAccession` exists and that PF00016*/PF00101* prefix/exact queries return counts > 0.
+   - Spot-check a few other families (e.g., PF00106, PF00389) and confirm round-trip from PFAM accession → proteins works.
+
+Rollout plan
+- Phase 1: Implement processors + RDF builder updates behind a guard; generate a small test KG and CSV; verify with `search_rubisco.py`.
+- Phase 2: Add indexes and adjust Cypher templates to prefer `d.pfamAccession` when present; keep backward-compatible name/id matching.
+  - Update DSPy signatures (schema + PFAM rubric) to reflect the new `pfamAccession` field and recommend matching on it.
+- Phase 3: Rebuild production KG from RDF and bulk-import; then enable `pfamAccession` exact/prefix matching policies.
+- Phase 4: Remove temporary fallbacks after confidence is high.
+
+Notes
+- No code changes are committed without approval. This plan documents the intended edits so we can review and stage them safely.
+
 Context: KEGG Pathway Completeness (Fast Path + Code Interpreter)
 
 TL;DR

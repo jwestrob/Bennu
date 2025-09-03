@@ -321,11 +321,11 @@ SPECS: Dict[str, TemplateSpec] = {
     "count_proteins_with_pfam": TemplateSpec(
         filename="count_proteins_with_pfam.cypher",
         required={"pfam": str},
-        optional={},
+        optional={"exact": bool},
         category="count",
         returns="scalar",
         cost="cheap",
-        slot_hints={"pfam": "PFxxxxx"},
+        slot_hints={"pfam": "PFxxxxx or name", "exact": "bool"},
     ),
     "count_proteins_in_pathway": TemplateSpec(
         filename="count_proteins_in_pathway.cypher",
@@ -390,6 +390,9 @@ def compile_query(name: str, slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]
     # Provide template-specific defaults for optional parameters
     if name == "proteins_with_pfam" and "exact" not in slots:
         # Default to flexible matching unless explicitly overridden
+        slots = dict(slots)
+        slots["exact"] = False
+    if name == "count_proteins_with_pfam" and "exact" not in slots:
         slots = dict(slots)
         slots["exact"] = False
     validate_slots(name, slots)

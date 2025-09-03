@@ -518,6 +518,16 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         except Exception:
                             pass
 
+                        # Phase 0 instrumentation: persist full MacroPlanner environment
+                        try:
+                            if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                sdir = self.note_keeper.synthesis_notes_path
+                                os.makedirs(sdir, exist_ok=True)
+                                with open(os.path.join(sdir, 'all_env.json'), 'w', encoding='utf-8') as f_env:
+                                    json.dump(combined_env, f_env, indent=2, default=str)
+                        except Exception as _env_save_err:
+                            logger.info(f"MacroPlanner env save skipped: {_env_save_err}")
+
                         # Decide whether to bypass IRB based on token budget (small contexts go straight to final synthesis)
                         def _estimate_tokens(s: str) -> int:
                             try:

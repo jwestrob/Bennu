@@ -10,6 +10,7 @@ OPTIONAL MATCH (sp)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(sd:Domai
 OPTIONAL MATCH (sp)-[:HASFUNCTION]->(sko:KEGGOrtholog)
 WITH s, sp, sg,
      [x IN collect(DISTINCT sd.id) WHERE x IS NOT NULL]  AS seed_pfams,
+     [x IN collect(DISTINCT coalesce(sd.name, sd.id)) WHERE x IS NOT NULL] AS seed_pfam_names,
      [x IN collect(DISTINCT sko.id) WHERE x IS NOT NULL] AS seed_kos
 MATCH (g:Gene {contig: sg.contig})
 WITH s, sp, sg, seed_pfams, seed_kos, g
@@ -27,6 +28,7 @@ OPTIONAL MATCH (np)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain
 OPTIONAL MATCH (np)-[:HASFUNCTION]->(ko:KEGGOrtholog)
 WITH s, sp, sg, seed_pfams, seed_kos, ng, np,
      [x IN collect(DISTINCT d.id) WHERE x IS NOT NULL]  AS pfams,
+     [x IN collect(DISTINCT coalesce(d.name, d.id)) WHERE x IS NOT NULL] AS pfam_names,
      [x IN collect(DISTINCT ko.id) WHERE x IS NOT NULL] AS kos
 WITH s, sp, sg, seed_pfams, seed_kos,
      collect({
@@ -35,6 +37,7 @@ WITH s, sp, sg, seed_pfams, seed_kos,
        name: coalesce(np.id, ''),
        order: toInteger(ng.startCoordinate),
        pfams: pfams,
+       pfam_names: pfam_names,
        kos: kos
      }) AS neigh
 RETURN coalesce(s.seed_protein_id, sp.id) AS seed_protein_id,
@@ -42,5 +45,6 @@ RETURN coalesce(s.seed_protein_id, sp.id) AS seed_protein_id,
         s.genome_id AS genome_id,
         s.contig_len AS contig_len,
         seed_pfams AS seed_pfams,
+        seed_pfam_names AS seed_pfam_names,
         seed_kos AS seed_kos,
         neigh AS neighbors

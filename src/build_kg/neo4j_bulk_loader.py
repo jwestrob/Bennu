@@ -291,6 +291,7 @@ class Neo4jBulkLoader:
             # Helpful single-property indexes
             "CREATE INDEX protein_name IF NOT EXISTS FOR (p:Protein) ON (p.name)",
             "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",
+            "CREATE INDEX domain_pfamAccession IF NOT EXISTS FOR (d:Domain) ON (d.pfamAccession)",
             "CREATE INDEX kegg_desc IF NOT EXISTS FOR (k:KEGGOrtholog) ON (k.description)",
             # Full-text indexes (optional)
             "CREATE FULLTEXT INDEX proteinText IF NOT EXISTS FOR (p:Protein) ON EACH [p.name, p.description]",

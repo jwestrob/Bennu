@@ -1239,7 +1239,7 @@ class ProgressiveSynthesizer:
                         formatted_lines.append(f"{idx}. seed={seed} contig={contig} genome={genome} neighbors={ncount}")
                         # Seed annotations (PFAM/KO) if present
                         try:
-                            spf = card.get('seed_pfams', []) if isinstance(card, dict) else []
+                            spf = (card.get('seed_pfam_names') or card.get('seed_pfams') or []) if isinstance(card, dict) else []
                             sko = card.get('seed_kos', []) if isinstance(card, dict) else []
                             spf_show = ", ".join(spf[:3]) if spf else "-"
                             sko_show = ", ".join(sko[:3]) if sko else "-"
@@ -1249,7 +1249,7 @@ class ProgressiveSynthesizer:
                         # Show up to 3 neighbors with PFAM/KO details when present
                         for nb in (neighbors or [])[:3]:
                             pid = nb.get('protein_id') if isinstance(nb, dict) else nb
-                            pfams = nb.get('pfams', []) if isinstance(nb, dict) else []
+                            pfams = (nb.get('pfam_names') or nb.get('pfams') or []) if isinstance(nb, dict) else []
                             kos = nb.get('kos', []) if isinstance(nb, dict) else []
                             # Show up to 2 identifiers for each to keep concise
                             p_show = ", ".join(pfams[:2]) if pfams else "-"

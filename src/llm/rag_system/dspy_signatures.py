@@ -52,10 +52,12 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
         *   `hasLocation`: (String) Location string format.
 
 *   **`Domain`**
-    *   Represents a protein domain from the PFAM database.
+    *   Represents a protein domain family (PFAM).
     *   **Properties:**
-        *   `id`: (String) The PFAM accession ID (e.g., `PF00005.28`).
-        *   `description`: (String) A description of the PFAM domain.
+        *   `id`: (String) Family identifier used in URIs. Typically the canonical PF accession without version (e.g., `PF00005`). In legacy graphs this may be versioned (e.g., `PF00005.28`).
+        *   `pfamAccession`: (String) Canonical unversioned PFAM accession `PFxxxxx` (indexed). Use this for accession matching.
+        *   `name`: (String, optional) Short name (e.g., `ATP_synt_ab`).
+        *   `description`: (String, optional) Family description.
 
 *   **`DomainAnnotation`**
     *   Represents domain annotation hits on proteins.
@@ -157,14 +159,14 @@ RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
 
 **Pattern 2 - PFAM Domain Search:**
 ```cypher
-MATCH (dom:Domain) 
-WHERE toLower(dom.description) CONTAINS 'transport'
+MATCH (dom:Domain)
+WHERE toLower(coalesce(dom.description, '')) CONTAINS 'transport'
 MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)
 OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
 OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
 RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
        g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
-       collect(DISTINCT dom.id) AS pfam_accessions
+       collect(DISTINCT coalesce(dom.pfamAccession, dom.id)) AS pfam_accessions
 ```
 
 **Pattern 3 - BGC Search (GECCO-detected clusters):**
@@ -344,9 +346,9 @@ class ContextRetriever(dspy.Signature):
 
     REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
     
-    PFAM matching rules (avoid strict equality on PFxxxxx):
-    - When matching PFAM Domain families, use version-tolerant patterns: pfamAccession STARTS WITH token, Domain.id STARTS WITH token, or description CONTAINS normalized name terms.
-    - Prefer using the provided flexible operators/templates rather than hand-writing exact-equality PFAM filters.
+    PFAM matching rules:
+    - The graph exposes Domain.pfamAccession (PFxxxxx). Prefer pfamAccession for accession-based matching; avoid strict equality on versioned Domain.id.
+    - Use accession-aware templates/operators; if writing Cypher, match on `dom.pfamAccession = 'PFxxxxx'` and use description/name terms only for keyword discovery.
 
     CAZYME QUERY DETECTION - MANDATORY:
     When user mentions CAZyme, carbohydrate, glycoside, carbohydrate-active, dbCAN:
