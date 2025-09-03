@@ -19,6 +19,8 @@ CREATE INDEX gene_contig_coords IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.start
 // --- Helpful single-property indexes (cheap, improves filters) ---
 CREATE INDEX protein_name IF NOT EXISTS FOR (p:Protein) ON (p.name);
 CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name);
+// Dedicated accession index used for PFxxxxx accession/prefix queries
+CREATE INDEX domain_pfamAccession IF NOT EXISTS FOR (d:Domain) ON (d.pfamAccession);
 CREATE INDEX kegg_desc IF NOT EXISTS FOR (k:KEGGOrtholog) ON (k.description);
 
 // --- Full-text indexes for fuzzy search (optional) ---
@@ -30,4 +32,3 @@ CREATE FULLTEXT INDEX pathwayText IF NOT EXISTS FOR (pw:Pathway) ON EACH [pw.id,
 
 // Hints: In stubborn queries, consider USING INDEX on (g:Gene contig, startCoordinate)
 // and return minimal columns first; fetch heavy fields lazily.
-

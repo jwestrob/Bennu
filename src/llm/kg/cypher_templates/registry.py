@@ -336,6 +336,24 @@ SPECS: Dict[str, TemplateSpec] = {
         cost="cheap",
         slot_hints={"pathway": "mapxxxxx"},
     ),
+    "count_proteins_by_pfam_ids": TemplateSpec(
+        filename="count_proteins_by_pfam_ids.cypher",
+        required={"pfams": list},
+        optional={},
+        category="count",
+        returns="table",
+        cost="cheap",
+        slot_hints={"pfams": "[PFxxxxx,...]"},
+    ),
+    "count_proteins_by_ko_ids": TemplateSpec(
+        filename="count_proteins_by_ko_ids.cypher",
+        required={"kos": list},
+        optional={},
+        category="count",
+        returns="table",
+        cost="cheap",
+        slot_hints={"kos": "[Kxxxxx,...]"},
+    ),
 }
 
 

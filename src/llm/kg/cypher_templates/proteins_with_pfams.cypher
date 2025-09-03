@@ -1,21 +1,25 @@
-// Proteins annotated with any of the provided PFAM domain families (exact, prefix, or substring)
-MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
-WHERE (
-  d.id IN $pfams OR d.pfamAccession IN $pfams OR
-  ANY(pf IN $pfams WHERE (
-    // accession-like tokens → prefer STARTS WITH on pfamAccession/id
-    toLower(pf) =~ '^pf\\d{5}$' AND (
-      toLower(coalesce(d.pfamAccession,'')) STARTS WITH toLower(pf) OR
-      toLower(d.id) STARTS WITH toLower(pf)
-    )
-  ) OR ANY(pf IN $pfams WHERE (
-    // other tokens → substring on id/name/description
-    NOT toLower(pf) =~ '^pf\\d{5}$' AND (
-      toLower(d.id) CONTAINS toLower(pf) OR
-      toLower(coalesce(d.name,'')) CONTAINS toLower(pf) OR
-      toLower(coalesce(d.description,'')) CONTAINS toLower(pf)
-    )
-  ))
-)
+// Proteins annotated with any of the provided PFAM tokens (accession or keyword)
+// Accession tokens use STARTS WITH on indexed fields; keywords use full-text lookup
+
+WITH [pf IN $pfams | toUpper(pf)] AS toks
+// Accession/prefix branch
+CALL {
+  WITH toks
+  UNWIND toks AS q
+  WITH DISTINCT q WHERE q =~ '^PF\\d{5}$'
+  MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
+  WHERE d.pfamAccession STARTS WITH q OR d.id STARTS WITH q
+  RETURN DISTINCT p
+}
+UNION
+// Keyword branch via full-text index
+CALL {
+  WITH toks
+  UNWIND toks AS q
+  WITH DISTINCT q WHERE NOT q =~ '^PF\\d{5}$'
+  CALL db.index.fulltext.queryNodes('domainText', q) YIELD node AS d
+  MATCH (p:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d)
+  RETURN DISTINCT p
+}
 RETURN DISTINCT p
 LIMIT $limit;

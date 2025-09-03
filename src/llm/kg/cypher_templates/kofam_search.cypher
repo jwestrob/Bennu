@@ -1,7 +1,4 @@
-// Find KEGG Orthologs matching a substring (case-insensitive)
-MATCH (ko:KEGGOrtholog)
-WHERE toLower(ko.id) CONTAINS toLower($q)
-   OR toLower(ko.description) CONTAINS toLower($q)
+// Full-text search for KO terms (keggText index)
+CALL db.index.fulltext.queryNodes('keggText', $q) YIELD node AS ko, score
 RETURN ko.id AS id, ko.description AS description
 LIMIT $limit;
-

@@ -192,79 +192,125 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             seen.add(short)
     ko_ids = [h.get("ko_id") for h in ko_hits if h.get("ko_id")]
 
-    # Stage 2: exact ID retrieval
-    pf_rows = []
-    ko_rows = []
-    if pfam_ids:
-        __tp = time.perf_counter()
-        pf_rows = runner.run_template(
-            "proteins_by_pfam_ids.cypher",
-            {"pfam_ids": pfam_ids, "genome_ids": genome_ids, "limit": limit},
-        ) or []
-        try:
-            import logging
-            logging.getLogger(__name__).info(
-                f"AnnotationDiscovery: proteins_by_pfam_ids ids={len(pfam_ids)} genomes={len(genome_ids)} "
-                f"rows={len(pf_rows)} in {(time.perf_counter()-__tp)*1000:.0f} ms")
-        except Exception:
-            pass
-    if ko_ids:
-        __tk = time.perf_counter()
-        ko_rows = runner.run_template(
-            "proteins_by_ko_ids.cypher",
-            {"ko_ids": ko_ids, "genome_ids": genome_ids, "limit": limit},
-        ) or []
-        try:
-            import logging
-            logging.getLogger(__name__).info(
-                f"AnnotationDiscovery: proteins_by_ko_ids ids={len(ko_ids)} genomes={len(genome_ids)} "
-                f"rows={len(ko_rows)} in {(time.perf_counter()-__tk)*1000:.0f} ms")
-        except Exception:
-            pass
+    # Decide which facets are needed and whether to use counts or rowsets
+    pfam_needed = group_by in ("pfam", "both")
+    ko_needed = group_by in ("ko", "both")
+    use_counts = (output_profile == 'facet_summary') and (not return_full)
 
-    # Merge with provenance; key by (genome_id, protein_id)
-    debug_ann = str(os.getenv('DEBUG_ANN_DISCOVERY', '')).lower() not in ('', '0', 'false')
+    kos_facets: List[Dict[str, Any]] = []
+    pfam_facets: List[Dict[str, Any]] = []
     merged: Dict[str, Dict[str, Any]] = {}
-    for r in pf_rows:
-        gid = str(r.get("genome_id"))
-        pid = str(r.get("protein_id"))
-        key = f"{gid}\t{pid}"
-        entry = merged.setdefault(key, {"genome_id": gid, "protein_id": pid, "pfams": [], "kos": []})
-        pf_label = r.get("pfam_name") or r.get("domain_desc") or r.get("domain_id") or r.get("pfam_id")
-        if pf_label and pf_label not in entry["pfams"]:
-            entry["pfams"].append(pf_label)
-        # Optionally capture internal PFAM accessions for debugging/hallmark detection (never printed by default)
-        if debug_ann:
-            pf_acc = r.get("pfam_id")
-            if pf_acc:
-                ids = entry.setdefault("pfam_ids", [])
-                if pf_acc not in ids:
-                    ids.append(pf_acc)
-    for r in ko_rows:
-        gid = str(r.get("genome_id"))
-        pid = str(r.get("protein_id"))
-        key = f"{gid}\t{pid}"
-        entry = merged.setdefault(key, {"genome_id": gid, "protein_id": pid, "pfams": [], "kos": []})
-        koid = r.get("ko_id")
-        if koid and koid not in entry["kos"]:
-            entry["kos"].append(koid)
 
-    # Aggregate facets
-    def _aggregate_counts(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        ko_counts: Dict[str, int] = {}
-        pf_counts: Dict[str, int] = {}
-        for r in rows:
-            for ko in (r.get("kos") or []):
-                if isinstance(ko, str) and ko:
-                    ko_counts[ko] = ko_counts.get(ko, 0) + 1
-            for pf in (r.get("pfams") or []):
-                if isinstance(pf, str) and pf:
-                    pf_counts[pf] = pf_counts.get(pf, 0) + 1
-        kos = sorted(({"id": k, "count": v} for k, v in ko_counts.items()), key=lambda d: (-d["count"], d["id"]))
-        pfs = sorted(({"id": k, "count": v} for k, v in pf_counts.items()), key=lambda d: (-d["count"], d["id"]))
-        return kos, pfs
+    # Clamp catalog IDs to requested top_k before DB calls (facet path)
+    pfam_inputs = pfam_ids
+    ko_inputs = ko_ids
+    if use_counts:
+        if pfam_needed:
+            pfam_inputs = pfam_ids[:pfam_top_k]
+        else:
+            pfam_inputs = []
+        if ko_needed:
+            ko_inputs = ko_ids[:ko_top_k]
+        else:
+            ko_inputs = []
 
-    kos_facets, pfam_facets = _aggregate_counts(list(merged.values()))
+    if use_counts:
+        # Run count templates for selected facets only
+        if pfam_needed and pfam_inputs:
+            __tpf = time.perf_counter()
+            cnt_pf = runner.run_template(
+                "count_proteins_by_pfam_tokens.cypher",
+                {"tokens": pfam_inputs, "genome_ids": genome_ids},
+            ) or []
+            try:
+                logging.getLogger(__name__).info(
+                    f"AnnotationDiscovery: count_pf tokens={len(pfam_inputs)} genomes={len(genome_ids)} in {(time.perf_counter()-__tpf)*1000:.0f} ms")
+            except Exception:
+                pass
+            # Build facet entries from counts (prefer label)
+            pfam_facets = sorted(({"id": r.get("label") or r.get("token"), "count": int(r.get("count") or 0)} for r in cnt_pf), key=lambda d: (-d["count"], str(d["id"])) )
+        if ko_needed and ko_inputs:
+            __tko = time.perf_counter()
+            cnt_ko = runner.run_template(
+                "count_proteins_by_ko_ids.cypher",
+                {"ko_ids": ko_inputs, "genome_ids": genome_ids},
+            ) or []
+            try:
+                logging.getLogger(__name__).info(
+                    f"AnnotationDiscovery: count_ko ids={len(ko_inputs)} genomes={len(genome_ids)} in {(time.perf_counter()-__tko)*1000:.0f} ms")
+            except Exception:
+                pass
+            kos_facets = sorted(({"id": r.get("ko_id"), "count": int(r.get("count") or 0)} for r in cnt_ko), key=lambda d: (-d["count"], str(d["id"])) )
+    else:
+        # Legacy rowset path: fetch rows for required facets only and aggregate locally
+        pf_rows: List[Dict[str, Any]] = []
+        ko_rows: List[Dict[str, Any]] = []
+        if pfam_needed and pfam_ids:
+            __tp = time.perf_counter()
+            pf_rows = runner.run_template(
+                "proteins_by_pfam_ids.cypher",
+                {"pfam_ids": pfam_ids, "genome_ids": genome_ids, "limit": limit},
+            ) or []
+            try:
+                logging.getLogger(__name__).info(
+                    f"AnnotationDiscovery: proteins_by_pfam_ids ids={len(pfam_ids)} genomes={len(genome_ids)} rows={len(pf_rows)} in {(time.perf_counter()-__tp)*1000:.0f} ms")
+            except Exception:
+                pass
+        if ko_needed and ko_ids:
+            __tk = time.perf_counter()
+            ko_rows = runner.run_template(
+                "proteins_by_ko_ids.cypher",
+                {"ko_ids": ko_ids, "genome_ids": genome_ids, "limit": limit},
+            ) or []
+            try:
+                logging.getLogger(__name__).info(
+                    f"AnnotationDiscovery: proteins_by_ko_ids ids={len(ko_ids)} genomes={len(genome_ids)} rows={len(ko_rows)} in {(time.perf_counter()-__tk)*1000:.0f} ms")
+            except Exception:
+                pass
+
+        # Merge with provenance; key by (genome_id, protein_id)
+        debug_ann = str(os.getenv('DEBUG_ANN_DISCOVERY', '')).lower() not in ('', '0', 'false')
+        for r in pf_rows:
+            gid = str(r.get("genome_id"))
+            pid = str(r.get("protein_id"))
+            key = f"{gid}\t{pid}"
+            entry = merged.setdefault(key, {"genome_id": gid, "protein_id": pid, "pfams": [], "kos": []})
+            pf_label = r.get("pfam_name") or r.get("domain_desc") or r.get("domain_id") or r.get("pfam_id")
+            if pf_label and pf_label not in entry["pfams"]:
+                entry["pfams"].append(pf_label)
+            if debug_ann:
+                pf_acc = r.get("pfam_id")
+                if pf_acc:
+                    ids = entry.setdefault("pfam_ids", [])
+                    if pf_acc not in ids:
+                        ids.append(pf_acc)
+        for r in ko_rows:
+            gid = str(r.get("genome_id"))
+            pid = str(r.get("protein_id"))
+            key = f"{gid}\t{pid}"
+            entry = merged.setdefault(key, {"genome_id": gid, "protein_id": pid, "pfams": [], "kos": []})
+            koid = r.get("ko_id")
+            if koid and koid not in entry["kos"]:
+                entry["kos"].append(koid)
+
+        # Aggregate facets from merged rows
+        def _aggregate_counts(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+            ko_counts: Dict[str, int] = {}
+            pf_counts: Dict[str, int] = {}
+            for r in rows:
+                if ko_needed:
+                    for ko in (r.get("kos") or []):
+                        if isinstance(ko, str) and ko:
+                            ko_counts[ko] = ko_counts.get(ko, 0) + 1
+                if pfam_needed:
+                    for pf in (r.get("pfams") or []):
+                        if isinstance(pf, str) and pf:
+                            pf_counts[pf] = pf_counts.get(pf, 0) + 1
+            kos = sorted(({"id": k, "count": v} for k, v in ko_counts.items()), key=lambda d: (-d["count"], d["id"]))
+            pfs = sorted(({"id": k, "count": v} for k, v in pf_counts.items()), key=lambda d: (-d["count"], d["id"]))
+            return kos, pfs
+
+        kos_facets, pfam_facets = _aggregate_counts(list(merged.values()))
     max_server_cap = 10000
     def _apply_limit(items: List[Dict[str, Any]], top_k: int):
         total = len(items)
@@ -282,23 +328,24 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
 
     selection_meta = {"groups": {}}
     facets: Dict[str, Any] = {}
-    if group_by in ("ko", "both"):
+    if ko_needed:
         sel, sm = _apply_limit(kos_facets, ko_top_k)
         facets["kos"] = sel
         selection_meta["groups"]["ko"] = sm
-    if group_by in ("pfam", "both"):
+    if pfam_needed:
         sel, sm = _apply_limit(pfam_facets, pfam_top_k)
         facets["pfams"] = sel
         selection_meta["groups"]["pfam"] = sm
 
     # Compose result
-    out_rows = list(merged.values())
-    out_rows.sort(key=lambda x: (x.get("genome_id", ""), x.get("protein_id", "")))
     res: Dict[str, Any] = {"facet_summary": facets, "selection_metadata": selection_meta}
-    if output_profile == 'rowset' or return_full:
-        res["discovered_proteins"] = out_rows
-        if return_full:
-            res["_format"] = "full"
+    if not use_counts:
+        out_rows = list(merged.values())
+        out_rows.sort(key=lambda x: (x.get("genome_id", ""), x.get("protein_id", "")))
+        if output_profile == 'rowset' or return_full:
+            res["discovered_proteins"] = out_rows
+            if return_full:
+                res["_format"] = "full"
     return res
 
 # Register operators

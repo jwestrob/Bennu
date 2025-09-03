@@ -349,8 +349,19 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
                         lm = make_lm(model_id, step="planner")
                         module = dspy.Predict(MacroPlannerSignature)
+                        # Timing + effort visibility
+                        import time as _t
+                        _t0 = _t.time()
                         with dspy.context(lm=lm):
                             plan_res = module(**planner_call_inputs())
+                        _ms = int((_t.time() - _t0) * 1000)
+                        try:
+                            # Best-effort effort extraction from alias
+                            from ..lm_factory import _extract_gpt5_effort as _eff
+                            eff = _eff(model_id) or 'n/a'
+                        except Exception:
+                            eff = 'n/a'
+                        logger.info(f"🕒 Planner latency: {_ms} ms (model={model_id}, effort={eff})")
                     except Exception as _e:
                         logger.warning(f"Planner call failed: {_e}")
                     plan_text = getattr(plan_res, 'plan_json', '') if plan_res else ''
@@ -500,6 +511,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
                                 lm = make_lm(model_id, step="planner")
                                 module = dspy.Predict(MacroPlannerSignature)
+                                import time as _t
+                                _t0 = _t.time()
                                 with dspy.context(lm=lm):
                                     plan_res2 = module(
                                         question=question,
@@ -508,6 +521,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                         ko_reference=ko_ref,
                                         pfam_reference=pf_ref,
                                     )
+                                _ms = int((_t.time() - _t0) * 1000)
+                                try:
+                                    from ..lm_factory import _extract_gpt5_effort as _eff
+                                    eff = _eff(model_id) or 'n/a'
+                                except Exception:
+                                    eff = 'n/a'
+                                logger.info(f"🕒 Planner retry latency: {_ms} ms (model={model_id}, effort={eff})")
                             except Exception as _e3:
                                 logger.warning(f"Planner retry failed: {_e3}")
                                 plan_res2 = None

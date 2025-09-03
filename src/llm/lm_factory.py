@@ -7,11 +7,17 @@ Supports:
 - OpenAI non-reasoning models (e.g., openai/gpt-4.1-mini): chat style
 - OpenRouter Sonnet 4: uses dspy.OpenAI with OpenRouter api_base
 
-All constructions avoid specifying any max_tokens parameter per user request.
+Behavioral notes:
+- Avoid specifying any max_tokens parameter for GPT-5/o1 per project policy.
+- When GPT-5 aliases include an effort suffix (gpt-5-minimal|low|medium|high), attach
+  reasoning={"effort": <level>} to the LM so the API uses the desired effort.
 """
 
 import os
 from typing import Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_alias(model_id: str) -> Optional[str]:
@@ -60,6 +66,30 @@ def _normalize_model(model_id: str) -> str:
     return mid
 
 
+def _extract_gpt5_effort(model_id: str) -> Optional[str]:
+    """Extract reasoning effort from GPT-5 alias.
+
+    Accepts: gpt-5-minimal | gpt-5-low | gpt-5-medium | gpt-5-high (with or without provider prefix).
+    Returns one of: minimal, low, medium, high; otherwise None.
+    """
+    if not model_id:
+        return None
+    # Consider raw alias (without provider) for effort parsing
+    alias = model_id.split("/", 1)[1] if "/" in model_id else model_id
+    a = alias.strip().lower()
+    if a.startswith("gpt-5-"):
+        # map suffix → effort
+        if a.endswith("-minimal"):
+            return "minimal"
+        if a.endswith("-low"):
+            return "low"
+        if a.endswith("-medium"):
+            return "medium"
+        if a.endswith("-high"):
+            return "high"
+    return None
+
+
 def make_lm(model_id: str, step: str = "") -> Any:
     """
     Create a DSPy-compatible LM object based on a model id string.
@@ -72,6 +102,8 @@ def make_lm(model_id: str, step: str = "") -> Any:
     """
     import dspy
 
+    # Preserve original for effort extraction before normalization
+    effort = _extract_gpt5_effort(model_id)
     model = _normalize_model(model_id)
     lower = model.lower()
 
@@ -126,7 +158,8 @@ def make_lm(model_id: str, step: str = "") -> Any:
     # - No token caps (respect user's request to exclude max_tokens)
     # - Drop params that can force wrong routes or caps if injected by adapters
     if ("/gpt-5" in lower) or ("/o1" in lower):
-        lm = dspy.LM(
+        # Attach GPT-5 reasoning effort if requested via alias
+        kwargs = dict(
             model=model,
             drop_params=True,
             additional_drop_params=[
@@ -136,6 +169,16 @@ def make_lm(model_id: str, step: str = "") -> Any:
                 "max_completion_tokens",
             ],
         )
+        if ("/gpt-5" in lower) and effort:
+            # litellm/OpenAI adapter expects 'reasoning_effort' top-level param
+            # rather than a nested 'reasoning' dict; set it here so the
+            # underlying client forwards it as-is.
+            kwargs["reasoning_effort"] = effort
+            try:
+                logger.info(f"🎯 GPT-5 reasoning effort set: step='{step}' effort='{effort}' model='{model}'")
+            except Exception:
+                pass
+        lm = dspy.LM(**kwargs)
         try:
             for k in ("response_format", "max_tokens", "max_output_tokens", "max_completion_tokens"):
                 lm.kwargs.pop(k, None)
