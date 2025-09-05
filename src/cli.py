@@ -42,6 +42,37 @@ logging.basicConfig(
 logger = logging.getLogger("genome-kg")
 
 
+def _run_neo4j_postload_tuning_if_available(postload_tuning_module) -> None:
+    """Run Neo4j post-load tuning (constraints/indexes + NEXT edges) if module is available.
+
+    This step is idempotent and safe to re-run. It requires NEO4J_URI/USER/PASSWORD env vars.
+    """
+    if postload_tuning_module is None:
+        logger.info("Neo4j post-load tuning module not available; skipping NEXT edge creation")
+        return
+    # Check env creds
+    import os
+    uri = os.getenv("NEO4J_URI")
+    user = os.getenv("NEO4J_USER")
+    password = os.getenv("NEO4J_PASSWORD")
+    if not (uri and user and password):
+        logger.info("NEO4J_URI/USER/PASSWORD not set; skipping Neo4j post-load tuning")
+        return
+    try:
+        console.print("[bold cyan]Running Neo4j post-load tuning (constraints/indexes + NEXT edges)...[/bold cyan]")
+        # Create constraints/indexes
+        postload_tuning_module.create_constraints_and_indexes()
+        console.print("[green]✓ Constraints and indexes ensured[/green]")
+        # Create NEXT edges
+        total_pairs = postload_tuning_module.precompute_next_edges()
+        console.print(f"[green]✓ NEXT edges processed[/green] (pairs≈{total_pairs:,})")
+        logger.info(f"Neo4j post-load tuning complete: NEXT pairs≈{total_pairs:,}")
+    except Exception as e:
+        logger.warning(f"Neo4j post-load tuning failed or unavailable: {e}")
+        # Do not fail the pipeline if tuning is optional
+        console.print("[yellow]Skipping Neo4j post-load tuning due to error[/yellow]")
+
+
 @app.command()
 def build(
     input_dir: Path = typer.Option(
@@ -110,6 +141,11 @@ def build(
     run_gecco_module = importlib.import_module('src.ingest.gecco_bgc')
     run_dbcan_module = importlib.import_module('src.ingest.dbcan_cazyme')
     build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
+    # Neo4j post-load tuning (constraints/indexes + NEXT edges)
+    try:
+        postload_tuning = importlib.import_module('src.build_kg.postload_tuning')
+    except Exception:
+        postload_tuning = None
     esm2_embeddings_module = importlib.import_module('src.ingest.06_esm2_embeddings')
 
     prepare_inputs = prepare_inputs_module.prepare_inputs
@@ -220,13 +256,16 @@ def build(
         7: {
             "name": "Knowledge Graph Construction",
             "outdir": output_dir / "stage07_kg",
-            "function": lambda: build_knowledge_graph_with_extended_annotations(
-                stage03_dir=output_dir / "stage03_prodigal",
-                stage04_dir=output_dir / "stage04_astra",
-                stage05a_dir=output_dir / "stage05_gecco",
-                stage05b_dir=output_dir / "stage06_dbcan",
-                output_dir=output_dir / "stage07_kg",
-                stage01_dir=output_dir / "stage01_quast"
+            "function": lambda: (
+                build_knowledge_graph_with_extended_annotations(
+                    stage03_dir=output_dir / "stage03_prodigal",
+                    stage04_dir=output_dir / "stage04_astra",
+                    stage05a_dir=output_dir / "stage05_gecco",
+                    stage05b_dir=output_dir / "stage06_dbcan",
+                    output_dir=output_dir / "stage07_kg",
+                    stage01_dir=output_dir / "stage01_quast"
+                ),
+                _run_neo4j_postload_tuning_if_available(postload_tuning)
             )
         },
         8: {

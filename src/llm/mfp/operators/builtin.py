@@ -9,6 +9,7 @@ from .base import OperatorContext, OperatorSpec, register_operator
 from ...options.template_runner import FileCypherRunner
 from .catalog_search import _search_pfam, _search_ko
 from ...kegg.pathway_mapping import load_ko_pathway_maps
+from ...kg.cypher_templates import registry as kg_tpl_registry
 
 
 def _fetch_present_kos(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
@@ -221,6 +222,47 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
     # Clamp catalog IDs to requested top_k before DB calls (facet path)
     pfam_inputs = pfam_ids
     ko_inputs = ko_ids
+    # Determine token clamps and optional explicit allowlists (agent-visible knobs)
+    # Apply these consistently to both counts and rowset paths (no hidden behavior).
+    # Optional planner-provided token caps
+    try:
+        pfam_tokens_top_n = int(params.get("pfam_tokens_top_n")) if params.get("pfam_tokens_top_n") is not None else None
+    except Exception:
+        pfam_tokens_top_n = None
+    try:
+        ko_tokens_top_n = int(params.get("ko_tokens_top_n")) if params.get("ko_tokens_top_n") is not None else None
+    except Exception:
+        ko_tokens_top_n = None
+
+    # Optional explicit allowlists to restrict rowset retrieval (params or inputs)
+    pfam_ids_override = None
+    if isinstance(params.get("pfam_ids"), list):
+        pfam_ids_override = [str(x) for x in params.get("pfam_ids")]
+    elif isinstance(inputs.get("pfam_ids"), list):
+        pfam_ids_override = [str(x) for x in inputs.get("pfam_ids")]
+    ko_ids_override = None
+    if isinstance(params.get("ko_ids"), list):
+        ko_ids_override = [str(x) for x in params.get("ko_ids")]
+    elif isinstance(inputs.get("ko_ids"), list):
+        ko_ids_override = [str(x) for x in inputs.get("ko_ids")]
+
+    # Build rowset token lists respecting caps/overrides
+    def _clamp(tokens: List[str], n: int | None) -> List[str]:
+        if n is None or n <= 0:
+            return tokens
+        return tokens[:n]
+
+    rowset_pfam_ids = pfam_ids
+    rowset_ko_ids = ko_ids
+    if pfam_ids_override:
+        rowset_pfam_ids = [str(x) for x in pfam_ids_override if isinstance(x, str)]
+    else:
+        rowset_pfam_ids = _clamp(rowset_pfam_ids, pfam_tokens_top_n)
+    if ko_ids_override:
+        rowset_ko_ids = [str(x) for x in ko_ids_override if isinstance(x, str)]
+    else:
+        rowset_ko_ids = _clamp(rowset_ko_ids, ko_tokens_top_n)
+
     if use_counts:
         # Optional planner-provided token caps
         try:
@@ -297,29 +339,29 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
                 kos_facets.append({"id": kid, "name": r.get("label"), "count": int(r.get("count") or 0)})
             kos_facets.sort(key=lambda d: (-d["count"], str(d["id"])) )
     else:
-        # Legacy rowset path: fetch rows for required facets only and aggregate locally
+        # Rowset path: fetch rows using clamped/overridden token sets and aggregate locally
         pf_rows: List[Dict[str, Any]] = []
         ko_rows: List[Dict[str, Any]] = []
-        if pfam_needed and pfam_ids:
+        if pfam_needed and rowset_pfam_ids:
             __tp = time.perf_counter()
             pf_rows = runner.run_template(
                 "proteins_by_pfam_ids.cypher",
-                {"pfam_ids": pfam_ids, "genome_ids": genome_ids, "limit": limit},
+                {"pfam_ids": rowset_pfam_ids, "genome_ids": genome_ids, "limit": limit},
             ) or []
             try:
                 logging.getLogger(__name__).info(
-                    f"AnnotationDiscovery: proteins_by_pfam_ids ids={len(pfam_ids)} genomes={len(genome_ids)} rows={len(pf_rows)} in {(time.perf_counter()-__tp)*1000:.0f} ms")
+                    f"AnnotationDiscovery: proteins_by_pfam_ids ids={len(rowset_pfam_ids)} genomes={len(genome_ids)} rows={len(pf_rows)} in {(time.perf_counter()-__tp)*1000:.0f} ms")
             except Exception:
                 pass
-        if ko_needed and ko_ids:
+        if ko_needed and rowset_ko_ids:
             __tk = time.perf_counter()
             ko_rows = runner.run_template(
                 "proteins_by_ko_ids.cypher",
-                {"ko_ids": ko_ids, "genome_ids": genome_ids, "limit": limit},
+                {"ko_ids": rowset_ko_ids, "genome_ids": genome_ids, "limit": limit},
             ) or []
             try:
                 logging.getLogger(__name__).info(
-                    f"AnnotationDiscovery: proteins_by_ko_ids ids={len(ko_ids)} genomes={len(genome_ids)} rows={len(ko_rows)} in {(time.perf_counter()-__tk)*1000:.0f} ms")
+                    f"AnnotationDiscovery: proteins_by_ko_ids ids={len(rowset_ko_ids)} genomes={len(genome_ids)} rows={len(ko_rows)} in {(time.perf_counter()-__tk)*1000:.0f} ms")
             except Exception:
                 pass
 
@@ -333,12 +375,13 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             pf_label = r.get("pfam_name") or r.get("domain_desc") or r.get("domain_id") or r.get("pfam_id")
             if pf_label and pf_label not in entry["pfams"]:
                 entry["pfams"].append(pf_label)
-            if debug_ann:
-                pf_acc = r.get("pfam_id")
-                if pf_acc:
-                    ids = entry.setdefault("pfam_ids", [])
-                    if pf_acc not in ids:
-                        ids.append(pf_acc)
+            # Always include accession tokens for downstream filtering (version-tolerant: keep base PFxxxxx)
+            pf_acc = r.get("pfam_id")
+            if pf_acc:
+                base = str(pf_acc).split('.')[0]
+                ids = entry.setdefault("pfam_ids", [])
+                if base not in ids:
+                    ids.append(base)
         for r in ko_rows:
             gid = str(r.get("genome_id"))
             pid = str(r.get("protein_id"))
@@ -415,6 +458,339 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
                 res["_format"] = "full"
     return res
 
+
+def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Batch neighborhood extraction for seed proteins using curated KG templates.
+
+    Inputs:
+      - discovered_proteins (optional): rows with at least protein_id
+    Params:
+      - protein_ids: explicit seed list (overrides discovered_proteins)
+      - k: optional k-step adjacency (int). If absent, use flanking genes (±5)
+      - limit: per-seed cap on neighbor rows (default 200)
+      - seeds_limit: max number of seeds to process (default 10)
+      - fallback_window_bp: bp window for span fallback when adjacency/flanking yields 0 rows (default 10000)
+      - output_profile: summary|rowset (default summary)
+
+    Outputs:
+      - neighborhoods: list of per-seed neighborhood payloads [{seed_protein_id, template, rows, debug}]
+      - neighborhood_summary: {total_rows, summary_table:[{seed,row_count}]}
+      - seeds_used: list of seed protein IDs actually processed
+      - neighborhood_macro_result: compact macro_result for reporter context
+    """
+    # Parameter parsing
+    try:
+        k = int(params.get("k")) if params.get("k") is not None else None
+    except Exception:
+        k = None
+    try:
+        limit = int(params.get("limit", 200))
+    except Exception:
+        limit = 200
+    try:
+        seeds_limit = int(params.get("seeds_limit", 10))
+    except Exception:
+        seeds_limit = 10
+    try:
+        fallback_window_bp = int(params.get("fallback_window_bp", 10000))
+    except Exception:
+        fallback_window_bp = 10000
+    output_profile = str(params.get("output_profile") or "summary").strip().lower()
+
+    # Optional explicit seeding via PFAM/KO ids (agent-visible)
+    seed_pfam_ids = params.get("seed_pfam_ids") if isinstance(params.get("seed_pfam_ids"), list) else None
+    seed_ko_ids = params.get("seed_ko_ids") if isinstance(params.get("seed_ko_ids"), list) else None
+    seed_scope_genome_ids = params.get("seed_scope_genome_ids") if isinstance(params.get("seed_scope_genome_ids"), list) else []
+    try:
+        seed_fetch_limit = int(params.get("seed_fetch_limit", seeds_limit))
+    except Exception:
+        seed_fetch_limit = seeds_limit
+
+    # Seed selection: explicit protein_ids first, else from discovered_proteins
+    seeds_in = params.get("protein_ids") or []
+    if not (isinstance(seeds_in, list) and seeds_in):
+        dp = inputs.get("discovered_proteins") or []
+        # Allow bound dict envelopes: {"discovered_proteins": [...]} (from a bound rowset)
+        if isinstance(dp, dict):
+            inner = dp.get("discovered_proteins")
+            if isinstance(inner, list):
+                dp = inner
+        try:
+            # Optional filter by PFAM accession(s) if provided
+            filt = params.get("seed_filter_pfam_ids") if isinstance(params.get("seed_filter_pfam_ids"), list) else None
+            filt_norm = None
+            if filt:
+                filt_norm = set(str(x).split('.')[0].upper() for x in filt if isinstance(x, str) and x)
+            seeds_in = []
+            for r in dp:
+                if not (isinstance(r, dict) and r.get("protein_id")):
+                    continue
+                if filt_norm:
+                    pfids = r.get("pfam_ids") or []
+                    pfids_norm = set(str(x).split('.')[0].upper() for x in pfids if isinstance(x, str) and x)
+                    if not pfids_norm.intersection(filt_norm):
+                        continue
+                seeds_in.append(str(r.get("protein_id")))
+        except Exception:
+            seeds_in = []
+
+    # Self-seed STRICTLY via explicit PFAM/KO params (no implicit fallbacks)
+    if not seeds_in:
+        if seed_pfam_ids or seed_ko_ids:
+            runner = FileCypherRunner(ctx.neo4j_driver)
+            try:
+                if seed_pfam_ids:
+                    rows = runner.run_template(
+                        "proteins_by_pfam_ids.cypher",
+                        {"pfam_ids": [str(x) for x in seed_pfam_ids], "genome_ids": seed_scope_genome_ids, "limit": seed_fetch_limit},
+                    ) or []
+                    seeds_in.extend([str(r.get("protein_id")) for r in rows if r.get("protein_id")])
+                if seed_ko_ids:
+                    rows = runner.run_template(
+                        "proteins_by_ko_ids.cypher",
+                        {"ko_ids": [str(x) for x in seed_ko_ids], "genome_ids": seed_scope_genome_ids, "limit": seed_fetch_limit},
+                    ) or []
+                    seeds_in.extend([str(r.get("protein_id")) for r in rows if r.get("protein_id")])
+            except Exception:
+                # Do not hide errors with implicit alternatives; keep strict behavior
+                pass
+    # Deduplicate, drop empties
+    seen = set()
+    seeds: List[str] = []
+    for pid in (seeds_in or []):
+        try:
+            s = str(pid).strip()
+        except Exception:
+            continue
+        if not s or s.lower() in ("example", "placeholder", "sample"):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        seeds.append(s)
+        if len(seeds) >= seeds_limit:
+            break
+
+    # Enforce explicit seeds: if still empty, fail fast (no implicit fallbacks)
+    if not (isinstance(seeds_in, list) and seeds_in):
+        raise ValueError(
+            "NeighborhoodContext requires explicit seeds: provide discovered_proteins input or params (protein_ids or seed_pfam_ids/seed_ko_ids)."
+        )
+
+    neighborhoods: List[Dict[str, Any]] = []
+    total_rows = 0
+
+    # Helpers to execute KG templates (from src/llm/kg/cypher_templates)
+    def _run_tpl(filename: str, p: Dict[str, Any]) -> List[Dict[str, Any]]:
+        cypher_path = kg_tpl_registry.TEMPLATES_DIR / filename
+        cypher = cypher_path.read_text(encoding="utf-8")
+        with ctx.neo4j_driver.session() as s:
+            res = s.run(cypher, p)
+            return [dict(r) for r in res]
+
+    def _run_k_step(protein_id: str, k_steps: int, limit_x: int) -> List[Dict[str, Any]]:
+        # Return neighbor genes/proteins with annotation summaries (no APOC dependency)
+        cypher = (
+            "MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(g:Gene) "
+            f"CALL (g) {{ MATCH pth=(g)-[:NEXT*..{k_steps}]-(ng:Gene) RETURN DISTINCT ng }} "
+            "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng) "
+            "OPTIONAL MATCH (np)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain) "
+            "OPTIONAL MATCH (np)-[:HASFUNCTION]->(ko:KEGGOrtholog) "
+            "WITH ng, np, "
+            "collect(DISTINCT CASE "
+            "  WHEN coalesce(d.pfamAccession, d.id) IS NOT NULL AND coalesce(d.name, d.description) IS NOT NULL AND coalesce(d.name, d.description) <> '' "
+            "    THEN coalesce(d.pfamAccession, d.id) + ': ' + coalesce(d.name, d.description) "
+            "  WHEN coalesce(d.pfamAccession, d.id) IS NOT NULL "
+            "    THEN coalesce(d.pfamAccession, d.id) "
+            "  ELSE coalesce(d.name, d.description) "
+            "END) AS pfams, "
+            "collect(DISTINCT ko.description) AS kos "
+            "RETURN ng.id AS gene_id, ng.contig AS contig, toInteger(ng.startCoordinate) AS start, "
+            "toInteger(ng.endCoordinate) AS end, ng.strand AS strand, np.id AS protein_id, pfams, kos "
+            "ORDER BY start LIMIT $limit"
+        )
+        with ctx.neo4j_driver.session() as s:
+            res = s.run(cypher, {"protein_id": protein_id, "limit": int(limit_x)})
+            rows = [dict(r) for r in res]
+        # Normalize description strings for reporter convenience
+        for r in rows:
+            try:
+                pfams = [x for x in (r.get("pfams") or []) if isinstance(x, str) and x]
+                kos = [x for x in (r.get("kos") or []) if isinstance(x, str) and x]
+                r["pfam_desc"] = "; ".join(sorted(set(pfams))) if pfams else None
+                r["ko_desc"] = "; ".join(sorted(set(kos))) if kos else None
+            except Exception:
+                r["pfam_desc"] = r.get("pfam_desc")
+                r["ko_desc"] = r.get("ko_desc")
+        return rows
+
+    def _run_flanking_annotated(protein_id: str, flank_n: int, limit_x: int) -> List[Dict[str, Any]]:
+        cypher = (
+            "MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(seed:Gene) "
+            "MATCH (g:Gene {contig: seed.contig}) "
+            "WITH seed, g ORDER BY toInteger(g.startCoordinate) "
+            "WITH seed, collect(g) AS gs "
+            "WITH seed, gs, [i IN range(0, size(gs)-1) WHERE gs[i].id = seed.id][0] AS idx "
+            "WITH seed, gs, idx, range(-$flank_n, $flank_n) AS offsets "
+            "UNWIND offsets AS off "
+            "WITH seed, gs, idx, off WHERE off <> 0 "
+            "WITH gs[(idx + off)] AS ng WHERE (idx + off) >= 0 AND (idx + off) < size(gs) "
+            "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng) "
+            "OPTIONAL MATCH (np)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain) "
+            "OPTIONAL MATCH (np)-[:HASFUNCTION]->(ko:KEGGOrtholog) "
+            "WITH ng, np, "
+            "collect(DISTINCT CASE "
+            "  WHEN coalesce(d.pfamAccession, d.id) IS NOT NULL AND coalesce(d.name, d.description) IS NOT NULL AND coalesce(d.name, d.description) <> '' "
+            "    THEN coalesce(d.pfamAccession, d.id) + ': ' + coalesce(d.name, d.description) "
+            "  WHEN coalesce(d.pfamAccession, d.id) IS NOT NULL "
+            "    THEN coalesce(d.pfamAccession, d.id) "
+            "  ELSE coalesce(d.name, d.description) "
+            "END) AS pfams, "
+            "collect(DISTINCT ko.description) AS kos "
+            "RETURN ng.id AS gene_id, ng.contig AS contig, toInteger(ng.startCoordinate) AS start, "+
+            "toInteger(ng.endCoordinate) AS end, ng.strand AS strand, np.id AS protein_id, pfams, kos "
+            "ORDER BY start LIMIT $limit"
+        )
+        with ctx.neo4j_driver.session() as s:
+            res = s.run(cypher, {"protein_id": protein_id, "flank_n": int(flank_n), "limit": int(limit_x)})
+            rows = [dict(r) for r in res]
+        for r in rows:
+            try:
+                pfams = [x for x in (r.get("pfams") or []) if isinstance(x, str) and x]
+                kos = [x for x in (r.get("kos") or []) if isinstance(x, str) and x]
+                r["pfam_desc"] = "; ".join(sorted(set(pfams))) if pfams else None
+                r["ko_desc"] = "; ".join(sorted(set(kos))) if kos else None
+            except Exception:
+                r["pfam_desc"] = r.get("pfam_desc")
+                r["ko_desc"] = r.get("ko_desc")
+        return rows
+
+    def _run_span_window(contig: str, start: int, end: int, limit_x: int) -> List[Dict[str, Any]]:
+        cypher = (
+            "MATCH (g:Gene {contig:$contig}) "
+            "WHERE toInteger(g.startCoordinate) >= $start AND toInteger(g.endCoordinate) <= $end "
+            "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(g) "
+            "RETURN g.id AS gene_id, g.contig AS contig, toInteger(g.startCoordinate) AS start, "
+            "toInteger(g.endCoordinate) AS end, g.strand AS strand, np.id AS protein_id "
+            "ORDER BY start LIMIT $limit"
+        )
+        with ctx.neo4j_driver.session() as s:
+            res = s.run(cypher, {"contig": contig, "start": int(start), "end": int(end), "limit": int(limit_x)})
+            return [dict(r) for r in res]
+
+    for pid in seeds:
+        seed_debug: Dict[str, Any] = {"seed_protein_id": pid}
+        # Fetch seed context (contig/coordinates)
+        try:
+            ctx_rows = _run_tpl("protein_gene_context.cypher", {"protein_id": pid})
+        except Exception:
+            ctx_rows = []
+        if ctx_rows:
+            s0 = ctx_rows[0]
+            seed_debug.update({
+                "seed_gene_id": s0.get("gene_id"),
+                "seed_contig": s0.get("contig"),
+                "seed_start": s0.get("start"),
+                "seed_end": s0.get("end"),
+                "seed_strand": s0.get("strand"),
+            })
+            # Optional: quick NEXT degree for the seed gene
+            try:
+                nxt = _run_tpl("gene_next_degree.cypher", {"gene_id": s0.get("gene_id")})
+                if nxt:
+                    seed_debug["seed_next_degree"] = nxt[0].get("next_degree")
+            except Exception:
+                pass
+
+        # Primary neighborhood: k-step or flanking
+        rows: List[Dict[str, Any]] = []
+        template_name = "protein_flanking_genes_5"
+        try:
+            if isinstance(k, int) and k > 0:
+                template_name = "protein_neighbors_k"
+                rows = _run_k_step(pid, k, limit)
+                # If adjacency returns 0 rows, also try flanking (±5) to surface context on short contigs
+                if not rows:
+                    try:
+                        flk_rows = _run_flanking_annotated(pid, 5, limit)
+                        if flk_rows:
+                            rows = flk_rows
+                            template_name = "protein_flanking_genes"
+                    except Exception:
+                        pass
+            else:
+                template_name = "protein_flanking_genes"
+                rows = _run_flanking_annotated(pid, 5, limit)
+        except Exception:
+            rows = []
+
+        # Fallback to span window around seed gene when nothing found
+        if not rows and seed_debug.get("seed_contig") is not None:
+            try:
+                cx = int(seed_debug.get("seed_start") or 0)
+                cy = int(seed_debug.get("seed_end") or 0)
+                w = int(fallback_window_bp)
+                start_w = max(0, min(cx, cy) - w)
+                end_w = max(cx, cy) + w
+                rows = _run_span_window(str(seed_debug.get("seed_contig")), start_w, end_w, limit)
+                template_name = "neighbors_by_window"
+                seed_debug["fallback"] = {"start": start_w, "end": end_w, "window_bp": w, "row_count": len(rows)}
+            except Exception:
+                pass
+
+        neighborhoods.append({
+            "seed_protein_id": pid,
+            "template": template_name,
+            "rows": rows,
+            "debug": seed_debug,
+        })
+        total_rows += len(rows)
+
+    summary_table = [{"seed": n.get("seed_protein_id"), "row_count": len(n.get("rows") or [])} for n in neighborhoods]
+    seeds_used = [n.get("seed_protein_id") for n in neighborhoods]
+
+    # Compact macro_result for reporter context
+    macro_rows: List[Dict[str, Any]] = []
+    for n in neighborhoods:
+        sd = n.get("debug") or {}
+        rs = n.get("rows") or []
+        examples = []
+        examples_ann = []
+        try:
+            for r in rs:
+                pid2 = r.get("protein_id")
+                if isinstance(pid2, str) and pid2:
+                    examples.append(pid2)
+                    examples_ann.append({
+                        "protein_id": pid2,
+                        "pfam_desc": r.get("pfam_desc"),
+                        "ko_desc": r.get("ko_desc"),
+                    })
+                    if len(examples) >= 3:
+                        break
+        except Exception:
+            examples = []
+            examples_ann = []
+        macro_rows.append({
+            "seed": n.get("seed_protein_id"),
+            "contig": sd.get("seed_contig"),
+            "start": sd.get("seed_start"),
+            "end": sd.get("seed_end"),
+            "row_count": len(rs),
+            "example_neighbors": examples,
+            "example_neighbors_ann": examples_ann,
+        })
+
+    macro_result = {"type": "macro_result", "name": "neighborhoods", "rows": macro_rows}
+
+    out: Dict[str, Any] = {
+        "neighborhoods": neighborhoods if output_profile == "rowset" else [],
+        "neighborhood_summary": {"total_rows": total_rows, "summary_table": summary_table},
+        "seeds_used": seeds_used,
+        "neighborhood_macro_result": macro_result,
+    }
+    return out
+
 # Register operators
 register_operator(OperatorSpec(
     name="FetchPresentKOs",
@@ -477,7 +853,7 @@ register_operator(OperatorSpec(
 
 register_operator(OperatorSpec(
     name="AnnotationDiscovery",
-    inputs=[],
+    inputs=["pfam_ids", "ko_ids"],
     outputs=["facet_summary", "selection_metadata", "discovered_proteins"],
     params={
         "keyword": "str (free text)",
@@ -491,10 +867,34 @@ register_operator(OperatorSpec(
         "include_examples": "none|counts|ids (ids only for contig/locus anchors)",
         "return_full_rows": "bool (legacy rowset include)",
         "genome_ids": "List[str] | null",
-        "pfam_tokens_top_n": "int | null (limit number of catalog PFAM tokens considered)",
-        "ko_tokens_top_n": "int | null (limit number of catalog KO tokens considered)",
+        "pfam_tokens_top_n": "int | null (cap catalog PFAM tokens; applies to counts and rowset)",
+        "ko_tokens_top_n": "int | null (cap catalog KO tokens; applies to counts and rowset)",
         "pfam_candidate_cap": "int | null (cap candidate PFAM domains per token in counts; default 200)",
+        "pfam_ids": "List[str] | null (restrict rowset PFAM tokens to these accessions)",
+        "ko_ids": "List[str] | null (restrict rowset KO tokens to these ids)",
     },
     run=_annotation_discovery,
     description="Facet-first annotation discovery: keyword→IDs→exact retrieval→KO/PFAM summaries (counts, top_k or all). Rowset optional.",
+))
+
+# Neighborhoods: batch per-seed neighborhoods from discovered proteins or explicit seeds
+register_operator(OperatorSpec(
+    name="NeighborhoodContext",
+    inputs=["discovered_proteins"],
+    outputs=["neighborhoods", "neighborhood_summary", "neighborhood_macro_result", "seeds_used"],
+    params={
+        "protein_ids": "List[str] | null (explicit seeds)",
+        "k": "int | null (k-step adjacency; default None → flanking)",
+        "limit": "int (per-seed cap; default 200)",
+        "seeds_limit": "int (max seeds; default 10)",
+        "fallback_window_bp": "int (bp window for span fallback; default 10000)",
+        "seed_filter_pfam_ids": "List[str] | null (only seed proteins that carry any of these PFAM accessions; uses discovered_proteins.pfam_ids)",
+        "seed_pfam_ids": "List[str] | null (self-seed by fetching proteins with these PFAMs when discovered_proteins/protein_ids are absent)",
+        "seed_ko_ids": "List[str] | null (self-seed by fetching proteins with these KO ids when discovered_proteins/protein_ids are absent)",
+        "seed_scope_genome_ids": "List[str] | null (restrict self-seeding to these genomes; default global)",
+        "seed_fetch_limit": "int (max proteins to fetch during self-seeding; default = seeds_limit)",
+        "output_profile": "summary|rowset (default summary)",
+    },
+    run=_neighborhood_context,
+    description="Neighborhoods around seed proteins: k-step or ±5 flanking; span-window fallback. Returns compact macro_result for synthesis.",
 ))

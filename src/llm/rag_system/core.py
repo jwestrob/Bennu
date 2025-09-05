@@ -334,10 +334,24 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         except Exception:
                             ko_ref = pf_ref = ""
                     def planner_call_inputs():
+                        hard_constraints = (
+                            "HARD CONSTRAINTS:\n"
+                            "- If you include NeighborhoodContext, you MUST provide explicit seeds.\n"
+                            "  Provide EITHER inputs.discovered_proteins referencing a bound rowset,\n"
+                            "  OR params.protein_ids, OR params.seed_pfam_ids/seed_ko_ids.\n"
+                            "- Prefer chaining identifiers via operator inputs, not guessing.\n"
+                            "  Example: SearchPfamCatalogFuzzy → AnnotationDiscovery (rowset) with inputs.pfam_ids=pfam_ids → bind → NeighborhoodContext with inputs.discovered_proteins=<binding>.\n"
+                            "- Use AnnotationDiscovery.inputs.pfam_ids/ko_ids to pass IDs from prior steps; do not hard-code IDs if you have them from catalog search.\n"
+                            "- AnnotationDiscovery MUST set params.keyword (or params.q).\n"
+                            "  You may ALSO bind ID lists via inputs (e.g., inputs:{'pfam_ids':'pfam_ids'} or inputs:{'ko_ids':'ko_ids'}) to focus rowsets, but do not omit keyword.\n"
+                            "  Do NOT call AnnotationDiscovery with only formatting params (output_profile/group_by/fields) — that yields empty results.\n"
+                            "- If a catalog search step is present, bind its ID outputs and, if relevant, pass them via inputs into AnnotationDiscovery; do not assume implicit availability.\n"
+                            "- Keyword hygiene: When the user asks for context around specific genes/subunits/components, prefer direct subunit terms and concise synonyms; avoid broad class tokens and hyphenated 'like' analog terms unless the user explicitly requests exploratory breadth. Limit synonyms to a small number (e.g., ≤2) per theme.\n"
+                        )
                         return dict(
                             question=question,
                             operator_catalog=json.dumps(operator_catalog()),
-                            constraints="",
+                            constraints=hard_constraints,
                             ko_reference=ko_ref,
                             pfam_reference=pf_ref,
                         )
@@ -499,12 +513,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             # Retry: re-plan and re-execute
                             logger.info("🔁 MacroPlanner retry: insufficient evidence, attempting broader pass")
                             def planner_call_retry(module):
+                                retry_constraints = (
+                                    "ALLOW_KEYWORD_DISCOVERY=1\n" \
+                                    "HARD CONSTRAINTS:\n"
+                                    "- If you include NeighborhoodContext, you MUST provide explicit seeds (inputs.discovered_proteins OR params.protein_ids OR params.seed_pfam_ids/seed_ko_ids).\n"
+                                    "- Chain IDs via inputs (e.g., inputs.pfam_ids=pfam_ids) for rowset steps, then bind and pass discovered_proteins to NeighborhoodContext.\n"
+                                )
                                 return module(
                                     question=question,
                                     operator_catalog=json.dumps(operator_catalog()),
-                                    constraints="allow_keyword_discovery=1",
+                                    constraints=retry_constraints,
                                     ko_reference=ko_ref,
-                                    pfam_reference=pf_ref
+                                    pfam_reference=pf_ref,
                                 )
                             try:
                                 import dspy
@@ -568,6 +588,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 os.makedirs(sdir, exist_ok=True)
                                 with open(os.path.join(sdir, 'all_env.json'), 'w', encoding='utf-8') as f_env:
                                     json.dump(combined_env, f_env, indent=2, default=str)
+                                try:
+                                    tool_calls = combined_env.get('__tool_calls')
+                                    if tool_calls:
+                                        with open(os.path.join(sdir, 'tool_calls.json'), 'w', encoding='utf-8') as f_tc:
+                                            json.dump(tool_calls, f_tc, indent=2, default=str)
+                                except Exception as _tc_err:
+                                    logger.info(f"Tool calls save skipped: {_tc_err}")
                         except Exception as _env_save_err:
                             logger.info(f"MacroPlanner env save skipped: {_env_save_err}")
 
@@ -695,12 +722,24 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             model_id = getattr(self.config, 'reporter_model', None) or 'gpt-5-high'
                             lm = make_lm(model_id, step="reporter")
                             module = dspy.Predict(GenomicSynthesizer)
+                            # Optional neighborhoods payload from MacroPlanner env
+                            neighborhoods_payload = None
+                            try:
+                                if isinstance(combined_env, dict):
+                                    nb = combined_env.get('neighborhood_macro_result')
+                                    if nb:
+                                        import json as _json
+                                        neighborhoods_payload = _json.dumps(nb, default=str)
+                            except Exception:
+                                neighborhoods_payload = None
+
                             with dspy.context(lm=lm):
                                 synth_res = module(
                                     question=question,
                                     context=report_context,
                                     task_graph=task_graph_text,
                                     synthesis_mode="comprehensive_report",
+                                    neighborhoods_json=neighborhoods_payload or "",
                                 )
                             if synth_res and hasattr(synth_res, 'summary'):
                                 final_answer = synth_res.summary

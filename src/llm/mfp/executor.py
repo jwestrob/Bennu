@@ -20,11 +20,34 @@ def validate_plan(plan: Dict[str, Any]) -> None:
         # Check operator exists
         get_operator(step['op'])
         # Optional fields: inputs, params, bind
+        # Structural rule: AnnotationDiscovery must include a selection (keyword or ID inputs)
+        if step['op'] == 'AnnotationDiscovery':
+            params = (step.get('params') or {})
+            # Require an explicit keyword/q for AnnotationDiscovery to function
+            kw = params.get('keyword') or params.get('q')
+            if not (isinstance(kw, str) and kw.strip() != ''):
+                raise PlanValidationError(
+                    "AnnotationDiscovery requires params.keyword (or params.q); calling it without a keyword yields empty results."
+                )
+        # Structural rule: NeighborhoodContext must have explicit seeds
+        if step['op'] == 'NeighborhoodContext':
+            params = (step.get('params') or {})
+            inputs = (step.get('inputs') or {})
+            has_param_seeds = any(
+                isinstance(params.get(k), list) and len(params.get(k)) > 0
+                for k in ('protein_ids', 'seed_pfam_ids', 'seed_ko_ids')
+            )
+            has_input_rowset = isinstance(inputs, dict) and isinstance(inputs.get('discovered_proteins'), str) and inputs.get('discovered_proteins').strip() != ''
+            if not (has_param_seeds or has_input_rowset):
+                raise PlanValidationError(
+                    "NeighborhoodContext requires seeds: provide inputs.discovered_proteins (from a bound rowset) or params (protein_ids or seed_pfam_ids/seed_ko_ids)."
+                )
 
 
 def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
     validate_plan(plan)
     env: Dict[str, Any] = {}
+    call_log: List[Dict[str, Any]] = []
     logger = logging.getLogger(__name__)
     for i, step in enumerate(plan['steps']):
         name = step['op']
@@ -56,8 +79,12 @@ def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
                 if ref_name and ref_name in env:
                     provided[key] = env[ref_name]
                 else:
-                    # Leave missing key out; downstream operator can interpret as absent
-                    pass
+                    # Fallback: if an explicit ref was provided but not found, use env[key] when available
+                    if key in env:
+                        provided[key] = env[key]
+                    else:
+                        # Leave missing key out; downstream operator can interpret as absent
+                        pass
             else:
                 if key in env:
                     provided[key] = env[key]
@@ -112,4 +139,42 @@ def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
         logger.info(
             f"PLAN STEP {i+1}/{len(plan['steps'])} op={name} OK in {elapsed_ms:.0f} ms; "
             f"params={_compact(params)} outputs={sizes}")
+
+        # Append a structured record of the tool call for session diagnostics
+        def _preview(val: Any, list_sample: int = 3, str_lim: int = 300, key: str | None = None) -> Any:
+            try:
+                if isinstance(val, list):
+                    # For catalog-oriented outputs, include full lists (typically small: ≤30)
+                    if key in {"pfam_catalog_hits", "pfam_ids", "pfam_terms", "ko_catalog_hits", "ko_ids"}:
+                        return {"type": "list", "len": len(val), "items": val}
+                    samp = val[:list_sample]
+                    return {"type": "list", "len": len(val), "sample": samp}
+                if isinstance(val, dict):
+                    keys = list(val.keys())
+                    return {"type": "dict", "len": len(keys), "keys_sample": keys[:10]}
+                if isinstance(val, str):
+                    return val if len(val) <= str_lim else (val[:str_lim] + '…')
+                return val
+            except Exception:
+                return type(val).__name__
+
+        outputs_preview: Dict[str, Any] = {}
+        for k in spec.outputs:
+            if k in result:
+                outputs_preview[k] = _preview(result.get(k), key=k)
+        provided_preview: Dict[str, Any] = {k: _preview(v, key=k) for k, v in provided.items()}
+        call_log.append({
+            "step": i + 1,
+            "op": name,
+            "elapsed_ms": int(elapsed_ms),
+            "inputs_ref": inputs_ref,
+            "params": params,
+            "provided": provided_preview,
+            "outputs": outputs_preview,
+        })
+    # Expose tool call records for session diagnostics
+    try:
+        env['__tool_calls'] = call_log
+    except Exception:
+        pass
     return env

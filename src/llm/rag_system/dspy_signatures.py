@@ -486,10 +486,11 @@ class MacroPlannerSignature(dspy.Signature):
 
     Planner rubric (breadth-first reminder):
     - Prefer breadth-first exploration across available annotation namespaces when probing a functional capability.
-    - Two-stage search pattern (generic): First run catalog search to map natural-language terms to precise identifiers; then perform exact, identifier-based retrieval. Only fall back to substring/keyword queries if no identifiers were found.
+    - Two-stage search pattern (generic): First run catalog search to map natural-language terms to precise identifiers; then perform exact, identifier-based retrieval. Use operator inputs to pass IDs between steps (e.g., bind outputs from catalog search and reference them via `inputs`). Do not rely on implicit inference. If identifiers are already available (from prior steps or structured inputs), skip catalog search and use them directly.
+    - Anchor-first discipline: Prefer explicit identifier lists (e.g., accessions or canonical IDs) passed via `inputs` for rowset retrieval. If identifiers are unavailable, concise name tokens may be used — avoid long descriptions or overly broad generic terms.
     - Result formatting (facet-first): Prefer compact facet summaries over raw rows. Use AnnotationDiscovery with `output_profile='facet_summary'` and set quantity explicitly via `return_mode` and `top_k` per group. Only request rowsets when you truly need per-protein details.
     - Include a lightweight evidence assessment step (e.g., row counts) and, when evidence is insufficient, add a compact follow-up proposal step requesting minimal additional inputs (e.g., scope hints, aliases) rather than large data dumps.
-    - PFAM domain identifiers and descriptions are often richer than KO terms in metagenomes; consider domain- and ortholog-level catalog searches early. Prefer accession tokens (PFxxxxx) and KO ids (Kxxxxx) when available.
+    - Domain/ortholog identifiers and descriptions can be richer than other sources in metagenomes; consider domain- and ortholog-level catalog searches early. Prefer accession-like tokens (e.g., PFxxxxx) and canonical IDs (e.g., Kxxxxx) when available.
     - When searching for hallmark enzymes, include both long-form names and common gene symbols/abbreviations in your probe terms, and treat matches as case-insensitive.
     - CAZyme routing: When the question mentions CAZyme/CAZy or families GH/GT/PL/CE/AA/CBM, prefer dedicated CAZyme operators (e.g., QueryCazymesByGenome, CountCazymeFamilies) rather than generic PFAM keyword discovery.
     - When choosing KEGG completeness, use canonical map IDs (mapxxxxx) or compute unfiltered and filter downstream; completeness is optional.
@@ -497,34 +498,58 @@ class MacroPlannerSignature(dspy.Signature):
     
     Facet-first planning policy (static, explicit controls):
     - Separate KO and PFAM summary steps (do NOT use `group_by='both'`). For each biological theme (e.g., CBB, WL, rTCA, methanogenesis, methanotrophy, nitrogenase), schedule:
-      * KO facet summary: `output_profile='facet_summary'`, `group_by='ko'`, explicit `return_mode` ('all' for narrow filtered sets; otherwise 'top_k' with an explicit `ko_top_k`), and `fields=['id','count','score']`.
-      * PFAM facet summary: `output_profile='facet_summary'`, `group_by='pfam'`, explicit `return_mode` and `pfam_top_k`, and `fields=['id','count','score']`.
+      * KO facet summary: `output_profile='facet_summary'`, `group_by='ko'`, explicit `return_mode`, and `fields=['id','name','count']`.
+      * PFAM facet summary: `output_profile='facet_summary'`, `group_by='pfam'`, explicit `return_mode`, and `fields=['id','name','count']`.
     - Use FetchPresentKOs early and leverage its aggregated `present_summary` (per-KO present counts) to bias KO summaries or to select filtered KO id sets. Avoid per-genome expansions.
-    - When per-entity protein lists are needed, add a dedicated detail step (e.g., QueryProteinsByIds or AnnotationDiscovery with `output_profile='rowset'`) for selected KO/PF anchors with an explicit per-entity cap, rather than inflating summary `top_k`.
+    - When per-entity protein lists are needed, add a dedicated detail step (e.g., QueryProteinsByIds or AnnotationDiscovery with `output_profile='rowset'`) for selected anchors, and pass those anchors via `inputs` (e.g., from prior catalog search or facet summary), rather than inflating summary `top_k`.
 
-    PFAM matching policy (CRITICAL to avoid misses due to versioned accessions):
-    - Never rely on exact string equality for PFAM accessions (PFxxxxx). Databases often store versioned accessions (e.g., PF00016.26) and/or name IDs (e.g., RuBisCO_large).
-    - When retrieving proteins by PFAM, prefer flexible matching:
-      * pfamAccession STARTS WITH the accession token (e.g., "PF00016" matches "PF00016.26").
-      * Domain.id STARTS WITH the accession token or CONTAINS relevant short-name tokens (e.g., "rubisco_large").
-      * Description CONTAINS normalized name terms (e.g., "ribulose bisphosphate carboxylase").
-    - Use flexible operators/templates for retrieval (do not generate exact-equality PFAM queries):
-      * proteins_with_pfam (exact=false), or proteins_by_pfam_keyword.
-      * If an exact-ID attempt returns zero, fall back to flexible PFAM search for that term.
-    - Include both accession and short-name tokens from the PFAM catalog (e.g., accession like "PF00016" and descriptive tokens like "rubisco_large") to maximize recall.
-    - Example: For "RuBisCO" queries, do not emit strict equality on "PF00016"; use accession-prefix and name/description substring matching via the flexible operators.
+    Identifier matching policy (CRITICAL to avoid misses due to versioned accessions):
+    - Avoid strict equality on versioned accessions. Prefer version-tolerant patterns (e.g., accession STARTS WITH base token) and include concise name/description tokens when helpful.
+    - Use flexible operators/templates for retrieval (avoid generating exact-equality queries unless explicitly required).
+    - Include both accession and concise short-name tokens from the catalog to maximize recall when appropriate.
 
     Keyword discipline (to reduce generic noise without hard-coding):
     - Avoid broad/generic enzyme classes in PFAM/KO probes (e.g., aldolase, epimerase, dehydrogenase, carboxylase) unless you are explicitly probing those classes.
-    - Prefer hallmark terms and accessions (PFxxxxx/Kxxxxx) with up to 1–2 concise synonyms per theme.
+    - Prefer hallmark terms and accessions (PFxxxxx/Kxxxxx) with a small number of concise synonyms per theme.
     - Keep per-theme probes tight and separate; don’t mix themes in a single probe.
 
     Agent-controlled quantity/candidate parameters (no hidden caps):
-    - Always set explicit caps in plans for facet work:
-      * pfam_tokens_top_n, ko_tokens_top_n: limit catalog tokens to consider (e.g., 20–30).
-      * pfam_candidate_cap: limit candidate PFAM families per token inside counts (default 200 if unspecified).
-      * pfam_top_k, ko_top_k: final facet sizes to display.
+    - Always set explicit caps in plans for facet work (avoid unbounded expansions). Defaults (adjust to context):
+      * pfam_tokens_top_n = 30
+      * ko_tokens_top_n = 30
+      * pfam_candidate_cap = 200 (cap candidate families per token in count queries)
+      * pfam_top_k = 20, ko_top_k = 20 (facet display size)
+    - Rowset sizing: For targeted detail steps, use a small row budget when feasible (e.g., limit ≈ 50–200) to control latency; for broad retrievals, rely on operator defaults and filter downstream.
     - Standardize facet fields to ['id','name','count'].
+
+    Neighborhood planning policy (seeds must be explicit):
+    - Do not schedule NeighborhoodContext without providing seeds. Provide one of:
+      * A targeted AnnotationDiscovery rowset with explicit anchors, passed via `inputs` (e.g., bind outputs from a catalog step and reference them via `inputs`), and bind its output; then pass its binding via `inputs:{"discovered_proteins":"<binding>"}`.
+      * Explicit `protein_ids` in NeighborhoodContext params.
+      * Explicit `seed_pfam_ids`/`seed_ko_ids` in NeighborhoodContext params (the operator will self-seed using DB templates), with an explicit seed budget when needed.
+    - Prefer narrow, explicit anchors over large catalog token sets for rowsets. Set rowset and seed budgets conservatively based on context size, and diversify seeds by contig when possible (avoid arbitrary prefixes).
+    - Seed budget (defaults; adjust as needed):
+      * NeighborhoodContext.seeds_limit defaults to 10; when the bound rowset is small (≤ 30), prefer using all available seeds.
+      * Common adjacency breadths (when explicitly requested): k ∈ {1, 5, 10}. Otherwise omit k to use flanking if supported.
+    - Visibility modes:
+      * `output_profile="summary"`: returns macro summaries and seed lists; raw neighbor rows may be omitted. An empty neighborhoods list may reflect either fragmented assemblies or summary mode behavior.
+      * `output_profile="rowset"`: returns per-seed neighbor rows; use when seed sets are small to aid verification.
+    - MANDATORY: NeighborhoodContext must receive seeds via `inputs.discovered_proteins` (from a bound rowset) or via params (`protein_ids` or `seed_pfam_ids`). Otherwise, do not schedule it.
+    - Adjacency/flanking: Set `k` only when adjacency semantics are explicitly requested. Otherwise, omit `k` to use default flanking if supported.
+
+    Example (strict binding and inputs mapping; placeholders only):
+    {
+      "steps": [
+        {"op":"SearchPfamCatalogFuzzy","params":{"q":"<KEYWORD>"}},
+        {"op":"AnnotationDiscovery",
+         "inputs":{"pfam_ids":"pfam_ids"},
+         "params":{"keyword":"<KEYWORD>","output_profile":"rowset"},
+         "bind":"rowset1"},
+        {"op":"NeighborhoodContext",
+         "inputs":{"discovered_proteins":"rowset1"},
+         "params":{"output_profile":"rowset"}}
+      ]
+    }
     """
 
     question = dspy.InputField(desc="User question to answer with a macro plan")
@@ -553,8 +578,24 @@ class GenomicSynthesizer(dspy.Signature):
     context = dspy.InputField(desc="Integrated context from multiple analysis tasks")
     task_graph = dspy.InputField(desc="JSON or pretty-printed task graph with ordered steps (if provided, include a 'TASK GRAPH' section at the top of the summary)")
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
-    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID' NOT 'scaffold_XXXX'). This is essential for independent verification.")
+
+    # Optional, neighborhood-aware inputs (advisory; do not enforce behavior)
+    neighborhoods_json = dspy.InputField(desc="Optional JSON payload from NeighborhoodContext (macro_result or full neighborhoods)")
+    adjacency_hop = dspy.InputField(desc="Optional integer hop for immediate adjacency summaries (e.g., 1 for ±1)")
+    conserve_by = dspy.InputField(desc="Optional grouping key for motif discovery: pfam|ko|gene_symbol")
+    window_bp = dspy.InputField(desc="Optional span window used during neighborhood extraction (bp)")
+    require_sections = dspy.InputField(desc="Optional advisory list of section names to include (e.g., ['adjacency_map','conserved_motifs','loci_table'])")
+
+    # Primary narrative output
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. If neighborhoods_json is present, include seed-level adjacency and conserved motif summaries when they add value. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID', not 'scaffold_XXXX').")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
+
+    # Optional structured outputs (emitted when helpful)
+    adjacency_map = dspy.OutputField(desc="Optional structured per-seed adjacency summary (± adjacency_hop) with contig/gene/protein/strand and PFAM/KO labels")
+    conserved_motifs = dspy.OutputField(desc="Optional list of recurrent synteny patterns across seeds with counts and supporting seed IDs")
+    loci_table = dspy.OutputField(desc="Optional compact per-seed table listing contig and coordinates for reproducibility")
+    verification_citations = dspy.OutputField(desc="Optional explicit contig:coordinate spans cited for verification")
+    limitations = dspy.OutputField(desc="Optional concise caveats relevant to interpretation (e.g., assembly fragmentation)")
 
 
 # === IRB Editor/Repair Signatures ===

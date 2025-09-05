@@ -1,5 +1,36 @@
 Supersedes: previous CLAUDE note (2025-08-26) and pre‑compaction notes
 
+Compaction Prep — 2025‑09‑04 (current focus)
+
+What we’re working on
+- Neighborhood analysis around RuBisCO/PRK/nif anchors (Rubisco PF00016/PF00101) with fast, agent‑controlled breadth/latency.
+- Ensuring the agent (planner) produces a valid task graph that wires seeds into NeighborhoodContext deterministically (no fix‑ups).
+- Guaranteeing Neo4j adjacency substrate ([:NEXT]) is present and annotated neighbors (PFAM/KO) are returned.
+
+What’s in place (works now)
+- NeighborhoodContext operator (strict): requires explicit seeds via `inputs.discovered_proteins` (bound rowset) or params (`protein_ids` / `seed_pfam_ids` / `seed_ko_ids`). No fallbacks.
+- AnnotationDiscovery: accepts `inputs.pfam_ids`/`inputs.ko_ids` or params (`pfam_ids`/`ko_ids`) for anchored rowsets; always includes PFAM IDs internally for downstream seed filtering.
+- Planner rubric: Includes hard constraints + example that binds rowset and passes it to NeighborhoodContext. Example uses `k=5`; agent may choose any k or omit k for flanking (±5).
+- Neo4j Stage 07 post‑load: constraints/indexes + precompute [:NEXT] edges (runs automatically when NEO4J creds are set). Clear logging and pairs≈ count.
+- Diagnostics script: `scripts/diagnostics/neo4j_check_next.py` verifies [:NEXT], k‑step adjacency, and flanking (±N) with PFAM/KO neighbor summaries.
+
+Known issues / observations
+- Some RuBisCO contigs are single‑gene; adjacency and flanking both return 0 neighbors by definition. Others have exactly two genes (one RuBisCO + one neighbor), which is expected for these short contigs.
+- gpt‑5‑low sometimes sets `k=1` by habit (adjacency ±1). On single‑gene contigs this yields empty neighborhoods; omit `k` (flanking) or set a wider `k` only when adjacency is required.
+- Reporter may not surface neighbor details if only macro summaries are used. Use `output_profile='rowset'` in NeighborhoodContext to inject full neighbor rows into the environment when needed.
+
+Next steps (agent‑first, no fix‑ups)
+- Keep planner example copy‑friendly and seed‑wiring explicit: SearchPfamCatalogFuzzy → AnnotationDiscovery (anchored rowset via inputs/params) → bind → NeighborhoodContext with `inputs.discovered_proteins` and explicit `seeds_limit`.
+- Prefer omitting `k` by default (flanking ±5). Set `k` only when adjacency semantics are specifically requested.
+- For better surfacing, have NeighborhoodContext use `output_profile='rowset'` on small seed sets (≤ 12) so neighbor rows (protein_id, pfam_desc, ko_desc) are visible to the reporter.
+- If adjacency is mandatory and a contig returns 0 over [:NEXT] despite multiple genes, re‑run post‑load tuning and confirm contig ID normalization in gene loading.
+
+Important references
+- Local Neo4j (dev): URI `bolt://localhost:7687`; user `neo4j`; password `your_new_password` (test instance).
+- Post‑load (manual): `python -m src.build_kg.postload_tuning --create-indexes` or `--neighbors-only` with NEO4J env vars set.
+- Diagnostics: `python scripts/diagnostics/neo4j_check_next.py --uri ... --user neo4j --password your_new_password --k 5 --flank_n 5 --limit 6`.
+
+
 Agent Status — 2025‑09‑01 (compact)
 
 Where we are
@@ -28,6 +59,40 @@ Local Neo4j Credentials (dev)
 - User: `neo4j`
 - Password: `your_new_password`
 
+Neo4j Post‑Load Tuning & Neighborhood Diagnostics (required for neighborhoods)
+- Purpose: Create `[:NEXT]` gene adjacency edges and validate neighborhood queries before running agent prompts.
+
+Automatic (Stage 07)
+- After Stage 07 KG build, the CLI runs a post‑load step if `NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD` are set:
+  - Ensures constraints/indexes (incl. `Domain.pfamAccession`).
+  - Precomputes `[:NEXT]` per contig in coordinate order.
+  - Logs: “Running Neo4j post-load tuning…”, “✓ Constraints and indexes ensured”, “✓ NEXT edges processed (pairs≈N)”.
+
+Manual (explicit)
+```bash
+# Full pass (indexes + NEXT)
+NEO4J_URI=bolt://localhost:7687 \
+NEO4J_USER=neo4j \
+NEO4J_PASSWORD=your_new_password \
+python -m src.build_kg.postload_tuning --create-indexes
+
+# NEXT only
+NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=your_new_password \
+python -m src.build_kg.postload_tuning --neighbors-only
+```
+
+Diagnostics script (quick sanity)
+```bash
+python scripts/diagnostics/neo4j_check_next.py \
+  --uri bolt://localhost:7687 --user neo4j --password your_new_password \
+  --k 5 --flank_n 5 --limit 6
+```
+- Prints global `[:NEXT]` count; per-seed NEXT degree; adjacency (k) and flanking (±flank_n) neighbor counts; sample neighbor annotations `{protein_id, pfams, kos, contig, start, end}`.
+- If adjacency=0 but flanking>0 for a seed, the contig likely lacked NEXT at load (re-run post-load) or is single-gene.
+
+Planner/Operator reminders
+- NeighborhoodContext is strict: provide seeds via `inputs.discovered_proteins` (bound rowset) or `params.protein_ids/seed_pfam_ids/seed_ko_ids`.
+- Adjacency breadth: set `k` (e.g., 1/5/10). Omit `k` to use flanking (±5 by contig order).
 Problem Summary — 2025‑09‑02
 
 Observed
