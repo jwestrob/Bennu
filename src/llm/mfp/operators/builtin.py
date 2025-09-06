@@ -10,6 +10,7 @@ from ...options.template_runner import FileCypherRunner
 from .catalog_search import _search_pfam, _search_ko
 from ...kegg.pathway_mapping import load_ko_pathway_maps
 from ...kg.cypher_templates import registry as kg_tpl_registry
+from ..types import FeatureSet, ProteinSet, assert_featureset, assert_proteinset
 
 
 def _fetch_present_kos(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
@@ -942,4 +943,112 @@ register_operator(OperatorSpec(
     },
     run=_neighborhood_context,
     description="Neighborhoods around seed proteins: k-step or ±5 flanking; span-window fallback. Returns compact macro_result for synthesis.",
+))
+
+# --- Materializers for composite outputs (lightweight adapters) ---
+
+def _materialize_feature_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    proteins = inputs.get("discovered_proteins") or []
+    pf_facet_in = inputs.get("pf_facet")
+    ko_facet_in = inputs.get("ko_facet")
+    # Extract facet_summary if wrapped via bind
+    def _facet(x: Any):
+        if isinstance(x, dict) and isinstance(x.get("facet_summary"), dict):
+            return x.get("facet_summary")
+        return x
+    pf_facet = _facet(pf_facet_in)
+    ko_facet = _facet(ko_facet_in)
+    feature_set: FeatureSet = {"source": "mixed", "ids": [], "terms": []}
+    protein_set: ProteinSet = {"proteins": proteins if isinstance(proteins, list) else []}
+    # Minimal validation
+    try:
+        assert_proteinset(protein_set)
+        assert_featureset(feature_set)
+    except Exception:
+        pass
+    return {"FeatureSet": feature_set, "ProteinSet": protein_set, "FacetSummary": {"pfam": pf_facet, "ko": ko_facet}}
+
+
+def _materialize_gene_context(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    neighborhoods = inputs.get("neighborhoods") or []
+    n_summary = inputs.get("neighborhood_summary")
+    return {"NeighborhoodSet": {"neighborhoods": neighborhoods}, "NeighborhoodSummary": n_summary}
+
+
+def _materialize_pathway_profile(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    present = inputs.get("present") or {}
+    completeness = inputs.get("pathway_completeness") or []
+    # Optional compact summary (per-pathway overall completeness); keep simple
+    try:
+        from collections import defaultdict
+        agg: Dict[str, Dict[str, Any]] = {}
+        for r in completeness:
+            pw = str(r.get("pathway_id"))
+            comp = float(r.get("completeness") or 0.0)
+            e = agg.setdefault(pw, {"pathway_id": pw, "max_completeness": 0.0, "examples": 0})
+            if comp > e["max_completeness"]:
+                e["max_completeness"] = comp
+            e["examples"] += 1
+        c_summary = sorted(agg.values(), key=lambda x: (-x["max_completeness"], x["pathway_id"]))
+    except Exception:
+        c_summary = None
+    return {"PresentKOsByGenome": present, "CompletenessMatrix": completeness, "CompletenessSummary": c_summary}
+
+
+def _materialize_module_profile(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    module = (params.get("module") or "cazy").strip().lower()
+    if module == "cazy":
+        return {"ModuleRows": inputs.get("cazymes"), "GlobalCounts": inputs.get("cazyme_family_counts")}
+    elif module == "bgc":
+        return {"ModuleRows": inputs.get("bgcs"), "GlobalCounts": None}
+    return {"ModuleRows": None, "GlobalCounts": None}
+
+
+def _materialize_evidence_and_next(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    return {"EvidenceMetrics": inputs.get("evidence_metrics"), "FollowupPlan": inputs.get("followup_request")}
+
+
+register_operator(OperatorSpec(
+    name="MaterializeFeatureDiscovery",
+    inputs=["discovered_proteins", "pf_facet", "ko_facet"],
+    outputs=["FeatureSet", "ProteinSet", "FacetSummary"],
+    params={"output_profile": "facet_summary|rowset|ids_only"},
+    run=_materialize_feature_discovery,
+    description="Package discovery results into typed records (FeatureSet, ProteinSet, optional facets)",
+))
+
+register_operator(OperatorSpec(
+    name="MaterializeGeneContext",
+    inputs=["neighborhoods", "neighborhood_summary"],
+    outputs=["NeighborhoodSet", "NeighborhoodSummary"],
+    params={"output_profile": "rowset|macro_summary"},
+    run=_materialize_gene_context,
+    description="Package neighborhoods into typed records",
+))
+
+register_operator(OperatorSpec(
+    name="MaterializePathwayProfile",
+    inputs=["present", "pathway_completeness"],
+    outputs=["PresentKOsByGenome", "CompletenessMatrix", "CompletenessSummary"],
+    params={},
+    run=_materialize_pathway_profile,
+    description="Package KO presence and pathway completeness into typed records",
+))
+
+register_operator(OperatorSpec(
+    name="MaterializeModuleProfile",
+    inputs=["cazymes", "cazyme_family_counts", "bgcs"],
+    outputs=["ModuleRows", "GlobalCounts"],
+    params={"module": "cazy|bgc", "output_profile": "per_genome|global_counts|rowset"},
+    run=_materialize_module_profile,
+    description="Package CAZy or BGC module outputs into typed records",
+))
+
+register_operator(OperatorSpec(
+    name="MaterializeEvidenceAndNext",
+    inputs=["evidence_metrics", "followup_request"],
+    outputs=["EvidenceMetrics", "FollowupPlan"],
+    params={},
+    run=_materialize_evidence_and_next,
+    description="Package evidence metrics and follow-up plan into typed records",
 ))

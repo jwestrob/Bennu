@@ -50,6 +50,7 @@ from .genome_context_extractor import GenomeContextExtractor
 from ..mfp.operators import builtin as _mfp_builtin  # noqa: F401  # register builtins
 from ..mfp.operators import catalog_search as _mfp_catalog_search  # noqa: F401  # register catalog search ops
 from ..mfp.operators import planning_utils as _mfp_planning_utils  # noqa: F401  # register planning utility ops
+from ..mfp.planning.composites import COMPOSITE_EXPANDERS, planner_catalog_overlay
 from ..mfp.operators.base import operator_catalog, OperatorContext
 from ..mfp.executor import execute_plan
 from .query_validator import QueryValidator
@@ -245,9 +246,10 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     logger.info("🧭 MacroPlanner: proposing operator plan")
                     # Light instrumentation: expose operator catalog size and key operators
                     try:
-                        oc = operator_catalog()
+                        # Show only composites to the planner and in logs
+                        oc = planner_catalog_overlay()
                         op_names = [o.get("name") for o in oc.get("operators", [])]
-                        logger.info("🧭 Operator catalog loaded: %d operators (examples: %s)", len(op_names), ", ".join(op_names[:5]))
+                        logger.info("🧭 Planner-visible operators: %d (examples: %s)", len(op_names), ", ".join(op_names[:5]))
                     except Exception:
                         pass
                     # Do NOT include large KO/PFAM reference blobs in planner context by default.
@@ -347,14 +349,74 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             "  Do NOT call AnnotationDiscovery with only formatting params (output_profile/group_by/fields) — that yields empty results.\n"
                             "- If a catalog search step is present, bind its ID outputs and, if relevant, pass them via inputs into AnnotationDiscovery; do not assume implicit availability.\n"
                             "- Keyword hygiene: When the user asks for context around specific genes/subunits/components, prefer direct subunit terms and concise synonyms; avoid broad class tokens and hyphenated 'like' analog terms unless the user explicitly requests exploratory breadth. Limit synonyms to a small number (e.g., ≤2) per theme.\n"
+                            "- Quantity discipline: For gene/subunit context, keep PFAM catalog probes small — set FeatureDiscovery.limits.top_k ≈ 3–8 (default PFAM top_n=5). Use larger values only for broad capability surveys.\n"
+                            "\nINTENT HINTS (operator bias):\n"
+                            "- neighborhood|context|flanking|operon|adjacent → prefer GeneContext\n"
+                            "- pathway|completeness|KEGG → prefer PathwayProfile\n"
+                            "- CAZy|cazyme|BGC|biosynthetic → prefer ModuleProfile\n"
+                            "- evidence|follow-up|sufficient → prefer EvidenceAndNext\n"
+                            "- PFAM|KO|search|discover|find → prefer FeatureDiscovery\n"
                         )
+                        # Restrict planner-visible catalog to composites only
+                        planner_catalog = planner_catalog_overlay()
                         return dict(
                             question=question,
-                            operator_catalog=json.dumps(operator_catalog()),
+                            operator_catalog=json.dumps(planner_catalog),
                             constraints=hard_constraints,
                             ko_reference=ko_ref,
                             pfam_reference=pf_ref,
                         )
+
+                    # Backward-compat + macro expansion helpers (planner output → executor input)
+                    PRIMITIVE_TO_COMPOSITE = {
+                        "SearchPfamCatalogFuzzy": "FeatureDiscovery",
+                        "SearchKoCatalogFuzzy": "FeatureDiscovery",
+                        "ExtractIdsFromCatalogHits": "FeatureDiscovery",
+                        "QueryProteinsByIds": "FeatureDiscovery",
+                        "AnnotationDiscovery": "FeatureDiscovery",
+                        "NeighborhoodContext": "GeneContext",
+                        "FetchPresentKOs": "PathwayProfile",
+                        "LoadKoPathwayTotals": "PathwayProfile",
+                        "ComputePathwayCompleteness": "PathwayProfile",
+                        "QueryCazymesByGenome": "ModuleProfile",
+                        "CountCazymeFamilies": "ModuleProfile",
+                        "QueryBGCsByGenome": "ModuleProfile",
+                        "AssessEvidence": "EvidenceAndNext",
+                        "ProposeFollowup": "EvidenceAndNext",
+                    }
+
+                    def _rewrite_to_composites(plan_dict: dict) -> dict:
+                        try:
+                            steps_in = list(plan_dict.get('steps', []) or [])
+                        except Exception:
+                            return plan_dict
+                        rewritten: List[dict] = []
+                        for st in steps_in:
+                            name = (st or {}).get('op')
+                            comp = PRIMITIVE_TO_COMPOSITE.get(name)
+                            if comp:
+                                rewritten.append({"op": comp, "params": st.get("params", {})})
+                            else:
+                                rewritten.append(st)
+                        plan_dict['steps'] = rewritten
+                        return plan_dict
+
+                    def _expand_composites(plan_dict: dict, question_text: str) -> dict:
+                        try:
+                            steps_in = list(plan_dict.get('steps', []) or [])
+                        except Exception:
+                            return plan_dict
+                        expanded: List[dict] = []
+                        for st in steps_in:
+                            name = (st or {}).get('op')
+                            params = (st or {}).get('params') or {}
+                            if name in COMPOSITE_EXPANDERS:
+                                substeps = COMPOSITE_EXPANDERS[name](params, {"question": question_text})
+                                expanded.extend(substeps)
+                            else:
+                                expanded.append(st)
+                        plan_dict['steps'] = expanded
+                        return plan_dict
 
                     # Planner model (manual allocation): default to gpt-5-high
                     plan_res = None
@@ -367,7 +429,32 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         import time as _t
                         _t0 = _t.time()
                         with dspy.context(lm=lm):
-                            plan_res = module(**planner_call_inputs())
+                            _pci = planner_call_inputs()
+                            try:
+                                # Persist full planner call inputs for debug
+                                if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                    sdir = self.note_keeper.synthesis_notes_path
+                                    os.makedirs(sdir, exist_ok=True)
+                                    # Decode operator_catalog if it's a JSON string for readability
+                                    _pci_dump = dict(_pci)
+                                    try:
+                                        if isinstance(_pci_dump.get('operator_catalog'), str) and _pci_dump['operator_catalog'].strip().startswith('{'):
+                                            _pci_dump['operator_catalog'] = json.loads(_pci_dump['operator_catalog'])
+                                    except Exception:
+                                        pass
+                                    # Persist the signature docstring/context used by the planner
+                                    try:
+                                        from .dspy_signatures import MacroPlannerSignature as _MPS
+                                        sig_text = (_MPS.__doc__ or '').strip()
+                                        with open(os.path.join(sdir, 'planner_signature.txt'), 'w', encoding='utf-8') as f_sig:
+                                            f_sig.write(sig_text)
+                                    except Exception as _sig_err:
+                                        logger.info(f"Planner signature save skipped: {_sig_err}")
+                                    with open(os.path.join(sdir, 'planner_call_inputs.json'), 'w', encoding='utf-8') as f_in:
+                                        json.dump(_pci_dump, f_in, indent=2)
+                            except Exception as _pci_err:
+                                logger.info(f"Planner call inputs save skipped: {_pci_err}")
+                            plan_res = module(**_pci)
                         _ms = int((_t.time() - _t0) * 1000)
                         try:
                             # Best-effort effort extraction from alias
@@ -379,12 +466,79 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     except Exception as _e:
                         logger.warning(f"Planner call failed: {_e}")
                     plan_text = getattr(plan_res, 'plan_json', '') if plan_res else ''
-                    plan = None
-                    if isinstance(plan_text, str) and plan_text.strip().startswith('{'):
+                    # Persist raw planner output for debugging/inspection
+                    try:
+                        if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                            sdir = self.note_keeper.synthesis_notes_path
+                            os.makedirs(sdir, exist_ok=True)
+                            with open(os.path.join(sdir, 'planner_raw.txt'), 'w', encoding='utf-8') as f_pr:
+                                f_pr.write(str(plan_text) if plan_text is not None else '')
+                            # Also persist the planner-visible catalog overlay for full context
+                            try:
+                                cat = planner_catalog_overlay()
+                                with open(os.path.join(sdir, 'planner_catalog_overlay.json'), 'w', encoding='utf-8') as f_cat:
+                                    json.dump(cat, f_cat, indent=2)
+                            except Exception as _cat_err:
+                                logger.info(f"Planner catalog overlay save skipped: {_cat_err}")
+                    except Exception as _pr_err:
+                        logger.info(f"Planner raw save skipped: {_pr_err}")
+                    # Helper: extract first balanced JSON object from text
+                    def _extract_first_json_object(txt: str) -> str | None:
+                        if not isinstance(txt, str) or not txt:
+                            return None
+                        # Find first '{'
                         try:
-                            plan = json.loads(plan_text)
+                            start = txt.find('{')
+                            if start == -1:
+                                return None
+                            depth = 0
+                            in_str = False
+                            esc = False
+                            for i in range(start, len(txt)):
+                                ch = txt[i]
+                                if in_str:
+                                    if esc:
+                                        esc = False
+                                    elif ch == '\\':
+                                        esc = True
+                                    elif ch == '"':
+                                        in_str = False
+                                else:
+                                    if ch == '"':
+                                        in_str = True
+                                    elif ch == '{':
+                                        depth += 1
+                                    elif ch == '}':
+                                        depth -= 1
+                                        if depth == 0:
+                                            return txt[start:i+1]
+                            return None
                         except Exception:
-                            plan = None
+                            return None
+
+                    plan = None
+                    if isinstance(plan_text, str) and plan_text.strip():
+                        candidate = plan_text.strip()
+                        # If it doesn't end cleanly, try to repair by extracting first JSON object
+                        if not candidate.startswith('{') or not candidate.endswith('}'):
+                            repaired = _extract_first_json_object(candidate)
+                        else:
+                            repaired = candidate
+                        try:
+                            if repaired:
+                                p = json.loads(repaired)
+                                try:
+                                    raw_ops = [st.get('op') for st in (p.get('steps') or [])]
+                                    logger.info("🧭 MacroPlanner proposed composites/primitives: %s", ", ".join([str(x) for x in raw_ops]))
+                                except Exception:
+                                    pass
+                                # Rewrite legacy primitives → composites, then expand composites → primitives
+                                p = _rewrite_to_composites(p)
+                                plan = _expand_composites(p, question)
+                                if repaired != candidate:
+                                    logger.info("🔧 Planner JSON repaired (trailing/preamble text ignored)")
+                        except Exception as _perr:
+                            logger.info(f"Planner JSON parse failed: {_perr}")
                     if plan is not None:
                         def _env_has_results(env_dict: Dict[str, Any]) -> bool:
                             try:
@@ -536,7 +690,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 with dspy.context(lm=lm):
                                     plan_res2 = module(
                                         question=question,
-                                        operator_catalog=json.dumps(operator_catalog()),
+                                        operator_catalog=json.dumps(planner_catalog_overlay()),
                                         constraints="allow_keyword_discovery=1",
                                         ko_reference=ko_ref,
                                         pfam_reference=pf_ref,
@@ -552,9 +706,29 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 logger.warning(f"Planner retry failed: {_e3}")
                                 plan_res2 = None
                             plan2_text = getattr(plan_res2, 'plan_json', '') if plan_res2 else ''
-                            if isinstance(plan2_text, str) and plan2_text.strip().startswith('{'):
+                            # Persist raw planner RETRY output for debugging
+                            try:
+                                if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                    sdir = self.note_keeper.synthesis_notes_path
+                                    os.makedirs(sdir, exist_ok=True)
+                                    with open(os.path.join(sdir, 'planner_raw_retry.txt'), 'w', encoding='utf-8') as f_pr2:
+                                        f_pr2.write(str(plan2_text) if plan2_text is not None else '')
+                            except Exception as _pr2_err:
+                                logger.info(f"Planner raw retry save skipped: {_pr2_err}")
+                            # Attempt JSON repair for retry output as well
+                            if isinstance(plan2_text, str) and plan2_text.strip():
+                                candidate2 = plan2_text.strip()
+                                if not candidate2.startswith('{') or not candidate2.endswith('}'):
+                                    repaired2 = _extract_first_json_object(candidate2)
+                                else:
+                                    repaired2 = candidate2
                                 try:
-                                    plan = json.loads(plan2_text)
+                                    if repaired2:
+                                        p2 = json.loads(repaired2)
+                                        p2 = _rewrite_to_composites(p2)
+                                        plan = _expand_composites(p2, question)
+                                        if repaired2 != candidate2:
+                                            logger.info("🔧 Planner JSON (retry) repaired (trailing/preamble text ignored)")
                                 except Exception:
                                     pass
                             attempts += 1

@@ -250,16 +250,21 @@ class UnifiedAgentExecutor:
         # (no need to initialize here, will use model_allocator.create_context_managed_call)
         
         logger.info("🤖 UnifiedAgentExecutor initialized - dynamic tool chaining enabled")
-        # Initialize FSM for typed transitions
-        self._fsm = FSM()
-        # Obligation ledger for deterministic scheduling (optional)
-        self.obligation_ledger = None
-        # Router config debug
-        try:
-            from ..options.router import USE_GRAMMAR_ROUTER as _UGR
-            logger.info(f"ROUTER_CONFIG: USE_GRAMMAR_ROUTER={_UGR}")
-        except Exception:
-            pass
+        # Initialize FSM only if enabled
+        if getattr(self.rag_system.config, 'DISABLE_FSM', True):
+            self._fsm = None
+            self.obligation_ledger = None
+            logger.info("🛑 FSM disabled by configuration; skipping FSM initialization")
+        else:
+            self._fsm = FSM()
+            # Obligation ledger for deterministic scheduling (optional)
+            self.obligation_ledger = None
+            # Router config debug
+            try:
+                from ..options.router import USE_GRAMMAR_ROUTER as _UGR
+                logger.info(f"ROUTER_CONFIG: USE_GRAMMAR_ROUTER={_UGR}")
+            except Exception:
+                pass
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
         """Entrypoint for user questions.

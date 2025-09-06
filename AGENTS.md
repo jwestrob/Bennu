@@ -1,6 +1,17 @@
-Supersedes: all prior compaction notes (2025‑08‑26, 2025‑09‑04). This is the current single source of truth.
+Supersedes: all prior compaction notes (2025‑08‑26, 2025‑09‑04, 2025‑09‑05). This is the current single source of truth.
 
-Compaction Note — 2025‑09‑05
+Compaction Note — 2025‑09‑06
+
+Progress checkpoint (post‑cleanups)
+- Functional enrichment removed from Stage 07
+  - Dropped PFAM/KO/CAZy description adders and tests; Stage 07 focuses on Stage 04 outputs (PFAM, KO) + core graph (Genome→Gene→Protein), BGC/CAZy when available, NEXT edges, and KEGG pathways.
+  - Result: cleaner logs, no empty enrichment fields; deterministic import.
+- Stage 07 build path validated
+  - TTL created with ≈10.48M triples, CSVs emitted including `next_relationships.csv`, and bulk import completes via `neo4j-admin` (docker engine, auth=none) with no enrichment warnings.
+  - Diagnostics confirm `[:NEXT]` present, `Gene.nextDegree`/`Gene.genesOnContig` populated from CSV load; neighborhood operators see consistent degrees.
+- Post‑import indexes
+  - Constraints and indexes are created by default after import. Docker path uses unauth bolt by default; when creds are provided, they are used.
+  - Composite indexes on `:Gene(contig,startCoordinate,endCoordinate)` and `:Gene(contig,startCoordinate)` accelerate locus/flanking scans.
 
 Context (what’s now solid)
 - Neighborhoods: deterministic and auditable
@@ -16,7 +27,7 @@ Context (what’s now solid)
 - Stage 07 (default, no creds needed)
   - RDF→CSV conversion precomputes `[:NEXT]` edges (`next_relationships.csv`) and writes `Gene.nextDegree` and `Gene.genesOnContig` directly into Gene CSVs.
   - Bulk import with `neo4j-admin` loads everything in one shot; no Neo4j auth required; no post‑load fixes needed.
-  - Optional constraints/indexes can be applied post import if env creds exist, but are not required for neighborhoods.
+  - Post‑import constraints/indexes are applied by default (no‑auth supported). Optional additional indexes can still be added manually.
 - Diagnostics
   - `scripts/diagnostics/neo4j_check_next.py` prints a degree histogram and per‑seed computed vs stored degree, plus adjacency/flanking neighbors and PFAM/KO annotations.
 
@@ -46,6 +57,32 @@ Diagnostics (quick)
 - `python scripts/diagnostics/neo4j_check_next.py --k 5 --flank_n 5 --limit 6`
   - Prints global `[:NEXT]` count; degree histogram; and per‑seed `NEXT degree=K (prop=D) | genes_on_contig=N`.
   - Shows adjacency (k) and flanking (±N) neighbors with PFAM/KO summaries.
+
+Accessing the Augmented Neo4j Schema
+- Connection (docker default)
+  - URI: `bolt://localhost:7687`; Auth: none (container runs with `NEO4J_AUTH=none`).
+  - With creds: set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` env vars.
+- Core labels
+  - `Genome`, `Gene`, `Protein`, `Domain`, `DomainAnnotation`, `FunctionalAnnotation`, `KEGGOrtholog`, `Pathway`, `Bgc`, `QualityMetrics`, `Dataset`.
+- Key properties
+  - `Gene`: `id`, `contig`, `startCoordinate`, `endCoordinate`, `strand`, `nextDegree`, `genesOnContig`.
+  - `Protein`: `id` (optional: `name`, `description` when present).
+  - `Domain`: `id`, `pfamAccession`, `name` (description may be empty by design post‑cleanup).
+  - `KEGGOrtholog`: `id`, `description`.
+- Relationships (subset)
+  - `(:Protein)-[:ENCODEDBY]->(:Gene)`
+  - `(:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(:Domain)`
+  - `(:Protein)-[:HASFUNCTION]->(:KEGGOrtholog)`
+  - `(:KEGGOrtholog)-[:PARTICIPATESIN]->(:Pathway)`
+  - `(:Gene)-[:NEXT]->(:Gene)` (directed; treat as undirected for degree)
+  - `(:Gene)-[:BELONGSTOGENOME]->(:Genome)` and provenance edges (e.g., quality metrics)
+- Helpful queries
+  - Global NEXT count: `MATCH ()-[:NEXT]->() RETURN count(*) AS c`.
+  - Stored vs live degree for a seed: `MATCH (p:Protein {id:$pid})-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (g)-[:NEXT]-() WITH g, count(*) AS c RETURN toInteger(coalesce(g.nextDegree,c)) AS degree, toInteger(g.genesOnContig) AS onContig`.
+  - Flanking neighbors (±N by contig order): see `scripts/diagnostics/neo4j_check_next.py` for a compact, index‑aware pattern.
+  - PFAM to proteins: `MATCH (d:Domain {pfamAccession:$pf})<-[:DOMAINFAMILY]-(:DomainAnnotation)<-[:HASDOMAIN]-(p:Protein) RETURN p.id LIMIT 25`.
+  - KO to pathways: `MATCH (ko:KEGGOrtholog {id:$ko})-[:PARTICIPATESIN]->(pw:Pathway) RETURN pw.id, pw.name LIMIT 25`.
+  - Index/constraint visibility (Neo4j 5): `SHOW INDEXES`, `SHOW CONSTRAINTS`.
 
 Open items / test & complete
 - Planner tightening (non‑breaking): when intent is “context around specific genes/subunits”, recommend smaller `pfam_tokens_top_n` (≈ 8–12) to reduce noise; keep wording general (no hard‑coding biology).

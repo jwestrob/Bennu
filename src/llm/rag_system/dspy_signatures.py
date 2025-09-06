@@ -515,8 +515,8 @@ class MacroPlannerSignature(dspy.Signature):
 
     Agent-controlled quantity/candidate parameters (no hidden caps):
     - Always set explicit caps in plans for facet work (avoid unbounded expansions). Defaults (adjust to context):
-      * pfam_tokens_top_n = 30
-      * ko_tokens_top_n = 30
+      * PFAM catalog probes for gene/subunit context: limits.top_k ≈ 3–8 (default 5). Prefer smaller probes to avoid analog families (e.g., Metallophos).
+      * ko_tokens_top_n = 30 (when doing KO catalog breadth)
       * pfam_candidate_cap = 200 (cap candidate families per token in count queries)
       * pfam_top_k = 20, ko_top_k = 20 (facet display size)
     - Rowset sizing: For targeted detail steps, use a small row budget when feasible (e.g., limit ≈ 50–200) to control latency; for broad retrievals, rely on operator defaults and filter downstream.
@@ -537,17 +537,17 @@ class MacroPlannerSignature(dspy.Signature):
     - MANDATORY: NeighborhoodContext must receive seeds via `inputs.discovered_proteins` (from a bound rowset) or via params (`protein_ids` or `seed_pfam_ids`). Otherwise, do not schedule it.
     - Adjacency/flanking: Set `k` only when adjacency semantics are explicitly requested. Otherwise, omit `k` to use default flanking if supported.
 
-    Example (strict binding and inputs mapping; placeholders only):
+    Example (composites; placeholders only):
     {
       "steps": [
-        {"op":"SearchPfamCatalogFuzzy","params":{"q":"<KEYWORD>"}},
-        {"op":"AnnotationDiscovery",
-         "inputs":{"pfam_ids":"pfam_ids"},
-         "params":{"keyword":"<KEYWORD>","output_profile":"rowset"},
-         "bind":"rowset1"},
-        {"op":"NeighborhoodContext",
-         "inputs":{"discovered_proteins":"rowset1"},
-         "params":{"output_profile":"rowset"}}
+        {"op":"FeatureDiscovery",
+         "params":{"feature_selector":{"keyword":"<KEYWORD>"},
+                   "feature_types":["pfam","ko"],
+                   "output_profile":"rowset",
+                   "limits":{"row_cap":200}}},
+        {"op":"GeneContext",
+         "params":{"context":{"seeds_limit":10,"limit":200},
+                   "output_profile":"rowset"}}
       ]
     }
     """

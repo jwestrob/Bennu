@@ -153,7 +153,8 @@ def _search_ko(q: str, project_root: str | None, top_n: int) -> List[Dict[str, A
 
 def _search_pfam_catalog(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     q = str(params.get("q") or params.get("keyword") or "").strip()
-    top_n = int(params.get("top_n", 25) or 25)
+    # Default narrower PFAM probe to reduce noisy families
+    top_n = int(params.get("top_n", 5) or 5)
     hits = _search_pfam(q, ctx.project_root, top_n)
     # Provide flat lists for both accession IDs and short names to maximize match
     pfam_ids: List[str] = []
@@ -277,9 +278,9 @@ register_operator(OperatorSpec(
     name="SearchPfamCatalogFuzzy",
     inputs=[],
     outputs=["pfam_catalog_hits", "pfam_ids", "pfam_terms"],
-    params={"q": "string", "top_n": "int (default 25)"},
+    params={"q": "string", "top_n": "int (default 5)"},
     run=_search_pfam_catalog,
-    description="Fuzzy search PFAM catalog (local TSV) and return top matches with pfam_ids and pfam_terms (accessions + short names)",
+    description="Fuzzy search PFAM catalog (local TSV). Defaults to a narrow top_n=5 to reduce noise; returns pfam_ids and pfam_terms (accessions + short names)",
 ))
 
 register_operator(OperatorSpec(
@@ -330,9 +331,9 @@ def _extract_ids(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str,
 
 register_operator(OperatorSpec(
     name="ExtractIdsFromCatalogHits",
-    inputs=[],  # inputs optional; will read pfam_catalog_hits/ko_catalog_hits if present
+    inputs=["pfam_catalog_hits", "ko_catalog_hits"],
     outputs=["pfam_ids", "ko_ids"],
     params={},
     run=_extract_ids,
-    description="Extract PFAM/KO id lists from catalog search hits (optional inputs)",
+    description="Extract PFAM/KO id lists from catalog search hits (explicit inputs)",
 ))

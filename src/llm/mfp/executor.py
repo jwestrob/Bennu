@@ -91,6 +91,12 @@ def execute_plan(plan: Dict[str, Any], ctx: OperatorContext) -> Dict[str, Any]:
                 else:
                     # No binding; omit
                     pass
+        # Warn if plan provided inputs that are not declared by op spec
+        if isinstance(inputs_ref, dict) and inputs_ref:
+            extra = [k for k in inputs_ref.keys() if k not in (spec.inputs or [])]
+            if extra:
+                logging.getLogger(__name__).info(
+                    f"execute_plan: ignoring undeclared input keys for op={name}: {extra}")
         # Execute with timing and robust logging
         t0 = time.perf_counter()
         try:
