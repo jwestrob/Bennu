@@ -409,3 +409,9 @@
 {"ts": "2025-09-06T08:39:21Z", "event": "pipeline.start", "data": {"question": "We have PFAM but not KOFAM rubisco hits. show me the context surrounding our rubisco genes, and help me identify what role they likely play (they're more than likely not form I)"}}
 {"ts": "2025-09-06T08:58:19Z", "event": "pipeline.start", "data": {"question": "We have PFAM but not KOFAM rubisco hits. show me the context surrounding our rubisco genes, and help me identify what role they likely play (they're more than likely not form I)."}}
 {"ts": "2025-09-06T09:15:57Z", "event": "pipeline.start", "data": {"question": "We have PFAM but not KOFAM rubisco hits. show me the context surrounding our rubisco genes, and help me identify what role they likely play (they're more than likely not form I)."}}
+{"ts": "2025-09-06T09:44:45Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall"}}
+{"ts": "2025-09-06T11:20:13Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall"}}
+{"ts": "2025-09-06T11:20:23Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall"}}
+{"ts": "2025-09-06T11:20:34Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
+{"ts": "2025-09-06T11:27:27Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
+{"ts": "2025-09-06T11:53:05Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}

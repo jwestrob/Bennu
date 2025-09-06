@@ -344,7 +344,13 @@ def run_dbcan_batch_analysis(
     protein_files = list(input_dir.glob("*.faa"))
     if not protein_files:
         logger.warning(f"No .faa files found in {input_dir}")
-        return {}
+        # Fallback: if dbCAN has been run externally, try to synthesize JSON from existing overview.tsv files
+        synth = synthesize_results_from_existing_outputs(output_dir)
+        if synth:
+            logger.info(f"Synthesized CAZyme JSON from existing outputs: {len(synth)} genomes")
+            save_results(synth, output_dir)
+            create_processing_manifest(synth, output_dir)
+        return synth
         
     logger.info(f"Found {len(protein_files)} protein files for dbCAN analysis")
     
@@ -389,6 +395,50 @@ def run_dbcan_batch_analysis(
                 finally:
                     progress.advance(task)
     
+    return results
+
+def synthesize_results_from_existing_outputs(output_dir: Path) -> Dict[str, CAZymeResult]:
+    """Scan output_dir/*/overview.tsv and synthesize CAZymeResult JSON artifacts.
+
+    This supports cases where dbCAN was run outside this module and only tabular outputs exist.
+    """
+    results: Dict[str, CAZymeResult] = {}
+    if not output_dir.exists():
+        return results
+    for genome_dir in output_dir.iterdir():
+        if not genome_dir.is_dir():
+            continue
+        overview = genome_dir / "overview.tsv"
+        if not overview.exists() or overview.stat().st_size == 0:
+            continue
+        genome_id = genome_dir.name
+        try:
+            anns = parse_dbcan_overview(overview)
+            # Prefer counting proteins in uniInput.faa if present; fallback to non_CAZyme.faa + annotations for count
+            uni = genome_dir / "uniInput.faa"
+            non_cazy = genome_dir / "non_CAZyme.faa"
+            total = 0
+            if uni.exists() and uni.stat().st_size > 0:
+                total = count_proteins_in_fasta(uni)
+            elif non_cazy.exists() and non_cazy.stat().st_size > 0:
+                total = count_proteins_in_fasta(non_cazy) + len(set(a.protein_id for a in anns))
+            else:
+                # As a last resort, use number of unique protein IDs from annotations
+                total = max(len(set(a.protein_id for a in anns)), 0)
+            family_counts: Dict[str,int] = {}
+            for a in anns:
+                family_counts[a.cazyme_family] = family_counts.get(a.cazyme_family, 0) + 1
+            results[genome_id] = CAZymeResult(
+                genome_id=genome_id,
+                total_proteins=total,
+                cazyme_proteins=len(set(a.protein_id for a in anns)),
+                annotations=anns,
+                family_counts=family_counts,
+                processing_time=0.0,
+            )
+        except Exception as e:
+            logger.warning(f"Synthesis failed for {genome_id}: {e}")
+            continue
     return results
 
 

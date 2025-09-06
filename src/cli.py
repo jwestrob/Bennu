@@ -266,11 +266,16 @@ def build(
         6: {
             "name": "dbCAN CAZyme Annotation",
             "outdir": output_dir / "stage06_dbcan",
-            "function": lambda: run_dbcan_analysis(
-                input_dir=output_dir / "stage03_prodigal" / "genomes" / "all_protein_symlinks",
-                output_dir=output_dir / "stage06_dbcan",
-                max_workers=min(threads, 2),  # Limit parallel dbCAN processes
-                threads_per_job=4  # Threads per dbCAN job
+            "function": lambda: (lambda _res: (
+                __import__('src.ingest.dbcan_cazyme', fromlist=['save_results']).save_results(_res or {}, output_dir / "stage06_dbcan"),
+                __import__('src.ingest.dbcan_cazyme', fromlist=['create_processing_manifest']).create_processing_manifest(_res or {}, output_dir / "stage06_dbcan")
+            ))(
+                run_dbcan_analysis(
+                    input_dir=output_dir / "stage03_prodigal" / "genomes" / "all_protein_symlinks",
+                    output_dir=output_dir / "stage06_dbcan",
+                    max_workers=min(threads, 2),  # Limit parallel dbCAN processes
+                    threads_per_job=max(1, threads)  # Use specified threads per dbCAN job
+                )
             )
         },
         7: {

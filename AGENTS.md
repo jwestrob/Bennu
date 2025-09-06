@@ -105,3 +105,35 @@ Key files
 
 Cleanup TODO
 - Remove functional enrichment from Stage 07 (PFAM/KO label additions from reference files). It is not required for neighborhoods and adds noisy logs; the pipeline should remain focused on annotations produced in Stage 04 and core graph structure.
+
+CAZy Integration — Status 2025‑09‑06
+
+- Current behavior
+  - Stage 06 (dbCAN) runs and produces tabular outputs (e.g., overview.tsv, uniInput.faa). Logs confirm dbCAN completion (e.g., “Completed dbCAN for SRR6231169: …”).
+  - Stage 07 builder expects JSON artifacts under `data/stage06_dbcan/` to ingest CAZy:
+    - `processing_manifest.json`
+    - `dbcan_summary.json`
+    - `<genome>_cazyme_results.json`
+  - Latest Stage 07 run shows: “WARNING  CAZyme manifest not found: data/stage06_dbcan/processing_manifest.json”, and Neo4j has 0 CAZy nodes/edges.
+
+- Root cause (CLI path)
+  - The Stage 06 CLI path invokes `run_dbcan_batch_analysis(...)` but does not persist results to JSON. The JSON‑save logic exists in `src/ingest/dbcan_cazyme.py: main()` (`save_results(...)`, `create_processing_manifest(...)`), but the CLI stage does not call these functions.
+  - A JSON synthesis fallback was added to `run_dbcan_batch_analysis` (when no `.faa` inputs are found). In the CLI path, `.faa` inputs exist, so the fallback is not triggered; the expected JSON files remain absent.
+
+- Evidence
+  - Stage 06 log: “Running dbCAN for SRR6231169 … --threads 16 … Completed dbCAN for SRR6231169: 43671/386307 CAZyme proteins.”
+  - Stage 07 log: “CAZyme manifest not found: data/stage06_dbcan/processing_manifest.json”.
+  - Neo4j checks: `MATCH (p:Protein)-[:HASCAZYME]->(:Cazymeannotation)` returns 0; no CAZy instances present.
+
+- Action items
+  - Minimal fix (recommended): After Stage 06 completes in the CLI, persist results:
+    - Call `save_results(results, output_dir)` and `create_processing_manifest(results, output_dir)` with `output_dir = data/stage06_dbcan`.
+  - Optional robustness: Keep the synthesis fallback AND always run it as a post‑step to catch externally‑run dbCAN (convert `overview.tsv` to JSON when JSON is missing).
+  - Then re‑run Stage 07 (`python -m src.cli build -f 7 -t 7 --force`) and verify CAZy presence in Neo4j.
+
+- Threads alignment (DIAMOND)
+  - CLI Stage 06 now forwards the `-j` (threads) value to dbCAN per‑job via `--threads` (observed: `--threads 16` in logs). This ensures DIAMOND uses the specified thread count.
+
+- Quick verification queries (Neo4j)
+  - Global: `MATCH (p:Protein)-[:HASCAZYME]->(:Cazymeannotation)-[:CAZYMEFAMILY]->(:Cazymefamily) RETURN count(p) AS proteins, count(DISTINCT 1) AS families`.
+  - Per‑genome: `MATCH (g:Genome)<-[:BELONGSTOGENOME]-(:Gene)<-[:ENCODEDBY]-(p:Protein)-[:HASCAZYME]->(:Cazymeannotation) RETURN g.id, count(p) ORDER BY count(p) DESC`.

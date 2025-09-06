@@ -211,6 +211,9 @@ class Neo4jBulkLoader:
                 "qualitymetrics": "QualityMetrics",
                 "bgcs": "Bgc",
                 "bgc_clusters": "Bgc",
+                # CAZy
+                "cazymeannotations": "Cazymeannotation",
+                "cazymefamilies": "Cazymefamily",
             }
             return overrides.get(stem_lower, filename.split(".")[0].rstrip('s').title())
         for node in node_files:
@@ -355,6 +358,9 @@ class Neo4jBulkLoader:
                 # BGC variants
                 "bgcs": "Bgc",
                 "bgc_clusters": "Bgc",
+                # CAZy
+                "cazymeannotations": "Cazymeannotation",
+                "cazymefamilies": "Cazymefamily",
             }
             if stem in label_overrides:
                 label = label_overrides[stem]

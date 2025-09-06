@@ -133,6 +133,34 @@ class IncrementalReportBuilder:
             self.editor_calls += 1
         return self.doc
 
+    def preflight(self, raw_items: List[Dict[str, Any]], pack_limit_tokens: int = 25000) -> Dict[str, Any]:
+        """Plan-only preflight to estimate IRB packs and token sizes without any LLM calls.
+
+        Returns a dict with:
+        - anchors: int
+        - packs: int
+        - pack_tokens: List[int]
+        - items: List[{anchor, tokens, summary: {...}}]
+        """
+        macro_results = [it for it in raw_items if isinstance(it, dict) and it.get("type") == "macro_result"]
+        batches = self._schedule(macro_results)
+        items: List[Dict[str, Any]] = []
+        for anchor, rows in batches:
+            snippet = serialize_section(self.doc, anchor)
+            summary = self._compact_batch(anchor, rows)
+            tokens = self._estimate_tokens(snippet, summary)
+            items.append({'anchor': anchor, 'tokens': tokens, 'summary': summary})
+        # _pack_items expects dicts with 'tokens'
+        packs = self._pack_items(items, limit=int(pack_limit_tokens or 25000))
+        pack_tokens = [sum(it['tokens'] for it in pack) for pack in packs]
+        self._log_info(f"IRB_PREFLIGHT: anchors={len(items)} packs={len(packs)} tokens={pack_tokens}")
+        return {
+            'anchors': len(items),
+            'packs': len(packs),
+            'pack_tokens': pack_tokens,
+            'items': items,
+        }
+
     # Internal helpers
     def _load_or_init_ast(self) -> Document:
         # Minimal new document; title can be filled later

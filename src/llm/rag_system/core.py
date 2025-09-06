@@ -354,6 +354,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             "- neighborhood|context|flanking|operon|adjacent → prefer GeneContext\n"
                             "- pathway|completeness|KEGG → prefer PathwayProfile\n"
                             "- CAZy|cazyme|BGC|biosynthetic → prefer ModuleProfile\n"
+                            "- For counts/top N/distribution questions, set ModuleProfile.output_profile='global_counts' and DO NOT include any Query*ByGenome steps; use Count* operators only (e.g., CountCazymeFamilies).\n"
                             "- evidence|follow-up|sufficient → prefer EvidenceAndNext\n"
                             "- PFAM|KO|search|discover|find → prefer FeatureDiscovery\n"
                         )

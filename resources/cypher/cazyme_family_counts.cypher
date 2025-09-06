@@ -1,6 +1,6 @@
-// Count CAZyme-annotated proteins by family (dbCAN via Domain/DomainAnnotation)
-MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain)
-WHERE d.id =~ '^(GH|GT|PL|CE|CBM)[0-9].*' OR d.id =~ '^AA[0-9].*'
-WITH d.id AS family, count(DISTINCT p) AS proteins
-RETURN family, proteins
+// Count CAZy families using Stage 07 CAZy nodes
+//   (Protein)-[:HASCAZYME]->(CAZymeAnnotation)-[:CAZYMEFAMILY]->(CAZymeFamily)
+MATCH (p:Protein)-[:HASCAZYME]->(:Cazymeannotation)-[:CAZYMEFAMILY]->(f)
+WHERE f.familyId IS NOT NULL
+RETURN f.familyId AS family, count(DISTINCT p) AS proteins
 ORDER BY proteins DESC, family

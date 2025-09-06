@@ -141,9 +141,11 @@ def expand_module_profile(params: Dict[str, Any], ctx: CompositeContext) -> List
     out = params.get("output_profile") or "per_genome"
     steps: List[Dict[str, Any]] = []
     if module == "cazy":
-        steps.append({"op": "QueryCazymesByGenome", "params": {"genome_ids": params.get("genomes", [])}})
+        # Counts-only path: do not fetch rowsets
         if out == "global_counts":
             steps.append({"op": "CountCazymeFamilies", "params": {}})
+        else:
+            steps.append({"op": "QueryCazymesByGenome", "params": {"genome_ids": params.get("genomes", [])}})
     elif module == "bgc":
         steps.append({"op": "QueryBGCsByGenome", "params": {"genome_ids": params.get("genomes", [])}})
     steps.append({"op": "MaterializeModuleProfile", "inputs": {"cazymes": "cazymes", "cazyme_family_counts": "cazyme_family_counts", "bgcs": "bgcs"}, "params": {"module": module, "output_profile": out}})
@@ -211,12 +213,12 @@ def planner_catalog_overlay() -> Dict[str, Any]:
             },
             {
                 "name": "ModuleProfile",
-                "description": "CAZy or BGC profiling with per-genome rows and/or global family counts.",
+                "description": "CAZy or BGC profiling. Use output_profile='global_counts' for counts-only (no row fetch); per_genome/rowset for detailed rows.",
                 "inputs": ["genomes", "module", "output_profile"],
                 "params": {
                     "genomes": "List[str] genome IDs (optional; default all)",
                     "module": "'cazy' | 'bgc'",
-                    "output_profile": "'per_genome' (default) | 'global_counts' | 'rowset'"
+                    "output_profile": "'global_counts' | 'per_genome' (default) | 'rowset'"
                 },
                 "outputs": ["ModuleRows", "GlobalCounts"],
             },

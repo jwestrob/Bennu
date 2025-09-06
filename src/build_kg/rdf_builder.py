@@ -73,7 +73,8 @@ def parse_prodigal_header(header_line: str) -> Dict[str, Any]:
 
 
 def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef], 
-                                   genome_uris: Dict[str, URIRef]) -> Dict[str, str]:
+                                   genome_uris: Dict[str, URIRef],
+                                   contig_to_genome: Optional[Dict[str, URIRef]] = None) -> Dict[str, str]:
     """
     Build mapping from protein header IDs to correct filename-based genome IDs.
     
@@ -84,13 +85,18 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
     Args:
         protein_uris: Map of protein_id -> protein_uri from RDF building
         genome_uris: Map of genome_id -> genome_uri from RDF building
+        contig_to_genome: Optional mapping contig_id -> genome_uri. When provided,
+            this is used as the primary mapping path by extracting the contig from
+            the protein header (all '_' parts except the last counter) and looking
+            up the genome URI directly. This reliably maps generic Prodigal headers
+            like 'NODE_1_length_..._7' to the correct genome.
         
     Returns:
-        Dict mapping protein_id -> correct_genome_id
+        Dict mapping protein_id -> correct_genome_id (string)
     """
     protein_to_genome = {}
     
-    # Extract common identifiers from genome IDs for matching
+    # Extract common identifiers from genome IDs for heuristic matching fallback
     genome_patterns = {}
     for genome_id in genome_uris.keys():
         # Special handling for PLM0 genomes: use "PLM0_60" pattern
@@ -126,10 +132,33 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
                         logger.debug(f"Genome pattern mapping: {pattern} -> {genome_id}")
                         break
     
-    # Map each protein ID to correct genome ID using pattern matching
+    # Map each protein ID to correct genome ID
     for protein_id in protein_uris.keys():
+        # 1) Preferred path: contig-based mapping when available
+        if contig_to_genome:
+            try:
+                parts = protein_id.split('_')
+                if len(parts) >= 2:
+                    contig_id = '_'.join(parts[:-1])  # drop trailing counter
+                    if contig_id in contig_to_genome:
+                        genome_uri = contig_to_genome[contig_id]
+                        # Extract genome_id string from URIRef
+                        genome_id = str(genome_uri)
+                        prefix = str(GENOME)
+                        if genome_id.startswith(prefix):
+                            genome_id = genome_id.replace(prefix, '')
+                        else:
+                            # Fallback: last path segment
+                            genome_id = genome_id.rsplit('/', 1)[-1]
+                        protein_to_genome[protein_id] = genome_id
+                        logger.debug(f"Contig-based protein mapping: {protein_id} -> {genome_id}")
+                        continue
+            except Exception:
+                # Fall back silently to pattern-based matching
+                pass
+
+        # 2) Heuristic fallback: pattern-based matching
         # Extract pattern from protein ID like "RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_..." or "PLM0_60_b1_sep16_..."
-        
         # Handle PLM0 proteins first
         if protein_id.startswith('PLM0_'):
             plm_parts = protein_id.split('_')
@@ -155,7 +184,7 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
                             logger.debug(f"RIFCS protein mapping: {protein_id} -> {correct_genome_id}")
                             break
         
-        # Fallback: Handle other protein patterns with consecutive digit sequences
+        # Final fallback: Handle other protein patterns with consecutive digit sequences
         if protein_id not in protein_to_genome:
             parts = protein_id.split('_')
             for i in range(len(parts) - 1):
@@ -791,8 +820,15 @@ class GenomeKGBuilder:
     def add_cazyme_annotations_with_correct_genomes(self, cazyme_data: Dict[str, Any], 
                                                    genome_uris: Dict[str, URIRef],
                                                    protein_uris: Dict[str, URIRef],
-                                                   protein_to_genome: Dict[str, str]):
-        """Add CAZyme family annotations with correct protein-to-genome mapping."""
+                                                   protein_to_genome: Optional[Dict[str, str]] = None):
+        """Add CAZyme family annotations, linking directly to proteins.
+
+        Notes:
+        - Genome membership can be derived via Protein→Gene→Genome; an explicit
+          protein→genome map is not required for creating CAZy annotations.
+        - Uses O(1) lookups against protein_uris to avoid O(N×M) scans.
+        - Optional protein_to_genome is accepted for logging/debugging only.
+        """
         annotation_count = 0
         family_count = 0
         families_added = set()
@@ -803,33 +839,20 @@ class GenomeKGBuilder:
         
         # Process CAZyme annotations
         for annotation in cazyme_data.get("annotations", []):
-            protein_id = annotation.get("protein_id")
+            protein_id = (annotation.get("protein_id") or "").strip()
             cazyme_family = annotation.get("cazyme_family")
-            
             if not protein_id or not cazyme_family:
                 continue
-                
-            # Find matching protein URI using exact matching or suffix matching
-            matching_protein_uri = None
-            for existing_protein_id, protein_uri in protein_uris.items():
-                if existing_protein_id == protein_id or existing_protein_id.endswith(protein_id):
-                    matching_protein_uri = protein_uri
-                    break
-            
+
+            # O(1) exact match; CAZy JSON uses the Prodigal header as ID
+            matching_protein_uri = protein_uris.get(protein_id)
             if matching_protein_uri:
-                # Use protein-to-genome mapping to get the correct genome
-                correct_genome_id = None
-                for existing_protein_id in protein_uris.keys():
-                    if existing_protein_id == protein_id or existing_protein_id.endswith(protein_id):
-                        correct_genome_id = protein_to_genome.get(existing_protein_id)
-                        break
-                
-                if correct_genome_id:
-                    mapping_stats['mapped'] += 1
-                    logger.debug(f"Mapped CAZyme protein {protein_id} to genome {correct_genome_id}")
-                else:
-                    mapping_stats['unmapped'] += 1
-                    logger.warning(f"Could not map CAZyme protein {protein_id} to any genome")
+                # Optional: track mapping coverage if provided
+                if protein_to_genome is not None:
+                    if protein_id in protein_to_genome:
+                        mapping_stats['mapped'] += 1
+                    else:
+                        mapping_stats['unmapped'] += 1
                 
                 # Create CAZyme annotation instance
                 annotation_id = f"{protein_id}_{cazyme_family}_{annotation_count}"
@@ -1238,7 +1261,11 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
             if bgc_genome_assignments:
                 builder.add_bgc_annotations_with_assignments(bgc_results, bgc_genome_assignments, protein_uris)
                 bgc_stats['clusters'] = len(bgc_results.get('clusters', []))
-                bgc_stats['genes'] = len(bgc_results.get('genes', []))
+                # Prefer explicit genes list when present; otherwise, count linked proteins per cluster
+                if bgc_results.get('genes'):
+                    bgc_stats['genes'] = len(bgc_results.get('genes', []))
+                else:
+                    bgc_stats['genes'] = sum(len(c.get('protein_list', []) or []) for c in bgc_results.get('clusters', []))
             else:
                 logger.warning("No BGC genome assignments could be made - BGCs will be skipped")
         else:
@@ -1248,14 +1275,9 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     cazyme_stats = {'annotations': 0, 'families': 0}
     if cazyme_results:
         if genome_uris:
-            # Build protein-to-genome mapping to correctly assign CAZyme annotations
-            logger.info("Building protein-to-genome mapping for CAZyme annotations...")
-            protein_to_genome = build_protein_to_genome_mapping(protein_uris, genome_uris)
-            
-            # Add CAZyme annotations with correct genome assignments
-            builder.add_cazyme_annotations_with_correct_genomes(cazyme_results, genome_uris, protein_uris, protein_to_genome)
+            # Directly link CAZy annotations to proteins (Genome derives via Protein→Gene)
+            builder.add_cazyme_annotations_with_correct_genomes(cazyme_results, genome_uris, protein_uris, None)
             cazyme_stats['annotations'] = len(cazyme_results.get('annotations', []))
-            # Count unique families
             families = set(ann.get('cazyme_family') for ann in cazyme_results.get('annotations', []))
             cazyme_stats['families'] = len(families)
     
