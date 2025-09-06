@@ -1063,7 +1063,7 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         'proteins_annotated': len(protein_uris),
         'pfam_domains': len(annotation_results['pfam_domains']),
         'kofam_functions': len(annotation_results['kofam_functions']),
-        'functional_enrichment': enrichment_stats,
+        # 'functional_enrichment' removed (enrichment step disabled),
         'pathway_integration': pathway_stats,
         'output_files': {
             'knowledge_graph': str(kg_file)
@@ -1331,7 +1331,7 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         'bgc_genes': bgc_stats['genes'],
         'cazyme_annotations': cazyme_stats['annotations'],
         'cazyme_families': cazyme_stats['families'],
-        'functional_enrichment': enrichment_stats,
+        # 'functional_enrichment' removed (enrichment step disabled),
         'pathway_integration': pathway_stats,
         'output_files': {
             'knowledge_graph': str(kg_file)

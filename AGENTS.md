@@ -50,7 +50,7 @@ Diagnostics (quick)
 Open items / test & complete
 - Planner tightening (non‑breaking): when intent is “context around specific genes/subunits”, recommend smaller `pfam_tokens_top_n` (≈ 8–12) to reduce noise; keep wording general (no hard‑coding biology).
 - Reporter visibility: ensure neighborhoods_json is leveraged to summarize seed‑level adjacency and loci examples succinctly; prefer `output_profile='rowset'` when seed set is small (≤ 12).
-- Indexes (optional): expose a CLI switch for applying useful indexes post import when creds are available (composite on `:Gene(contig,startCoordinate)`, full‑text as needed).
+- Indexes (default): post‑import constraints/indexes are created by default (no‑auth supported; docker engine runs with `NEO4J_AUTH=none`). Includes unique IDs, composite `:Gene(contig,startCoordinate)` (and contig,start,end), and helpful full‑text indexes.
 - E2E checks:
   - Stage 07 default path produces Gene.nextDegree on import; agent runs with no nextDegree warnings.
   - AnnotationDiscovery validation rejects missing keyword; planner respects wiring rules.

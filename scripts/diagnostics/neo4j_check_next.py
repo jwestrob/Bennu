@@ -109,8 +109,9 @@ class _MockDriver:
         pass
 
 
-def _connect(uri: str, user: str, password: str):
-    return GraphDatabase.driver(uri, auth=(user, password))
+def _connect(uri: str, user: str | None, password: str | None, no_auth: bool = False):
+    auth = None if no_auth or not (user and password) else (user, password)
+    return GraphDatabase.driver(uri, auth=auth)
 
 
 def _fetch_pf_seeds(session, pf_token: str, cap: int) -> List[str]:
@@ -213,6 +214,7 @@ def main(argv: List[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=6, help="Number of PF00016 seeds to test")
     ap.add_argument("--mock", action="store_true", help="Run in mock mode (no DB required)")
     ap.add_argument("--allow_mock_on_failure", action="store_true", help="If connection fails, fall back to mock mode")
+    ap.add_argument("--no-auth", action="store_true", help="Connect without authentication (e.g., docker NEO4J_AUTH=none)")
     args = ap.parse_args(argv)
 
     driver = None
@@ -220,9 +222,9 @@ def main(argv: List[str] | None = None) -> int:
         print("[MOCK] Running in mock mode — no DB connection will be attempted.")
         driver = _MockDriver()
     else:
-        print(f"Connecting to Neo4j at {args.uri} as {args.user}")
+        print(f"Connecting to Neo4j at {args.uri} as {args.user} (no_auth={args.no_auth})")
         try:
-            driver = _connect(args.uri, args.user, args.password)
+            driver = _connect(args.uri, args.user, args.password, no_auth=args.no_auth)
             # Quick ping
             with driver.session() as _s:
                 _s.run("RETURN 1 AS ok").single()

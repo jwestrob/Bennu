@@ -244,8 +244,8 @@ python -m src.ingest.04_astra_scan \
 **Tool**: PyHMMer via Astra for HMM scanning
 
 **Databases**:
-- **PFAM**: Protein family domains (1,145 families with descriptions)
-- **KOFAM**: KEGG Ortholog HMM profiles (813 orthologs with descriptions)
+- **PFAM**: Protein family domains
+- **KOFAM**: KEGG Ortholog HMM profiles
 
 **Parameters**:
 - E-value threshold: 1e-5
@@ -256,7 +256,7 @@ python -m src.ingest.04_astra_scan \
 - `astra_pfam_results.tsv`: PFAM domain hits
 - `astra_kofam_results.tsv`: KEGG ortholog assignments
 
-**Functional Enrichment**: Automatically integrates authoritative descriptions from PFAM Stockholm files and KEGG KO lists
+Note: Functional description enrichment (PFAM/KO) has been removed from Stage 07.
 
 </details>
 

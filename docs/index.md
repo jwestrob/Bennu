@@ -9,7 +9,7 @@ This is a next-generation genomic intelligence platform that combines traditiona
 ### Key Achievements
 
 - **373,587 RDF triples** linking genomes, proteins, domains, and functions
-- **1,845 CAZymes + 813 KEGG orthologs** with authoritative functional descriptions  
+- **KEGG pathways integrated** with KO→pathway relationships  
 - **Enhanced GECCO BGC integration** with 17 quantitative properties per BGC
 - **10,102 proteins** with 320-dimensional ESM2 semantic embeddings
 - **Sub-millisecond vector similarity search** with LanceDB

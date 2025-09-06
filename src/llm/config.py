@@ -94,6 +94,21 @@ class LLMConfig(BaseModel):
         if os.getenv('LANCEDB_PATH'):
             db_config['lancedb_path'] = os.getenv('LANCEDB_PATH')
         
+        # Fallback: read connection.json written by Stage 07 (auth-less docker)
+        if not db_config.get('neo4j_uri'):
+            try:
+                conn_path = Path('data/neo4j/connection.json')
+                if conn_path.exists():
+                    conn = json.loads(conn_path.read_text())
+                    uri = conn.get('uri')
+                    if uri:
+                        db_config['neo4j_uri'] = uri
+                        # Auth-less container: leave user/password empty
+                        db_config['neo4j_user'] = ''
+                        db_config['neo4j_password'] = ''
+            except Exception:
+                pass
+
         if db_config:
             config_data['database'] = db_config
         
@@ -222,11 +237,11 @@ class LLMConfig(BaseModel):
         status = {}
         
         # Check database connections
-        status['neo4j_configured'] = bool(
-            self.database.neo4j_uri and 
-            self.database.neo4j_user and 
-            self.database.neo4j_password
-        )
+        # Consider auth-less docker (empty user/password) as configured if URI present
+        has_uri = bool(self.database.neo4j_uri)
+        has_auth = bool(self.database.neo4j_user and self.database.neo4j_password)
+        authless_ok = has_uri and (self.database.neo4j_user == '' and self.database.neo4j_password == '')
+        status['neo4j_configured'] = bool((has_uri and has_auth) or authless_ok)
         
         status['lancedb_configured'] = bool(
             self.database.lancedb_path and 

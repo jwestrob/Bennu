@@ -69,7 +69,7 @@ def _run_neo4j_postload_tuning_if_available(postload_tuning_module) -> None:
         logger.warning(f"Neo4j post-load tuning failed: {e}")
         console.print("[yellow]Skipping Neo4j post-load tuning due to error[/yellow]")
 
-def _csv_bulk_import_stage_07() -> None:
+def _csv_bulk_import_stage_07(engine: str = "docker") -> None:
     """Convert RDF→CSV with NEXT/degree already in RDF and bulk import via neo4j-admin.
 
     No credentials required. Minimal, deterministic path; no fallbacks.
@@ -84,7 +84,7 @@ def _csv_bulk_import_stage_07() -> None:
     converter = RDFToCSVConverter(kg_ttl, csv_dir)
     converter.convert()
     console.print("[cyan]Bulk importing CSV to Neo4j (neo4j-admin)...[/cyan]")
-    loader = Neo4jBulkLoader(csv_dir)
+    loader = Neo4jBulkLoader(csv_dir, engine=engine)
     loader.bulk_import()
     console.print("[green]✓ Stage 07 CSV import complete\n[/green]")
 
@@ -124,6 +124,11 @@ def build(
         False,
         "--force",
         help="Overwrite existing outputs"
+    ),
+    engine: str = typer.Option(
+        "docker",
+        "--engine",
+        help="Neo4j engine to use for Stage 07 import (docker|system). Default: docker"
     )
 ) -> None:
     """
@@ -280,7 +285,7 @@ def build(
                     output_dir=output_dir / "stage07_kg",
                     stage01_dir=output_dir / "stage01_quast"
                 ),
-                _csv_bulk_import_stage_07()
+                _csv_bulk_import_stage_07(engine=engine)
             )
         },
         8: {

@@ -284,16 +284,7 @@ protein_001   PF01594.21   Peripla_BP_2   2.1e-45   156.7    12       89     0.8
 protein_001   K07224       hmuT           1.3e-28   89.3     15       92     0.79
 ```
 
-**Functional Enrichment Integration**:
-```python
-# Enhanced with authoritative descriptions
-pfam_descriptions = parse_pfam_stockholm_files()  # 1,145 families
-kegg_descriptions = parse_kegg_ko_list()          # 813 orthologs
-
-# Example enriched annotation:
-# PF01594.21: "Heme transport protein (ABC-type)"
-# K07224: "Heme transporter, periplasmic binding protein"
-```
+Note: Functional description enrichment (PFAM/KO text fields from reference files) has been removed from Stage 07 to reduce noise and focus on core annotations from Stage 04.
 
 </details>
 
@@ -454,15 +445,7 @@ protein_002   GT2|GT4     GT2         -          2           GT2
 protein_003   CBM50       CBM50       CBM50      3           CBM50
 ```
 
-**Functional Enrichment**:
-```python
-cazy_descriptions = {
-    "GH13": "Alpha-amylase family (starch degradation)",
-    "GT2": "Cellulose synthase (cell wall biosynthesis)", 
-    "CBM50": "LysM domain (chitin binding)",
-    "CE4": "Acetyl xylan esterase (hemicellulose modification)"
-}
-```
+Note: CAZy description enrichment has been removed from Stage 07.
 
 </details>
 

@@ -66,7 +66,7 @@ Three layers tie this repo together end-to-end:
   - Stage 8: ESM2 embeddings + LanceDB → data/stage08_esm2
 - Knowledge graph construction (src/build_kg):
   - rdf_builder.py generates triples linking Genome → Gene → Protein and annotations (PFAM, KEGG, BGC, CAZyme) and pathways
-  - functional_enrichment.py attaches authoritative descriptions for PFAM/KEGG/CAZy
+  - functional enrichment step has been removed from Stage 07 (PFAM/KO/CAZy description adders) to reduce noise; Stage 07 focuses on Stage 04 annotations and core graph structure
   - neo4j_bulk_loader.py converts RDF → CSV and uses neo4j-admin import for fast loads
 - Embeddings (src/ingest/06_esm2_embeddings.py) generate 320-d vectors and LanceDB index used downstream by the LLM layer.
 
@@ -117,7 +117,7 @@ Why this matters to you in Warp
 - Tool selection decisions: src/llm/rag_system/agent_tool_selector.py (BiologicalToolSelector)
 - Task graph orchestration and execution: task_management.py, task_executor.py
 - Memory and synthesis: memory/progressive_synthesizer.py (direct vs Map-Reduce, token thresholds); memory/note_keeper.py; memory/tool_result_cache.py
-- Knowledge graph integration: src/build_kg/rdf_builder.py, functional_enrichment.py, rdf_to_csv_converter.py, neo4j_bulk_loader.py
+- Knowledge graph integration: src/build_kg/rdf_builder.py, rdf_to_csv_converter.py, neo4j_bulk_loader.py
 - Pipeline stages: src/ingest/*.py (naming corresponds to stage numbers)
 
 
@@ -134,4 +134,3 @@ Why this matters to you in Warp
 - CLAUDE.md: deep implementation notes for the agent system; includes critical rules (no truncation, signature guidelines), performance fixes, and architecture changes
 - docs/LLM_SYSTEM_ARCHITECTURE.md and docs/COMPONENT_MAP.md: detailed architecture and data flow for the agentic system
 - config/pipeline.yaml: single source of truth for many stage defaults and LLM/RAG knobs
-

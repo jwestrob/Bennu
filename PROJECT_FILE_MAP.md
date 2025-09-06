@@ -10,8 +10,7 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
 
 ### Key Achievements
 - **373,587 RDF triples** linking genomes, proteins, domains, and functions (UPDATED)
-- **1,145 PFAM families + 813 KEGG orthologs** enriched with authoritative functional descriptions
-- **287 KEGG pathways** with 4,937 KO-pathway relationships integrated
+- **KEGG pathway integration** with thousands of KO→pathway relationships
 - **Enhanced GECCO BGC Integration** with 17 quantitative properties per BGC including confidence scores and product-specific probabilities (NEW)
 - **BGC and CAZyme annotation support** with GECCO and dbCAN integration fully tested end-to-end
 - **10,102 proteins** with 320-dimensional ESM2 semantic embeddings
@@ -222,7 +221,7 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
   - Integrates GECCO BGC annotations with 17 quantitative properties per BGC
   - Integrates dbCAN CAZyme annotations with family classifications
   - Generates 373,587+ RDF triples linking genomes, proteins, domains, functions, BGCs, and CAZymes
-  - Integrates functional enrichment and pathway information
+  - Integrates KEGG pathway information
   - Creates comprehensive biological ontology relationships
 - **Key Features**:
   - Rich genomic metadata (coordinates, strand, GC content, start codons)
@@ -233,19 +232,8 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
   - Provenance tracking and data lineage
 - **Output**: Knowledge graph in RDF format (`data/stage07_kg/knowledge_graph.ttl`)
 
-#### **src/build_kg/functional_enrichment.py**
-- **Purpose**: Enrich knowledge graph with authoritative functional descriptions (ENHANCED)
-- **Functionality**:
-  - Parses PFAM Stockholm format files for family descriptions
-  - Processes KEGG KO list for ortholog definitions
-  - Adds CAZy family descriptions from dbCAN database
-  - Adds 1,145 PFAM families + 813 KEGG orthologs + CAZyme families with descriptions
-  - Replaces hardcoded biological knowledge with reference databases
-- **Data Classes**:
-  - `PfamEntry`: PFAM family with accession, description, type, clan
-  - `KoEntry`: KEGG ortholog with definition, threshold, score type
-  - `CazyEntry`: CAZy family with classification and substrate information
-- **Impact**: Transforms knowledge graph from ~242K to 373,587 RDF triples (UPDATED)
+#### [REMOVED] Functional enrichment module
+- The former `src/build_kg/functional_enrichment.py` has been removed from Stage 07. PFAM/KO/CAZy description enrichment is out-of-scope for neighborhoods and produced empty/noisy fields. Stage 07 now focuses on Stage 04 annotations and core graph structure.
 
 #### **src/build_kg/neo4j_bulk_loader.py**
 - **Purpose**: High-performance Neo4j database loading (100x faster than Python MERGE)
@@ -483,7 +471,6 @@ This is an advanced genomic AI platform that transforms microbial genome assembl
 
 #### **src/tests/test_build_kg/**
 - **test_annotation_processors.py**: Functional annotation processing tests
-- **test_functional_enrichment.py**: PFAM/KEGG enrichment validation
 - **test_integration.py**: Knowledge graph integration testing
 - **test_rdf_builder.py**: RDF triple generation validation
 

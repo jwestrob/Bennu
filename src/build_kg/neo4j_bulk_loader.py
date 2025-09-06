@@ -13,28 +13,39 @@ import shutil
 from rich.console import Console
 from rich.progress import Progress
 import sys
+import json
 import os
 
 console = Console()
 
 
 class Neo4jBulkLoader:
-    """Bulk load Neo4j database using neo4j-admin import."""
+    """Bulk load Neo4j database using neo4j-admin import.
+
+    Supports two engines:
+    - system: use locally installed neo4j-admin (Homebrew/apt)
+    - docker: run neo4j:5 container with NEO4J_AUTH=none; import via docker run and then start container
+    """
     
-    def __init__(self, csv_dir: Path, neo4j_home: Path = None, database_name: str = "neo4j"):
+    def __init__(self, csv_dir: Path, neo4j_home: Path = None, database_name: str = "neo4j", engine: str = "docker"):
         self.csv_dir = csv_dir
         self.database_name = database_name
-        
-        # Auto-detect Neo4j home from homebrew installation
-        if neo4j_home is None:
-            neo4j_home = self._detect_neo4j_home()
-        
-        self.neo4j_home = neo4j_home
-        self.neo4j_admin = neo4j_home / "bin" / "neo4j-admin"
-        self.neo4j_ctl = neo4j_home / "bin" / "neo4j"
-        
-        console.print(f"Neo4j home: {self.neo4j_home}")
+        self.engine = engine.lower()
+        self.data_dir = Path("data/neo4j").resolve()
+        self.docker_image = os.getenv("GENOME_KG_NEO4J_IMAGE", "neo4j:5")
+        self.container_name = os.getenv("GENOME_KG_NEO4J_CONTAINER", "genome-kg-neo4j")
+
         console.print(f"CSV directory: {self.csv_dir}")
+        console.print(f"Engine: {self.engine}")
+
+        if self.engine == "system":
+            # Auto-detect Neo4j home from homebrew installation
+            if neo4j_home is None:
+                neo4j_home = self._detect_neo4j_home()
+            self.neo4j_home = neo4j_home
+            self.neo4j_admin = neo4j_home / "bin" / "neo4j-admin"
+            self.neo4j_ctl = neo4j_home / "bin" / "neo4j"
+            console.print(f"Neo4j home: {self.neo4j_home}")
     
     def _detect_neo4j_home(self) -> Path:
         """Auto-detect Neo4j installation directory."""
@@ -80,30 +91,57 @@ class Neo4jBulkLoader:
             has_next_rel_csv = any('next_relationships.csv' in f.name.lower() for f in csv_files)
             progress.advance(task)
             
-            # Step 2: Stop Neo4j
-            progress.update(task, description="Stopping Neo4j...")
-            self._stop_neo4j()
-            progress.advance(task)
-            
-            # Step 3: Backup/clear existing database
-            progress.update(task, description="Preparing database...")
-            self._prepare_database()
-            progress.advance(task)
-            
-            # Step 4: Run bulk import
-            progress.update(task, description="Running bulk import...")
-            import_stats = self._run_bulk_import(csv_files)
-            progress.advance(task)
-            
-            # Step 5: Start Neo4j
-            progress.update(task, description="Starting Neo4j...")
-            self._start_neo4j()
-            progress.advance(task)
-            
-            # Step 6: Create constraints and indexes
-            progress.update(task, description="Creating constraints/indexes...")
-            self._create_constraints_and_indexes()
-            progress.advance(task)
+            if self.engine == "docker":
+                # Step 2: Stop and remove any existing container
+                progress.update(task, description="Stopping docker container...")
+                self._docker_stop_container()
+                progress.advance(task)
+
+                # Step 3: Prepare data directory
+                progress.update(task, description="Preparing data volume...")
+                self.data_dir.mkdir(parents=True, exist_ok=True)
+                progress.advance(task)
+
+                # Step 4: Run import in docker
+                progress.update(task, description="Running docker import...")
+                import_stats = self._docker_run_import(csv_files)
+                progress.advance(task)
+
+                # Step 5: Start container
+                progress.update(task, description="Starting docker Neo4j...")
+                self._docker_start_container()
+                progress.advance(task)
+
+                # Step 6: Create constraints and indexes (skipped by default; can be triggered separately)
+                progress.update(task, description="Creating constraints/indexes...")
+                self._create_constraints_and_indexes()
+                progress.advance(task)
+            else:
+                # system engine (existing behavior)
+                # Step 2: Stop Neo4j
+                progress.update(task, description="Stopping Neo4j...")
+                self._stop_neo4j()
+                progress.advance(task)
+                
+                # Step 3: Backup/clear existing database
+                progress.update(task, description="Preparing database...")
+                self._prepare_database()
+                progress.advance(task)
+                
+                # Step 4: Run bulk import
+                progress.update(task, description="Running bulk import...")
+                import_stats = self._run_bulk_import(csv_files)
+                progress.advance(task)
+                
+                # Step 5: Start Neo4j
+                progress.update(task, description="Starting Neo4j...")
+                self._start_neo4j()
+                progress.advance(task)
+                
+                # Step 6: Create constraints and indexes
+                progress.update(task, description="Creating constraints/indexes...")
+                self._create_constraints_and_indexes()
+                progress.advance(task)
 
             # Step 7: Precompute genomic neighbor edges
             if has_next_rel_csv:
@@ -117,12 +155,111 @@ class Neo4jBulkLoader:
         total_time = time.time() - start_time
         
         console.print(f"[green]✓ Bulk import completed in {total_time:.2f} seconds![/green]")
+        # Write connection.json for zero-config clients
+        try:
+            conn = {"uri": "bolt://localhost:7687", "auth": None}
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            (self.data_dir / "connection.json").write_text(json.dumps(conn))
+        except Exception:
+            pass
         
         return {
             "import_time_seconds": total_time,
             "csv_files_processed": len(csv_files),
             **import_stats
         }
+
+    def _docker_available(self) -> bool:
+        try:
+            result = subprocess.run(["docker", "version"], capture_output=True, text=True, timeout=10)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def _docker_stop_container(self):
+        if not self._docker_available():
+            raise RuntimeError("Docker is not available. Install Docker or use engine='system'.")
+        # Stop and remove existing container if present
+        subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True, text=True)
+    
+    def _docker_run_import(self, csv_files: List[Path]) -> Dict[str, Any]:
+        if not self._docker_available():
+            raise RuntimeError("Docker is not available. Install Docker or use engine='system'.")
+        # Build import command using /import mount
+        node_files = []
+        rel_files = []
+        for csv_file in csv_files:
+            if "relationships" in csv_file.name:
+                rel_files.append(csv_file.name)
+            else:
+                node_files.append(csv_file.name)
+        cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{self.csv_dir.resolve()}:/import",
+            "-v", f"{self.data_dir}:/data",
+            self.docker_image,
+            "neo4j-admin", "database", "import", "full",
+            "--overwrite-destination=true",
+        ]
+        # Map filenames to container paths
+        def label_for(stem_lower: str, filename: str) -> str:
+            # Mimic system importer label overrides
+            overrides = {
+                "domainannotations": "DomainAnnotation",
+                "functionalannotations": "FunctionalAnnotation",
+                "keggorthologs": "KEGGOrtholog",
+                "qualitymetrics": "QualityMetrics",
+                "bgcs": "Bgc",
+                "bgc_clusters": "Bgc",
+            }
+            return overrides.get(stem_lower, filename.split(".")[0].rstrip('s').title())
+        for node in node_files:
+            stem_lower = Path(node).stem.lower()
+            label = label_for(stem_lower, node)
+            cmd.extend(["--nodes", f"{label}=/import/{node}"])
+        for rel in rel_files:
+            rel_type = Path(rel).stem.replace("_relationships", "").upper()
+            cmd.extend(["--relationships", f"{rel_type}=/import/{rel}"])
+
+        console.print("Running docker import...")
+        console.print("Command: " + " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+        if result.returncode != 0:
+            console.print(f"[red]Import failed![/red]")
+            console.print(f"STDOUT: {result.stdout}")
+            console.print(f"STDERR: {result.stderr}")
+            raise RuntimeError(f"neo4j-admin import (docker) failed: {result.stderr}")
+        console.print("✓ Import successful!")
+        console.print(f"Import output: {result.stdout}")
+        return {"docker_import_output": result.stdout}
+
+    def _docker_start_container(self):
+        if not self._docker_available():
+            raise RuntimeError("Docker is not available. Install Docker or use engine='system'.")
+        # Start container with auth=none
+        run_cmd = [
+            "docker", "run", "-d",
+            "--name", self.container_name,
+            "-p", "7474:7474", "-p", "7687:7687",
+            "-e", "NEO4J_AUTH=none",
+            "-v", f"{self.data_dir}:/data",
+            self.docker_image
+        ]
+        result = subprocess.run(run_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to start docker Neo4j: {result.stderr}")
+        # Wait a bit for readiness
+        console.print("Waiting for Neo4j (docker) to be ready...")
+        time.sleep(5)
+        # Poll bolt port indirectly by trying a few times
+        for _ in range(30):
+            # Try logs check (simple heuristic)
+            logs = subprocess.run(["docker", "logs", self.container_name], capture_output=True, text=True)
+            if "Remote interface available" in logs.stdout or "Started" in logs.stdout:
+                console.print("✓ Neo4j (docker) is ready")
+                return
+            time.sleep(1)
+        console.print("[yellow]Proceeding without confirmed readiness; service should be up shortly[/yellow]")
     
     def _validate_csv_files(self) -> List[Path]:
         """Validate that required CSV files exist."""
@@ -261,14 +398,29 @@ class Neo4jBulkLoader:
         return {"import_output": result.stdout}
     
     def _create_constraints_and_indexes(self):
-        """Create constraints and indexes after import (integrated, idempotent)."""
-        # Only run constraints if explicit credentials are provided
-        if not (os.getenv("NEO4J_URI") and os.getenv("NEO4J_USER") and os.getenv("NEO4J_PASSWORD")):
-            console.print("[yellow]No Neo4j credentials provided; skipping constraints/indexes creation[/yellow]")
-            return
+        """Create constraints and indexes after import (enabled by default, idempotent).
+
+        Behavior:
+        - Attempts to connect using environment vars when provided.
+        - Falls back to unauthenticated local connection (bolt://localhost:7687) when auth is disabled (e.g., docker engine uses NEO4J_AUTH=none).
+        - Silently continues if the driver is unavailable or the connection fails.
+        """
+        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        user = os.getenv("NEO4J_USER")
+        password = os.getenv("NEO4J_PASSWORD")
         try:
             from neo4j import GraphDatabase
-            driver = GraphDatabase.driver(os.getenv("NEO4J_URI"), auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD")))
+        except Exception as e:
+            console.print(f"[yellow]Neo4j driver not available; skipping constraints/indexes: {e}[/yellow]")
+            return
+
+        # Choose auth mode: explicit creds if both provided; otherwise no-auth
+        auth = (user, password) if (user and password) else None
+        try:
+            driver = GraphDatabase.driver(uri, auth=auth)
+            # Quick ping
+            with driver.session() as _s:
+                _s.run("RETURN 1 AS ok").single()
         except Exception as e:
             console.print(f"[yellow]Skipping constraints/indexes (connection failed): {e}[/yellow]")
             return
@@ -286,6 +438,7 @@ class Neo4jBulkLoader:
             "CREATE CONSTRAINT bgc_id IF NOT EXISTS FOR (b:Bgc) REQUIRE b.id IS UNIQUE",
             # Composite index for spatial gene scans
             "CREATE INDEX gene_contig_coords IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.startCoordinate, g.endCoordinate)",
+            "CREATE INDEX gene_contig_start IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.startCoordinate)",
             # Helpful single-property indexes
             "CREATE INDEX protein_name IF NOT EXISTS FOR (p:Protein) ON (p.name)",
             "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",
