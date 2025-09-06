@@ -14,7 +14,6 @@ from rdflib import Graph, Namespace, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, XSD
 
 from src.build_kg.annotation_processors import process_astra_results
-from src.build_kg.functional_enrichment import add_functional_enrichment_to_pipeline
 from src.build_kg.pathway_integration import integrate_pathways
 from src.build_kg.quast_parser import collect_all_quast_metrics, format_quality_metrics_for_rdf
 
@@ -261,6 +260,8 @@ class GenomeKGBuilder:
         self.graph = Graph()
         # Lightweight index to avoid SPARQL scans at large scale
         self._contig_to_genome: Dict[str, URIRef] = {}
+        # Track genes per contig to compute NEXT adjacency and degrees
+        self._contig_genes: Dict[str, List[Dict[str, Any]]] = {}
         self._bind_namespaces()
         self._add_ontology_definitions()
     
@@ -302,7 +303,11 @@ class GenomeKGBuilder:
             (KG.hasBGC, "genome has biosynthetic gene cluster"),
             (KG.produces, "BGC produces metabolite"),
             (KG.hasCAZyme, "protein has CAZyme annotation"),
-            (KG.cazymeFamily, "CAZyme annotation belongs to family")
+            (KG.cazymeFamily, "CAZyme annotation belongs to family"),
+            # Genomic adjacency and per-gene degree properties
+            (KG.NEXT, "next gene neighbor on contig"),
+            (KG.nextDegree, "undirected adjacency degree on contig"),
+            (KG.genesOnContig, "total number of genes on contig")
         ]
         
         for class_uri, label in classes:
@@ -362,6 +367,8 @@ class GenomeKGBuilder:
                 contig_id = str(gene['contig'])
                 if contig_id and contig_id not in self._contig_to_genome:
                     self._contig_to_genome[contig_id] = genome_uri
+            else:
+                contig_id = None
             
             # Add genomic coordinates from prodigal
             if 'start' in gene and 'end' in gene:
@@ -371,9 +378,15 @@ class GenomeKGBuilder:
                 # Legacy location format for compatibility
                 location = f":{gene['start']}-{gene['end']}"
                 self.graph.add((gene_uri, KG.hasLocation, Literal(location)))
+            else:
+                # Missing coordinates → cannot participate in adjacency
+                pass
             
             if 'strand' in gene:
                 self.graph.add((gene_uri, KG.strand, Literal(gene['strand'], datatype=XSD.integer)))
+                strand_val = gene['strand']
+            else:
+                strand_val = None
             
             if 'length_nt' in gene:
                 self.graph.add((gene_uri, KG.lengthNt, Literal(gene['length_nt'], datatype=XSD.integer)))
@@ -400,9 +413,52 @@ class GenomeKGBuilder:
                 self.graph.add((protein_uri, KG.length, Literal(len(seq), datatype=XSD.integer)))
             
             protein_uris[gene_id] = protein_uri
+
+            # Collect for adjacency if we have the needed fields
+            if contig_id and ('start' in gene) and ('end' in gene):
+                lst = self._contig_genes.setdefault(contig_id, [])
+                lst.append({
+                    'start': int(gene['start']),
+                    'end': int(gene['end']),
+                    'strand': strand_val,
+                    'uri': gene_uri,
+                })
         
         logger.info(f"Added {len(gene_data)} gene-protein pairs with genomic coordinates")
         return protein_uris
+
+    def add_next_edges_and_degrees(self) -> Dict[str, Any]:
+        """Compute per-contig adjacency and set per-gene degrees and contig gene counts.
+
+        Adds:
+        - (gene)-[:NEXT]->(next_gene) edges per contig ordered by startCoordinate.
+        - gene.nextDegree in {0,1,2}
+        - gene.genesOnContig = number of genes on that contig
+        Returns small summary with counts.
+        """
+        total_edges = 0
+        total_genes = 0
+        for contig, items in self._contig_genes.items():
+            items.sort(key=lambda d: d['start'])
+            n = len(items)
+            for i, rec in enumerate(items):
+                gene_uri = rec['uri']
+                # Degree
+                if n <= 1:
+                    deg = 0
+                elif i == 0 or i == n - 1:
+                    deg = 1
+                else:
+                    deg = 2
+                self.graph.add((gene_uri, KG.nextDegree, Literal(deg, datatype=XSD.integer)))
+                self.graph.add((gene_uri, KG.genesOnContig, Literal(n, datatype=XSD.integer)))
+                total_genes += 1
+                # NEXT edge
+                if i < n - 1:
+                    self.graph.add((gene_uri, KG.NEXT, items[i + 1]['uri']))
+                    total_edges += 1
+        logger.info(f"Computed genomic adjacency: NEXT edges={total_edges:,}, genes updated={total_genes:,}")
+        return {"next_edges": total_edges, "genes_updated": total_genes}
 
     def get_contig_to_genome_index(self) -> Dict[str, URIRef]:
         """Return the internal contig→genome index built during gene loading."""
@@ -933,6 +989,12 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         genome_protein_uris = builder.add_gene_protein_entities(gene_data, genome_uri)
         protein_uris.update(genome_protein_uris)
     
+    # Compute genomic adjacency and per-gene degrees before downstream enrichments
+    try:
+        builder.add_next_edges_and_degrees()
+    except Exception as e:
+        logger.warning(f"Genomic adjacency computation skipped: {e}")
+
     # Add PFAM domain annotations
     builder.add_pfam_domains(annotation_results['pfam_domains'], protein_uris)
     
@@ -944,10 +1006,6 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         'version': '0.1.0',
         'astra_databases': ['PFAM', 'KOFAM']
     })
-    
-    # Enrich with functional annotations from reference databases
-    enriched_graph, enrichment_stats = add_functional_enrichment_to_pipeline(builder.graph)
-    builder.graph = enriched_graph
     
     # Integrate KEGG pathways
     logger.info("Integrating KEGG pathways...")
@@ -962,32 +1020,36 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     logger.info(f"Found {len(found_ko_ids)} unique KO IDs in protein annotations")
     
     pathway_stats = {'pathways_integrated': 0, 'ko_pathway_relationships': 0}
-    if ko_pathway_file.exists():
-        # Create pathway integration in temporary directory  
-        pathway_temp_dir = output_dir / "temp_pathways"
-        # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
-        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
-        
-        # Load and merge pathway graph into main graph
-        pathway_graph = Graph()
-        pathway_graph.parse(str(pathway_rdf_file), format='turtle')
-        
-        # Merge pathway graph into main graph
-        for triple in pathway_graph:
-            builder.graph.add(triple)
-        
-        # Get pathway statistics
-        pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
-                                                   if 'pathway/' in str(s)])
-        pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
-        
-        logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
-        
-        # Clean up temporary directory
-        import shutil
-        shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+    # Short-circuit: skip pathway integration when no KO IDs present
+    if len(found_ko_ids) == 0:
+        logger.info("No KO IDs found in protein annotations; skipping pathway integration")
     else:
-        logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
+        if ko_pathway_file.exists():
+            # Create pathway integration in temporary directory  
+            pathway_temp_dir = output_dir / "temp_pathways"
+            # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
+            pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
+            
+            # Load and merge pathway graph into main graph
+            pathway_graph = Graph()
+            pathway_graph.parse(str(pathway_rdf_file), format='turtle')
+            
+            # Merge pathway graph into main graph
+            for triple in pathway_graph:
+                builder.graph.add(triple)
+            
+            # Get pathway statistics
+            pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
+                                                       if 'pathway/' in str(s)])
+            pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
+            
+            logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
+            
+            # Clean up temporary directory
+            import shutil
+            shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+        else:
+            logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
     
     # Save knowledge graph
     kg_file = output_dir / "knowledge_graph.ttl"
@@ -1149,6 +1211,12 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         genome_protein_uris = builder.add_gene_protein_entities(gene_data, genome_uri)
         protein_uris.update(genome_protein_uris)
     
+    # Compute genomic adjacency and per-gene degrees before downstream enrichments
+    try:
+        builder.add_next_edges_and_degrees()
+    except Exception as e:
+        logger.warning(f"Genomic adjacency computation skipped: {e}")
+
     # Add PFAM domain annotations
     builder.add_pfam_domains(annotation_results['pfam_domains'], protein_uris)
     
@@ -1203,10 +1271,6 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         'astra_databases': databases_used
     })
     
-    # Enrich with functional annotations from reference databases
-    enriched_graph, enrichment_stats = add_functional_enrichment_to_pipeline(builder.graph)
-    builder.graph = enriched_graph
-    
     # Integrate KEGG pathways
     logger.info("Integrating KEGG pathways...")
     repo_root = Path(__file__).parent.parent.parent
@@ -1220,32 +1284,36 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     logger.info(f"Found {len(found_ko_ids)} unique KO IDs in protein annotations")
     
     pathway_stats = {'pathways_integrated': 0, 'ko_pathway_relationships': 0}
-    if ko_pathway_file.exists():
-        # Create pathway integration in temporary directory  
-        pathway_temp_dir = output_dir / "temp_pathways"
-        # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
-        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
-        
-        # Load and merge pathway graph into main graph
-        pathway_graph = Graph()
-        pathway_graph.parse(str(pathway_rdf_file), format='turtle')
-        
-        # Merge pathway graph into main graph
-        for triple in pathway_graph:
-            builder.graph.add(triple)
-        
-        # Get pathway statistics
-        pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
-                                                   if 'pathway/' in str(s)])
-        pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
-        
-        logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
-        
-        # Clean up temporary directory
-        import shutil
-        shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+    # Short-circuit: skip pathway integration when no KO IDs present
+    if len(found_ko_ids) == 0:
+        logger.info("No KO IDs found in protein annotations; skipping pathway integration")
     else:
-        logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
+        if ko_pathway_file.exists():
+            # Create pathway integration in temporary directory  
+            pathway_temp_dir = output_dir / "temp_pathways"
+            # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
+            pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
+            
+            # Load and merge pathway graph into main graph
+            pathway_graph = Graph()
+            pathway_graph.parse(str(pathway_rdf_file), format='turtle')
+            
+            # Merge pathway graph into main graph
+            for triple in pathway_graph:
+                builder.graph.add(triple)
+            
+            # Get pathway statistics
+            pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
+                                                       if 'pathway/' in str(s)])
+            pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
+            
+            logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
+            
+            # Clean up temporary directory
+            import shutil
+            shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+        else:
+            logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
     
     # Save knowledge graph
     kg_file = output_dir / "knowledge_graph.ttl"

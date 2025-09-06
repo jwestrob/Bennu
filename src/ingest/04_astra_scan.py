@@ -67,9 +67,15 @@ def run_single_astra_scan(database: str, protein_symlink_dir: Path, output_dir: 
             "--threads", str(threads)
         ]
         
-        # Add cutoffs for databases that support them
-        if use_cutoffs and database.upper() in ["PFAM", "KOFAM"]:
-            cmd.append("--cut_ga")
+        # Threshold handling per database
+        # - PFAM: use gathering cutoffs (--cut_ga)
+        # - KOFAM: use cascade mode (--cascade) to fall back to evalue (1e-15) when GA is absent
+        if use_cutoffs:
+            dbu = database.upper()
+            if dbu == "PFAM":
+                cmd.append("--cut_ga")
+            elif dbu == "KOFAM":
+                cmd.append("--cascade")
         
         console.print(f"Running astra search for {database}...")
         console.print(f"Command: {' '.join(cmd)}")

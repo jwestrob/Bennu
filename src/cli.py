@@ -41,16 +41,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("genome-kg")
 
-
 def _run_neo4j_postload_tuning_if_available(postload_tuning_module) -> None:
-    """Run Neo4j post-load tuning (constraints/indexes + NEXT edges) if module is available.
+    """Run Neo4j post-load tuning (constraints/indexes + NEXT edges + degrees) when configured.
 
-    This step is idempotent and safe to re-run. It requires NEO4J_URI/USER/PASSWORD env vars.
+    No fallbacks. If module or credentials are missing, log and return.
     """
     if postload_tuning_module is None:
-        logger.info("Neo4j post-load tuning module not available; skipping NEXT edge creation")
+        logger.info("Neo4j post-load tuning module not available; skipping NEXT/degree creation")
         return
-    # Check env creds
     import os
     uri = os.getenv("NEO4J_URI")
     user = os.getenv("NEO4J_USER")
@@ -59,19 +57,36 @@ def _run_neo4j_postload_tuning_if_available(postload_tuning_module) -> None:
         logger.info("NEO4J_URI/USER/PASSWORD not set; skipping Neo4j post-load tuning")
         return
     try:
-        console.print("[bold cyan]Running Neo4j post-load tuning (constraints/indexes + NEXT edges)...[/bold cyan]")
-        # Create constraints/indexes
+        console.print("[bold cyan]Running Neo4j post-load tuning (constraints/indexes + NEXT edges + degrees)...[/bold cyan]")
         postload_tuning_module.create_constraints_and_indexes()
         console.print("[green]✓ Constraints and indexes ensured[/green]")
-        # Create NEXT edges
         total_pairs = postload_tuning_module.precompute_next_edges()
         console.print(f"[green]✓ NEXT edges processed[/green] (pairs≈{total_pairs:,})")
+        postload_tuning_module.compute_gene_degrees(include_genes_on_contig=True)
+        console.print("[green]✓ Gene nextDegree and genesOnContig computed[/green]")
         logger.info(f"Neo4j post-load tuning complete: NEXT pairs≈{total_pairs:,}")
     except Exception as e:
-        logger.warning(f"Neo4j post-load tuning failed or unavailable: {e}")
-        # Do not fail the pipeline if tuning is optional
+        logger.warning(f"Neo4j post-load tuning failed: {e}")
         console.print("[yellow]Skipping Neo4j post-load tuning due to error[/yellow]")
 
+def _csv_bulk_import_stage_07() -> None:
+    """Convert RDF→CSV with NEXT/degree already in RDF and bulk import via neo4j-admin.
+
+    No credentials required. Minimal, deterministic path; no fallbacks.
+    """
+    from .build_kg.rdf_to_csv_converter import RDFToCSVConverter
+    from .build_kg.neo4j_bulk_loader import Neo4jBulkLoader
+
+    kg_ttl = Path("data/stage07_kg/knowledge_graph.ttl")
+    csv_dir = Path("data/stage07_kg/csv")
+
+    console.print("[cyan]Converting RDF to CSV...[/cyan]")
+    converter = RDFToCSVConverter(kg_ttl, csv_dir)
+    converter.convert()
+    console.print("[cyan]Bulk importing CSV to Neo4j (neo4j-admin)...[/cyan]")
+    loader = Neo4jBulkLoader(csv_dir)
+    loader.bulk_import()
+    console.print("[green]✓ Stage 07 CSV import complete\n[/green]")
 
 @app.command()
 def build(
@@ -141,7 +156,7 @@ def build(
     run_gecco_module = importlib.import_module('src.ingest.gecco_bgc')
     run_dbcan_module = importlib.import_module('src.ingest.dbcan_cazyme')
     build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
-    # Neo4j post-load tuning (constraints/indexes + NEXT edges)
+    # Post-load tuning module remains available for optional manual runs
     try:
         postload_tuning = importlib.import_module('src.build_kg.postload_tuning')
     except Exception:
@@ -265,7 +280,7 @@ def build(
                     output_dir=output_dir / "stage07_kg",
                     stage01_dir=output_dir / "stage01_quast"
                 ),
-                _run_neo4j_postload_tuning_if_available(postload_tuning)
+                _csv_bulk_import_stage_07()
             )
         },
         8: {

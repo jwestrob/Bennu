@@ -134,6 +134,12 @@ def _deg_next(session, pid: str) -> int:
     )
     return session.run(cy, pid=pid).single()["deg"]
 
+def _deg_prop(session, pid: str) -> int:
+    cy = (
+        "MATCH (p:Protein {id:$pid})-[:ENCODEDBY]->(g:Gene) RETURN toInteger(coalesce(g.nextDegree,-1)) AS d"
+    )
+    return session.run(cy, pid=pid).single()["d"]
+
 
 def _genes_on_contig(session, pid: str) -> int:
     cy = (
@@ -235,14 +241,24 @@ def main(argv: List[str] | None = None) -> int:
         except Exception as e:
             print(f"Error counting NEXT edges: {e}")
 
+        # Degree histogram
+        try:
+            rows = session.run("MATCH (g:Gene) RETURN toInteger(coalesce(g.nextDegree,0)) AS deg, count(*) AS n ORDER BY deg")
+            hist = [(r['deg'], r['n']) for r in rows]
+            if hist:
+                print("Degree histogram (nextDegree):", ", ".join([f"{d}:{n}" for d,n in hist]))
+        except Exception as e:
+            print(f"Degree histogram unavailable: {e}")
+
         seeds = _fetch_pf_seeds(session, "pf00016", args.limit)
         print(f"PF00016 seeds found: {len(seeds)} -> {seeds}")
 
         for pid in seeds:
             print("\n==== Seed:", pid)
             deg = _deg_next(session, pid)
+            degp = _deg_prop(session, pid)
             on_contig = _genes_on_contig(session, pid)
-            print(f"NEXT degree={deg} | genes_on_contig={on_contig}")
+            print(f"NEXT degree={deg} (prop={degp}) | genes_on_contig={on_contig}")
 
             adj = _adjacency_neighbors(session, pid, args.k, 50)
             print(f"Adjacency (k={args.k}) neighbors: {len(adj)}")

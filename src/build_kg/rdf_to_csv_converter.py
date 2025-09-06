@@ -42,6 +42,23 @@ class RDFToCSVConverter:
         self.node_types = {}  # {node_id: type}
         self.relationships = []  # [(from_id, rel_type, to_id)]
         
+        # Known type → filename mapping to preserve legacy names
+        self.type_filename = {
+            'Genome': 'genomes.csv',
+            'Gene': 'genes.csv',
+            'Protein': 'proteins.csv',
+            'FunctionalAnnotation': 'functionalannotations.csv',
+            'DomainAnnotation': 'domainannotations.csv',
+            'KEGGOrtholog': 'keggorthologs.csv',
+            'Domain': 'domains.csv',
+            'Pathway': 'pathways.csv',
+            'Bgc': 'bgcs.csv',
+            'QualityMetrics': 'qualitymetrics.csv',
+            'Contig': 'contigs.csv',
+            'Dataset': 'datasets.csv',
+            # Do not emit a separate Entity file; it's an abstract base
+        }
+        
     def convert(self) -> Dict[str, Any]:
         """Convert RDF to CSV files and return statistics."""
         console.print(f"[bold blue]Converting RDF to CSV for bulk import[/bold blue]")
@@ -49,12 +66,24 @@ class RDFToCSVConverter:
         # Load RDF
         console.print("Loading RDF graph...")
         g = rdflib.Graph()
-        g.parse(self.rdf_file, format="turtle")
-        console.print(f"Loaded {len(g):,} triples")
+        loaded = False
+        for fmt in ("nt", "turtle", "xml"):
+            try:
+                g.parse(self.rdf_file, format=fmt)
+                console.print(f"Loaded {len(g):,} triples (format={fmt})")
+                loaded = True
+                break
+            except Exception:
+                continue
+        if not loaded:
+            raise RuntimeError(f"Failed to parse RDF file {self.rdf_file} in known formats (nt, turtle, xml)")
         
         # Parse triples
         self._parse_triples(g)
         
+        # Clean stale CSVs from previous runs in this directory
+        self._clean_output_dir()
+
         # Write CSV files
         stats = self._write_csv_files()
         
@@ -72,7 +101,8 @@ class RDFToCSVConverter:
             # Handle rdf:type declarations
             if str(pred) == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
                 node_type = self._get_node_type(str(obj))
-                if node_type not in ["Property", "Class"]:  # Skip ontology declarations
+                # Skip ontology + abstract base 'Entity' to preserve legacy CSV set
+                if node_type not in ["Property", "Class", "Entity"]:
                     self.node_types[subj_id] = node_type
                 continue
             
@@ -100,14 +130,17 @@ class RDFToCSVConverter:
         for node_type, node_ids in nodes_by_type.items():
             if not node_ids:
                 continue
-                
-            base_name = node_type.lower()
-            if base_name.endswith('y'):
-                filename = f"{base_name}s.csv"
-            elif base_name.endswith('s'):
-                filename = f"{base_name}.csv"
-            else:
-                filename = f"{base_name}s.csv"            
+            # Preserve legacy file names when known
+            filename = self.type_filename.get(node_type)
+            if not filename:
+                # Fallback: simple pluralization with -y -> -ies
+                base_name = node_type.lower()
+                if base_name.endswith('y'):
+                    filename = f"{base_name[:-1]}ies.csv"
+                elif base_name.endswith('s'):
+                    filename = f"{base_name}.csv"
+                else:
+                    filename = f"{base_name}s.csv"
             
             filepath = self.output_dir / filename
             
@@ -135,13 +168,7 @@ class RDFToCSVConverter:
             stats["nodes"][node_type] = len(node_ids)
             console.print(f"  ✓ {filename}: {len(node_ids):,} nodes")
         
-        # Optionally write adjacency relationships (NEXT) derived from gene nodes
-        try:
-            next_count = self._write_next_relationships()
-            if next_count is not None:
-                stats["relationships"]["NEXT"] = next_count
-        except Exception as e:
-            logger.warning(f"NEXT adjacency generation skipped: {e}")
+        # Adjacency/degree now emitted in RDF (Option A); do not derive here
 
         # Write relationship CSV files from RDF triples
         console.print("Writing relationship CSV files...")
@@ -162,56 +189,6 @@ class RDFToCSVConverter:
             console.print(f"  ✓ {filename}: {len(rels):,} relationships")
         
         return stats
-
-    def _write_next_relationships(self) -> int:
-        """Derive and write NEXT relationships from Gene nodes using contig/coordinates.
-
-        Output: next_relationships.csv with ':START_ID,:END_ID,contig,delta:long,same_strand:boolean'
-        """
-        # Collect gene records from internal node store
-        genes_by_contig = defaultdict(list)
-        for node_id, node_type in self.node_types.items():
-            if node_type != 'Gene':
-                continue
-            props = self.nodes.get(node_id, {})
-            contig = props.get('contig')
-            start = props.get('startCoordinate')
-            end = props.get('endCoordinate')
-            if contig is None or start is None or end is None:
-                continue
-            try:
-                start_i = int(start)
-                end_i = int(end)
-            except Exception:
-                continue
-            genes_by_contig[contig].append({
-                'id': node_id,
-                'start': start_i,
-                'end': end_i,
-                'strand': props.get('strand')
-            })
-
-        if not genes_by_contig:
-            return 0
-
-        out_path = self.output_dir / 'next_relationships.csv'
-        console.print(f"Writing NEXT adjacency to {out_path}")
-        total = 0
-        with open(out_path, 'w', newline='', encoding='utf-8') as f:
-            w = csv.writer(f)
-            w.writerow([':START_ID', ':END_ID', 'contig', 'delta:long', 'same_strand:boolean'])
-            for contig, genes in genes_by_contig.items():
-                genes.sort(key=lambda g: g['start'])
-                for i in range(len(genes) - 1):
-                    a = genes[i]
-                    b = genes[i + 1]
-                    delta = int(b['start']) - int(a['end'])
-                    sa = str(a.get('strand')) if a.get('strand') is not None else ''
-                    sb = str(b.get('strand')) if b.get('strand') is not None else ''
-                    same = sa != '' and sb != '' and sa == sb
-                    w.writerow([a['id'], b['id'], contig, delta, str(same).lower()])
-                    total += 1
-        return total
     
     def _uri_to_id(self, uri: str) -> str:
         """Convert URI to readable ID, preserving namespace for nodes to avoid conflicts."""
@@ -246,6 +223,17 @@ class RDFToCSVConverter:
             return str(literal).lower() == 'true'
         else:
             return str(literal)
+
+    def _clean_output_dir(self) -> None:
+        """Remove stale CSVs to prevent mixing schemas across runs."""
+        try:
+            for f in self.output_dir.glob('*.csv'):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 def main():

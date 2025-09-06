@@ -262,18 +262,16 @@ class Neo4jBulkLoader:
     
     def _create_constraints_and_indexes(self):
         """Create constraints and indexes after import (integrated, idempotent)."""
+        # Only run constraints if explicit credentials are provided
+        if not (os.getenv("NEO4J_URI") and os.getenv("NEO4J_USER") and os.getenv("NEO4J_PASSWORD")):
+            console.print("[yellow]No Neo4j credentials provided; skipping constraints/indexes creation[/yellow]")
+            return
         try:
             from neo4j import GraphDatabase
-        except ImportError:
-            console.print("[yellow]Warning: neo4j driver not available, skipping constraints/indexes[/yellow]")
+            driver = GraphDatabase.driver(os.getenv("NEO4J_URI"), auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD")))
+        except Exception as e:
+            console.print(f"[yellow]Skipping constraints/indexes (connection failed): {e}[/yellow]")
             return
-
-        # Read connection from environment
-        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        user = os.getenv("NEO4J_USER", "neo4j")
-        password = os.getenv("NEO4J_PASSWORD", "password")
-
-        driver = GraphDatabase.driver(uri, auth=(user, password))
 
         statements = [
             # Uniqueness constraints on core IDs

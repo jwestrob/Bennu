@@ -496,6 +496,7 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
     except Exception:
         fallback_window_bp = 10000
     output_profile = str(params.get("output_profile") or "summary").strip().lower()
+    include_degree_zero = bool(params.get("include_degree_zero_seeds", False))
 
     # Optional explicit seeding via PFAM/KO ids (agent-visible)
     seed_pfam_ids = params.get("seed_pfam_ids") if isinstance(params.get("seed_pfam_ids"), list) else None
@@ -576,6 +577,39 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
         raise ValueError(
             "NeighborhoodContext requires explicit seeds: provide discovered_proteins input or params (protein_ids or seed_pfam_ids/seed_ko_ids)."
         )
+
+    # Degree-aware seed filtering (exclude nextDegree=0 by default)
+    def _filter_seeds_by_degree(pids: List[str], include_zero: bool) -> Dict[str, int]:
+        if not pids:
+            return {}
+        cypher = (
+            "UNWIND $pids AS pid "
+            "MATCH (p:Protein {id: pid})-[:ENCODEDBY]->(g:Gene) "
+            "OPTIONAL MATCH (g)-[:NEXT]-(:Gene) "
+            "WITH pid, g, count(*) AS c "
+            "WITH pid, coalesce(g.nextDegree, c) AS deg "
+            "RETURN pid AS protein_id, toInteger(deg) AS deg"
+        )
+        deg_map: Dict[str, int] = {}
+        with ctx.neo4j_driver.session() as s:
+            rows = s.run(cypher, pids=pids)
+            for r in rows:
+                pid = r.get("protein_id")
+                deg = int(r.get("deg") or 0)
+                if include_zero or deg > 0:
+                    deg_map[pid] = deg
+        return deg_map
+
+    seed_degrees = _filter_seeds_by_degree(seeds, include_degree_zero)
+    if seed_degrees and not include_degree_zero:
+        before = len(seeds)
+        seeds = [pid for pid in seeds if pid in seed_degrees]
+        dropped = before - len(seeds)
+        try:
+            logging.getLogger(__name__).info(
+                f"NeighborhoodContext: filtered {dropped} degree-zero seeds; using {len(seeds)} seeds")
+        except Exception:
+            pass
 
     neighborhoods: List[Dict[str, Any]] = []
     total_rows = 0
@@ -678,7 +712,7 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             res = s.run(cypher, {"contig": contig, "start": int(start), "end": int(end), "limit": int(limit_x)})
             return [dict(r) for r in res]
 
-    for pid in seeds:
+    for pid in seeds[:seeds_limit]:
         seed_debug: Dict[str, Any] = {"seed_protein_id": pid}
         # Fetch seed context (contig/coordinates)
         try:
@@ -694,6 +728,16 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
                 "seed_end": s0.get("end"),
                 "seed_strand": s0.get("strand"),
             })
+            try:
+                # Attach nextDegree for visibility (use filtered value if available)
+                if pid in seed_degrees:
+                    seed_debug["seed_next_degree"] = seed_degrees[pid]
+                else:
+                    nxt = _run_tpl("gene_next_degree.cypher", {"gene_id": s0.get("gene_id")})
+                    if nxt:
+                        seed_debug["seed_next_degree"] = nxt[0].get("next_degree")
+            except Exception:
+                pass
             # Optional: quick NEXT degree for the seed gene
             try:
                 nxt = _run_tpl("gene_next_degree.cypher", {"gene_id": s0.get("gene_id")})
@@ -893,6 +937,7 @@ register_operator(OperatorSpec(
         "seed_ko_ids": "List[str] | null (self-seed by fetching proteins with these KO ids when discovered_proteins/protein_ids are absent)",
         "seed_scope_genome_ids": "List[str] | null (restrict self-seeding to these genomes; default global)",
         "seed_fetch_limit": "int (max proteins to fetch during self-seeding; default = seeds_limit)",
+        "include_degree_zero_seeds": "bool (default false; exclude seeds with nextDegree=0 by default)",
         "output_profile": "summary|rowset (default summary)",
     },
     run=_neighborhood_context,

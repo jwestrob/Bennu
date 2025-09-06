@@ -120,21 +120,71 @@ def precompute_next_edges(batch_size: int = 2000, contig_limit: int | None = Non
     return total_pairs
 
 
+def compute_gene_degrees(include_genes_on_contig: bool = True) -> Dict[str, Any]:
+    """Compute per-gene undirected NEXT degree and optionally genesOnContig.
+
+    nextDegree semantics:
+      - 0: singleton contig (no neighbors)
+      - 1: contig end (one neighbor)
+      - 2: interior (two neighbors)
+    Returns a small summary dict with degree histogram counts.
+    """
+    driver = _get_driver()
+    summary: Dict[str, Any] = {}
+    with driver.session() as session:
+        # nextDegree = undirected neighbor count via [:NEXT]
+        session.run(
+            "MATCH (g:Gene) "
+            "OPTIONAL MATCH (g)-[:NEXT]-(:Gene) "
+            "WITH g, count(*) AS deg "
+            "SET g.nextDegree = deg"
+        )
+        if include_genes_on_contig:
+            session.run(
+                "MATCH (g:Gene) "
+                "WITH g.contig AS c, collect(g) AS gs "
+                "FOREACH (x IN gs | SET x.genesOnContig = size(gs))"
+            )
+        # Build histogram
+        rows = session.run(
+            "MATCH (g:Gene) RETURN toInteger(coalesce(g.nextDegree,0)) AS degree, count(*) AS n ORDER BY degree"
+        )
+        hist = [{"degree": int(r["degree"]), "count": int(r["n"]) } for r in rows]
+        summary["degree_histogram"] = hist
+        # Count distinct contigs
+        contigs = session.run("MATCH (g:Gene) RETURN count(DISTINCT g.contig) AS c").single()
+        summary["contigs"] = int(contigs["c"]) if contigs else 0
+    driver.close()
+    console.print("[green]✓ Computed nextDegree for genes[/green]")
+    # Pretty print histogram
+    try:
+        msg = ", ".join([f"deg={h['degree']}: {h['count']:,}" for h in summary.get('degree_histogram', [])])
+        console.print(f"[dim]Degree histogram[/dim] [{msg}]")
+    except Exception:
+        pass
+    return summary
+
+
 def main(argv: List[str] | None = None) -> int:
     import argparse
-    parser = argparse.ArgumentParser(description="Post-load Neo4j tuning: indexes + NEXT edges")
+    parser = argparse.ArgumentParser(description="Post-load Neo4j tuning: indexes + NEXT edges + degree computation")
     parser.add_argument("--create-indexes", action="store_true", help="Create constraints and indexes")
     parser.add_argument("--neighbors-only", action="store_true", help="Only precompute NEXT edges")
+    parser.add_argument("--compute-degrees-only", action="store_true", help="Only (re)compute nextDegree and genesOnContig")
     parser.add_argument("--batch-size", type=int, default=2000, help="Batch size for NEXT relationship creation")
     parser.add_argument("--contig-limit", type=int, default=None, help="Limit number of contigs (for quick tests)")
     args = parser.parse_args(argv)
 
-    if not args.neighbors_only:
+    if not args.neighbors_only and not args.compute_degrees_only:
         console.print("Creating constraints and indexes...")
         create_constraints_and_indexes()
 
-    console.print("Precomputing NEXT edges...")
-    precompute_next_edges(batch_size=args.batch_size, contig_limit=args.contig_limit)
+    if not args.compute_degrees_only:
+        console.print("Precomputing NEXT edges...")
+        precompute_next_edges(batch_size=args.batch_size, contig_limit=args.contig_limit)
+
+    console.print("Computing gene degrees (nextDegree) and genesOnContig...")
+    compute_gene_degrees(include_genes_on_contig=True)
     return 0
 
 
