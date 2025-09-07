@@ -118,15 +118,50 @@ nav:
     - Overview: architecture/overview.md
     - Pipeline Stages: architecture/pipeline-stages.md
     - Modular RAG: architecture/modular-rag.md
-  - Tutorials:
-    - Basic Queries: tutorials/basic-queries.md
-    - Complex Analysis: tutorials/complex-analysis.md
-    - Agentic Workflows: tutorials/agentic-workflows.md
+  - Data:
+    - Layout: data/layout.md
+    - CSV Layout: data/csv-layout.md
+    - Tool Calls: data/tool-calls.md
+  - Getting Started:
+    - Environment: getting-started/environment.md
+    - Release Notes: getting-started/release-notes.md
+  - Operations:
+    - Stage 07 Build & Import: operations/stage07.md
+    - KG Components: operations/kg-components.md
+    - Neo4j Schema: operations/neo4j-schema.md
+    - Diagnostics: operations/diagnostics.md
+    - CAZy Integration: operations/cazy-integration.md
+    - Bulk Import Details: operations/bulk-import.md
+    - Post-Load Tuning: operations/postload-tuning.md
+  - Agents:
+    - Planner Guidance: agents/planner.md
+    - Signatures & Rules: agents/signatures.md
+    - Operators:
+      - Catalog: reference/operators/operators_catalog.md
+      - AnnotationDiscovery: reference/operators/annotation_discovery.md
+      - NeighborhoodContext: reference/operators/neighborhood_context.md
+    - Tools: reference/tools.md
   - API Reference:
     - CLI Commands: api-reference/cli-commands.md
     - Python API: api-reference/python-api.md
     - Configuration: api-reference/configuration.md
+  - Tutorials:
+    - Basic Queries: tutorials/basic-queries.md
   - Examples:
     - Question Gallery: examples/genomic-questions.md
-    - Case Studies: examples/case-studies.md
-    - Performance: examples/performance.md
+  - Support:
+    - Troubleshooting: support/troubleshooting.md
+    - FAQ: support/faq.md
+    - Performance: support/performance.md
+    - Logging: support/logging.md
+  - Ingest Stages:
+    - Stage 00 — Prepare Inputs: ingest/00_prepare_inputs.md
+    - Stage 01 — QUAST: ingest/01_quast.md
+    - Stage 02 — DFAST_QC: ingest/02_dfast_qc.md
+    - Stage 03 — Prodigal: ingest/03_prodigal.md
+    - Stage 04 — Astra: ingest/04_astra.md
+    - Stage 05 — GECCO: ingest/05_gecco.md
+    - Stage 06 — dbCAN: ingest/06_dbcan.md
+    - Stage 08 — ESM2 Embeddings: ingest/08_esm2_embeddings.md
+  - Deprecations:
+    - Deprecated Components: deprecations/index.md

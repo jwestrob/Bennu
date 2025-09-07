@@ -579,15 +579,11 @@ class GenomicSynthesizer(dspy.Signature):
     task_graph = dspy.InputField(desc="JSON or pretty-printed task graph with ordered steps (if provided, include a 'TASK GRAPH' section at the top of the summary)")
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
 
-    # Optional, neighborhood-aware inputs (advisory; do not enforce behavior)
+    # Optional, neighborhood-aware inputs (advisory; kept minimal to avoid unused-field warnings)
     neighborhoods_json = dspy.InputField(desc="Optional JSON payload from NeighborhoodContext (macro_result or full neighborhoods)")
-    adjacency_hop = dspy.InputField(desc="Optional integer hop for immediate adjacency summaries (e.g., 1 for ±1)")
-    conserve_by = dspy.InputField(desc="Optional grouping key for motif discovery: pfam|ko|gene_symbol")
-    window_bp = dspy.InputField(desc="Optional span window used during neighborhood extraction (bp)")
-    require_sections = dspy.InputField(desc="Optional advisory list of section names to include (e.g., ['adjacency_map','conserved_motifs','loci_table'])")
 
     # Primary narrative output
-    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. If neighborhoods_json is present, include seed-level adjacency and conserved motif summaries when they add value. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID', not 'scaffold_XXXX').")
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. When GlobalCounts (or other aggregated counts) are present in context, state exact totals and enumerate the top N groups with their exact counts (no inference). Keep ordering deterministic (by count desc, then ID). If neighborhoods_json is present, include seed-level adjacency and conserved motif summaries when they add value. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID', not 'scaffold_XXXX').")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
 
     # Optional structured outputs (emitted when helpful)

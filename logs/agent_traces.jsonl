@@ -415,3 +415,5 @@
 {"ts": "2025-09-06T11:20:34Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
 {"ts": "2025-09-06T11:27:27Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
 {"ts": "2025-09-06T11:53:05Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
+{"ts": "2025-09-06T12:00:32Z", "event": "pipeline.start", "data": {"question": "Tell me about what's on the longest contig in this assembly."}}
+{"ts": "2025-09-07T06:49:22Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}

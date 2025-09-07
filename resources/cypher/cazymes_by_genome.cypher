@@ -9,8 +9,7 @@ MATCH (gen:Genome)
 WHERE ($genome_id IS NULL OR gen.id = $genome_id)
   AND ($genome_ids IS NULL OR size($genome_ids) = 0 OR gen.id IN $genome_ids)
 MATCH (p:Protein)-[:ENCODEDBY]->(g:Gene)-[:BELONGSTOGENOME]->(gen)
-MATCH (p)-[:HASCAZYME]->(a:Cazymeannotation)-[:CAZYMEFAMILY]->(f)
-WHERE f.familyId IS NOT NULL
+MATCH (p)-[:HASCAZYME]->(a:Cazymeannotation)-[:CAZYMEFAMILY]->(f:Cazymefamily)
 RETURN
   gen.id AS genome_id,
   p.id AS protein_id,
