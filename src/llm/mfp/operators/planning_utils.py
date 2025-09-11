@@ -39,7 +39,8 @@ def _propose_followup(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict
         top_n = 25
     rows = int(metrics.get("rows", 0)) if isinstance(metrics, dict) else 0
     thr = int(metrics.get("threshold", 5)) if isinstance(metrics, dict) else 5
-    reason = f"insufficient_evidence: rows={rows} < threshold={thr}" if rows < thr else f"followup_requested: rows={rows} >= threshold={thr}"
+    meets = bool(metrics.get("meets_threshold")) if isinstance(metrics, dict) else (rows >= thr)
+    reason = f"insufficient_evidence: rows={rows} < threshold={thr}" if not meets else f"sufficient_evidence: rows={rows} >= threshold={thr}"
 
     # Normalize data rows (if provided) for schema-driven branching
     first_keys = set()
@@ -84,9 +85,25 @@ def _propose_followup(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict
                     }
                 }
             ]
+        # Case C: BGC rows present → pick an unknown-product BGC and list genes in that BGC
+        elif ("bgc_id" in first_keys or "bgcId" in first_keys) and ("bgc_product" in first_keys or "bgcProduct" in first_keys):
+            # Prefer Unknown product rows; else take the first
+            # Runtime filter happens inside DB stage via slot piping index; here we just propose an index of 0,
+            # assuming upstream table ordering already groups Unknowns or the UI will select one.
+            field_id = "bgc_id" if "bgc_id" in first_keys else "bgcId"
+            next_task_steps = [
+                {
+                    "op": "DBTemplateCall",
+                    "inputs": {"rows": "ModuleRows"},
+                    "params": {
+                        "name": "genes_in_bgc",
+                        "slots": {"bgc_id": {"from": "rows", "field": field_id, "index": 0}}
+                    }
+                }
+            ]
 
-    # Fallback: generic discovery plan when schema is unknown
-    if not next_task_steps:
+    # Fallback: generic discovery plan when schema is unknown AND evidence is insufficient
+    if not next_task_steps and not meets:
         next_task_steps = [
             {"op": "SearchPfamCatalogFuzzy", "params": {"q": question, "top_n": top_n}, "bind": "pfam_hits"},
             {"op": "SearchKoCatalogFuzzy", "params": {"q": question, "top_n": top_n}, "bind": "ko_hits"},

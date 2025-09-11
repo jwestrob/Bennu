@@ -51,7 +51,7 @@ def _execute_db_template(ctx: OperatorContext, inputs: Dict[str, Any], params: D
     # Optional bound rows for slot resolution
     rows_in = None
     try:
-        ri = inputs.get("rows")
+        ri = inputs.get("rows") or inputs.get("ModuleRows")
         if isinstance(ri, list):
             rows_in = [dict(x) for x in ri if isinstance(x, dict)]
     except Exception:
@@ -65,6 +65,33 @@ def _execute_db_template(ctx: OperatorContext, inputs: Dict[str, Any], params: D
     if name == 'anchor_gene_window' and 'anchor_type' not in slots:
         slots = dict(slots)
         slots['anchor_type'] = 'crispr'
+
+    # Robust BGC fallback: if planner forgot to pass a real bgc_id for genes_in_bgc, try deriving from ModuleRows
+    try:
+        if name == 'genes_in_bgc':
+            bgc_id = (slots.get('bgc_id') or '').strip() if isinstance(slots.get('bgc_id'), str) else None
+            placeholder = {None, '', 'unknown_product_bgc_id', 'UNKNOWN_PRODUCT_BGC_ID'}
+            if (bgc_id in placeholder) and isinstance(rows_in, list) and rows_in:
+                # Prefer Unknown product rows when available
+                def _prod(r: Dict[str, Any]) -> str:
+                    for k in ('bgc_product', 'bgcProduct', 'product', 'cluster_type'):
+                        if k in r and isinstance(r[k], str):
+                            return r[k].strip()
+                    return ''
+                def _id(r: Dict[str, Any]) -> str | None:
+                    for k in ('bgc_id', 'bgcId', 'id'):
+                        v = r.get(k)
+                        if isinstance(v, str) and v.strip():
+                            return v.strip()
+                    return None
+                unknown_rows = [r for r in rows_in if _prod(r).lower() == 'unknown']
+                chosen = unknown_rows[0] if unknown_rows else rows_in[0]
+                cid = _id(chosen)
+                if cid:
+                    slots = dict(slots)
+                    slots['bgc_id'] = cid
+    except Exception:
+        pass
     # Compile (supports dynamic compilers) or read static file
     cypher, cy_params = kg_tpl_registry.compile_query(name, dict(slots))
     rows: list[dict] = []
@@ -79,9 +106,9 @@ def _execute_db_template(ctx: OperatorContext, inputs: Dict[str, Any], params: D
 
 register_operator(OperatorSpec(
     name="ExecuteDBTemplate",
-    inputs=["rows"],  # optional; enables slot piping from previous results
+    inputs=["rows", "ModuleRows"],  # optional; enables slot piping from previous results (BGCs via ModuleRows)
     outputs=["structured_data", "preview", "macro_result"],
     params={"name": "string", "slots": "object"},
     run=_execute_db_template,
-    description="Execute a named DB template (kg/cypher_templates/registry) with provided slots. Supports slot piping via inputs.rows.",
+    description="Execute a named DB template with provided slots. Supports slot piping via inputs.rows or ModuleRows; includes robust BGC id fallback.",
 ))
