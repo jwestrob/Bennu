@@ -23,7 +23,13 @@ def expand_feature_discovery(params: Dict[str, Any], ctx: CompositeContext) -> L
     feature_types = params.get("feature_types") or ["pfam", "ko"]
     out_profile = params.get("output_profile") or "rowset"
     limits = params.get("limits") or {}
-    keyword = fs.get("keyword") or params.get("keyword") or ""
+    # Gating: require explicit feature_selector.keyword or explicit ID lists
+    kw = fs.get("keyword") if isinstance(fs.get("keyword"), str) else ""
+    has_kw = isinstance(kw, str) and kw.strip() != ""
+    has_ids = bool(fs.get("pfam_ids") or fs.get("ko_ids"))
+    if not (has_kw or has_ids):
+        # Do not run discovery unless the planner explicitly provided a keyword or IDs
+        return []
 
     steps: List[Dict[str, Any]] = []
 
@@ -41,9 +47,9 @@ def expand_feature_discovery(params: Dict[str, Any], ctx: CompositeContext) -> L
         # Keyword route: catalog search → direct ids (skip ExtractIds; search ops already emit pfam_ids/ko_ids)
         if "pfam" in feature_types:
             # Default to a small PFAM probe (top_n≈5) unless planner provided limits.top_k
-            steps.append({"op": "SearchPfamCatalogFuzzy", "params": {"q": keyword, "top_n": limits.get("top_k", 5)}, "bind": "pf_hits"})
+            steps.append({"op": "SearchPfamCatalogFuzzy", "params": {"q": kw, "top_n": limits.get("top_k", 5)}, "bind": "pf_hits"})
         if "ko" in feature_types:
-            steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": keyword, "top_n": limits.get("top_k", 25)}, "bind": "ko_hits"})
+            steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": kw, "top_n": limits.get("top_k", 25)}, "bind": "ko_hits"})
         steps.append({
             "op": "QueryProteinsByIds",
             # Both search ops produce pfam_ids/ko_ids; use them directly
@@ -54,11 +60,11 @@ def expand_feature_discovery(params: Dict[str, Any], ctx: CompositeContext) -> L
     # Optional facet summaries
     if out_profile == "facet_summary":
         # Emit facet steps ONLY when keyword is provided; otherwise skip to avoid validation failure
-        if isinstance(keyword, str) and keyword.strip():
+        if has_kw:
             steps.append({
                 "op": "AnnotationDiscovery",
                 "params": {
-                    "keyword": keyword,
+                    "keyword": kw,
                     "output_profile": "facet_summary",
                     "group_by": "pfam",
                     "return_mode": "top_k",
@@ -69,7 +75,7 @@ def expand_feature_discovery(params: Dict[str, Any], ctx: CompositeContext) -> L
             steps.append({
                 "op": "AnnotationDiscovery",
                 "params": {
-                    "keyword": keyword,
+                    "keyword": kw,
                     "output_profile": "facet_summary",
                     "group_by": "ko",
                     "return_mode": "top_k",
@@ -84,6 +90,20 @@ def expand_feature_discovery(params: Dict[str, Any], ctx: CompositeContext) -> L
         mat_inputs.update({"pf_facet": "pf_facet", "ko_facet": "ko_facet"})
     steps.append({"op": "MaterializeFeatureDiscovery", "inputs": mat_inputs, "params": {"output_profile": out_profile}})
     return steps
+
+
+def expand_db_template_call(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
+    """Composite: DBTemplateCall — execute a named DB template with slots.
+
+    Params:
+      - name: str (template name registered in kg/cypher_templates/registry)
+      - slots: dict (template parameters)
+    """
+    name = params.get("name")
+    slots = params.get("slots") or {}
+    if not isinstance(name, str) or not name.strip():
+        return []
+    return [{"op": "ExecuteDBTemplate", "params": {"name": name, "slots": slots}}]
 
 
 def expand_gene_context(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
@@ -154,9 +174,16 @@ def expand_module_profile(params: Dict[str, Any], ctx: CompositeContext) -> List
 
 def expand_evidence_and_next(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
     steps: List[Dict[str, Any]] = []
-    # Evidence assessment on last bound result when available; if not, will compute with zero rows
-    steps.append({"op": "AssessEvidence", "inputs": {"data": "discovered_proteins"}, "params": {"min_rows": params.get("min_rows", 5)}})
-    steps.append({"op": "ProposeFollowup", "inputs": {"evidence_metrics": "evidence_metrics"}, "params": {"question": params.get("question", ctx.get("question", "")), "top_n": params.get("top_n", 10)}})
+    # Evidence assessment: prefer a bound result reference if provided; else default to 'structured_data'
+    bound = params.get("bound_result_ref")
+    input_ref = bound if (isinstance(bound, str) and bound.strip()) else "structured_data"
+    steps.append({"op": "AssessEvidence", "inputs": {"data": input_ref}, "params": {"min_rows": params.get("min_rows", 5)}})
+    # Pass the same bound data into ProposeFollowup for data-driven branching
+    steps.append({
+        "op": "ProposeFollowup",
+        "inputs": {"evidence_metrics": "evidence_metrics", "data": input_ref},
+        "params": {"question": params.get("question", ctx.get("question", "")), "top_n": params.get("top_n", 10)}
+    })
     steps.append({"op": "MaterializeEvidenceAndNext", "inputs": {"evidence_metrics": "evidence_metrics", "followup_request": "followup_request"}, "params": {}})
     return steps
 
@@ -167,6 +194,7 @@ COMPOSITE_EXPANDERS: Dict[str, Expansion] = {
     "PathwayProfile": expand_pathway_profile,
     "ModuleProfile": expand_module_profile,
     "EvidenceAndNext": expand_evidence_and_next,
+    "DBTemplateCall": expand_db_template_call,
 }
 
 
@@ -179,7 +207,7 @@ def planner_catalog_overlay() -> Dict[str, Any]:
         "operators": [
             {
                 "name": "FeatureDiscovery",
-                "description": "Find proteins via PFAM/KO keywords or exact IDs; outputs a typed ProteinSet and optional facet summaries.",
+                "description": "Find proteins via PFAM/KO when an explicit feature_selector is provided. Use ONLY when params.feature_selector contains a non-empty keyword or explicit pfam_ids/ko_ids. Do not infer or invent keywords from the user question.",
                 "inputs": ["feature_selector", "feature_types", "output_profile", "limits"],
                 "params": {
                     "feature_selector": "{keyword?: str, pfam_ids?: List[str], ko_ids?: List[str]}",
@@ -233,6 +261,16 @@ def planner_catalog_overlay() -> Dict[str, Any]:
                     "top_n": "int for catalog search in follow-up"
                 },
                 "outputs": ["EvidenceMetrics", "FollowupPlan"],
+            },
+            {
+                "name": "DBTemplateCall",
+                "description": "Execute a named Neo4j DB template by name with slots (generic template runner).",
+                "inputs": [],
+                "params": {
+                    "name": "string (template name)",
+                    "slots": "object (template parameters)"
+                },
+                "outputs": ["structured_data"],
             },
         ]
     }

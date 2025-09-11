@@ -103,10 +103,10 @@ conda activate genome-kg
 pip install -r requirements-llm.txt
 
 Bioinformatics tools included in `env/environment.yml`:
-- mash, skani, pyhmmer, ete3, rdflib, lancedb, transformers, pytorch
+- mash, skani, minced, dbcan (CLI: run_dbcan), pyhmmer, ete3, rdflib, lancedb, transformers, pytorch
 
 Verify tools are on PATH after activation:
-which quast.py; which prodigal; which dfast_qc; which mash; which skani
+which quast.py; which prodigal; which dfast_qc; which mash; which skani; which minced; which run_dbcan
 ```
 
 ### Step 2: Database Setup

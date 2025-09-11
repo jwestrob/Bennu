@@ -29,9 +29,24 @@ def _read(name: str) -> str:
 
 def _compile_count_by_label(slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     # Only allow safe, enumerated labels; render static query to avoid injection.
-    label = slots.get("label")
-    if label not in ("Protein", "Gene"):
-        raise ValueError("count_by_label: 'label' must be one of ['Protein','Gene']")
+    label_in = slots.get("label")
+    if not isinstance(label_in, str) or not label_in.strip():
+        raise ValueError("count_by_label: 'label' must be a non-empty string")
+    # Case-insensitive mapping to canonical labels present in the graph
+    canon_map = {
+        'protein': 'Protein',
+        'gene': 'Gene',
+        'crisprarray': 'CrisprArray',
+        'pathway': 'Pathway',
+        'keggortholog': 'KEGGOrtholog',
+        'domain': 'Domain',
+        'domainannotation': 'DomainAnnotation',
+    }
+    key = label_in.strip().lower()
+    if key not in canon_map:
+        allowed = ", ".join(sorted(set(canon_map.values())))
+        raise ValueError(f"count_by_label: 'label' must be one of [{allowed}]")
+    label = canon_map[key]
     cypher = f"MATCH (n:{label}) RETURN count(n) AS count;"
     return cypher, {}
 
@@ -87,6 +102,208 @@ def _compile_protein_neighbors_k(slots: Dict[str, Any]) -> Tuple[str, Dict[str, 
     return cypher, params
 
 
+def _compile_anchor_gene_window(slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    atype = str(slots.get("anchor_type") or "").strip().lower()
+    # Normalize common synonyms/variants
+    syn = {
+        'crispr_array': 'crispr', 'crispr_arrays': 'crispr', 'crisprarray': 'crispr', 'crisprarrays': 'crispr',
+        'protein': 'protein', 'proteins': 'protein',
+        'gene': 'gene', 'genes': 'gene',
+        'bgc': 'bgc', 'bgcs': 'bgc', 'cluster': 'bgc', 'clusters': 'bgc', 'bgc_cluster': 'bgc',
+        'coords': 'coords', 'coordinate': 'coords', 'coordinates': 'coords', 'span': 'coords', 'window': 'coords', 'region': 'coords',
+    }
+    if atype in syn:
+        atype = syn[atype]
+    elif atype.startswith('crispr'):
+        atype = 'crispr'
+    if atype not in {"crispr", "protein", "gene", "bgc", "coords"}:
+        raise ValueError("anchor_gene_window: 'anchor_type' must be one of crispr|protein|gene|bgc|coords")
+    # Normalize numeric optional params
+    margin = slots.get("margin_bp")
+    try:
+        margin = int(margin) if margin is not None else None
+    except Exception:
+        margin = None
+    limit = slots.get("limit")
+    try:
+        limit = int(limit) if limit is not None else None
+    except Exception:
+        limit = None
+
+    # Optional annotation enrichment
+    include_ann = bool(slots.get("include_annotations") or slots.get("annotations"))
+    # Common RETURN clause (with optional annotations)
+    if include_ann:
+        ret = (
+            "OPTIONAL MATCH (p)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain) "
+            "OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog) "
+            "OPTIONAL MATCH (p)-[:HASCAZYME]->(ca:Cazymeannotation)-[:CAZYMEFAMILY]->(cf:Cazymefamily) "
+            "WITH g, p, anchor_id, "
+            "collect(DISTINCT coalesce(d.pfamAccession, d.id)) AS pfam_ids, "
+            "collect(DISTINCT coalesce(d.name, d.description)) AS pfam_names, "
+            "collect(DISTINCT ko.id) AS ko_ids, "
+            "collect(DISTINCT ko.description) AS ko_desc, "
+            "collect(DISTINCT cf.familyId) AS cazy_families "
+            "RETURN g.id AS gene_id, "
+            "p.id AS protein_id, "
+            "g.contig AS contig, "
+            "toInteger(g.startCoordinate) AS start, "
+            "toInteger(g.endCoordinate) AS end, "
+            "anchor_id AS anchor_id, "
+            "pfam_ids AS pfam_ids, pfam_names AS pfam_names, ko_ids AS ko_ids, ko_desc AS ko_desc, cazy_families AS cazy_families "
+            "ORDER BY start"
+        )
+    else:
+        ret = (
+            "RETURN g.id AS gene_id, "
+            "p.id AS protein_id, "
+            "g.contig AS contig, "
+            "toInteger(g.startCoordinate) AS start, "
+            "toInteger(g.endCoordinate) AS end, "
+            "anchor_id AS anchor_id "
+            "ORDER BY start"
+        )
+    if isinstance(limit, int) and limit > 0:
+        ret += "\nLIMIT $limit"
+
+    # Template per anchor_type
+    if atype == "crispr":
+        # Two modes: anchor_id provided → use it; else (optional genome_id) → pick array with richest window
+        if isinstance(slots.get("anchor_id"), str) and slots.get("anchor_id").strip():
+            cypher = (
+                "WITH toInteger(coalesce($margin_bp, 5000)) AS M "
+                "MATCH (ca:CrisprArray {id:$anchor_id}) "
+                "WITH ca, M, toInteger(ca.startCoordinate)-M AS wstart, toInteger(ca.endCoordinate)+M AS wend, ca.id AS anchor_id "
+                "MATCH (g:Gene {contig: ca.contig}) "
+                "WHERE toInteger(g.startCoordinate) <= wend AND toInteger(g.endCoordinate) >= wstart "
+                "OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) "
+                + ret
+            )
+            params = {"anchor_id": str(slots["anchor_id"])}
+            if isinstance(margin, int):
+                params["margin_bp"] = margin
+            if isinstance(limit, int):
+                params["limit"] = limit
+            return cypher, params
+        else:
+            # Optional genome_id filter
+            pre = (
+                "WITH toInteger(coalesce($margin_bp, 5000)) AS M "
+                "MATCH (ca:CrisprArray) "
+            )
+            if isinstance(slots.get("genome_id"), str) and slots.get("genome_id").strip():
+                pre = (
+                    "WITH toInteger(coalesce($margin_bp, 5000)) AS M "
+                    "MATCH (g:Genome {id:$genome_id})<-[:BELONGSTOGENOME]-(ca:CrisprArray) "
+                )
+            cypher = (
+                pre +
+                "WITH ca, M "
+                "MATCH (gg:Gene {contig: ca.contig}) "
+                "WHERE toInteger(gg.startCoordinate) <= toInteger(ca.endCoordinate) + M "
+                "  AND toInteger(gg.endCoordinate) >= toInteger(ca.startCoordinate) - M "
+                "WITH ca, M, count(gg) AS gene_count "
+                "ORDER BY gene_count DESC, ca.contig, toInteger(ca.startCoordinate) "
+                "LIMIT 1 "
+                "WITH ca, M, ca.id AS anchor_id, toInteger(ca.startCoordinate)-M AS wstart, toInteger(ca.endCoordinate)+M AS wend "
+                "MATCH (g:Gene {contig: ca.contig}) "
+                "WHERE toInteger(g.startCoordinate) <= wend AND toInteger(g.endCoordinate) >= wstart "
+                "OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) "
+                + ret
+            )
+            params = {}
+            if isinstance(margin, int):
+                params["margin_bp"] = margin
+            if isinstance(limit, int):
+                params["limit"] = limit
+            if isinstance(slots.get("genome_id"), str) and slots.get("genome_id").strip():
+                params["genome_id"] = str(slots["genome_id"]).strip()
+            return cypher, params
+
+    if atype == "protein":
+        cypher = (
+            "WITH toInteger(coalesce($margin_bp, 5000)) AS M "
+            "MATCH (p0:Protein {id:$anchor_id})-[:ENCODEDBY]->(seed:Gene) "
+            "WITH seed, M, p0.id AS anchor_id, toInteger(seed.startCoordinate)-M AS wstart, toInteger(seed.endCoordinate)+M AS wend "
+            "MATCH (g:Gene {contig: seed.contig}) "
+            "WHERE toInteger(g.startCoordinate) <= wend AND toInteger(g.endCoordinate) >= wstart "
+            "OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) "
+            + ret
+        )
+        params = {"anchor_id": str(slots.get("anchor_id") or "").strip()}
+        if not params["anchor_id"]:
+            raise ValueError("anchor_gene_window: protein requires anchor_id")
+        if isinstance(margin, int):
+            params["margin_bp"] = margin
+        if isinstance(limit, int):
+            params["limit"] = limit
+        return cypher, params
+
+    if atype == "gene":
+        cypher = (
+            "WITH toInteger(coalesce($margin_bp, 5000)) AS M "
+            "MATCH (seed:Gene {id:$anchor_id}) "
+            "WITH seed, M, seed.id AS anchor_id, toInteger(seed.startCoordinate)-M AS wstart, toInteger(seed.endCoordinate)+M AS wend "
+            "MATCH (g:Gene {contig: seed.contig}) "
+            "WHERE toInteger(g.startCoordinate) <= wend AND toInteger(g.endCoordinate) >= wstart "
+            "OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) "
+            + ret
+        )
+        params = {"anchor_id": str(slots.get("anchor_id") or "").strip()}
+        if not params["anchor_id"]:
+            raise ValueError("anchor_gene_window: gene requires anchor_id")
+        if isinstance(margin, int):
+            params["margin_bp"] = margin
+        if isinstance(limit, int):
+            params["limit"] = limit
+        return cypher, params
+
+    if atype == "bgc":
+        cypher = (
+            "WITH toInteger(coalesce($margin_bp, 5000)) AS M "
+            "MATCH (b:Bgc) WHERE b.id = $anchor_id OR b.bgcId = $anchor_id "
+            "WITH b, M, coalesce(b.contig, '') AS contig, toInteger(b.startCoordinate)-M AS wstart, toInteger(b.endCoordinate)+M AS wend, coalesce(b.bgcId, b.id) AS anchor_id "
+            "MATCH (g:Gene {contig: contig}) "
+            "WHERE toInteger(g.startCoordinate) <= wend AND toInteger(g.endCoordinate) >= wstart "
+            "OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) "
+            + ret
+        )
+        params = {"anchor_id": str(slots.get("anchor_id") or "").strip()}
+        if not params["anchor_id"]:
+            raise ValueError("anchor_gene_window: bgc requires anchor_id")
+        if isinstance(margin, int):
+            params["margin_bp"] = margin
+        if isinstance(limit, int):
+            params["limit"] = limit
+        return cypher, params
+
+    if atype == "coords":
+        # contig,start,end required
+        contig = str(slots.get("contig") or "").strip()
+        try:
+            s = int(slots.get("start"))
+            e = int(slots.get("end"))
+        except Exception:
+            raise ValueError("anchor_gene_window: coords requires contig, start, end (ints)")
+        cypher = (
+            "WITH toInteger(coalesce($margin_bp, 5000)) AS M, $contig AS contig, toInteger($start) AS s, toInteger($end) AS e "
+            "WITH contig, s, e, M, 'coords:' + contig + ':' + toString(s) + '-' + toString(e) AS anchor_id, (s - M) AS wstart, (e + M) AS wend "
+            "MATCH (g:Gene {contig: contig}) "
+            "WHERE toInteger(g.startCoordinate) <= wend AND toInteger(g.endCoordinate) >= wstart "
+            "OPTIONAL MATCH (p:Protein)-[:ENCODEDBY]->(g) "
+            + ret
+        )
+        params = {"contig": contig, "start": s, "end": e}
+        if isinstance(margin, int):
+            params["margin_bp"] = margin
+        if isinstance(limit, int):
+            params["limit"] = limit
+        return cypher, params
+
+    # unreachable
+    raise ValueError("anchor_gene_window: unsupported configuration")
+
+
 SLOT_HINTS_EMPTY: Dict[str, str] = {}
 
 SPECS: Dict[str, TemplateSpec] = {
@@ -96,6 +313,35 @@ SPECS: Dict[str, TemplateSpec] = {
         optional={},
         category="discovery",
         returns="protein",
+        cost="cheap",
+        slot_hints=SLOT_HINTS_EMPTY,
+    ),
+    "anchor_gene_window": TemplateSpec(
+        filename=None,
+        required={"anchor_type": str},
+        optional={"anchor_id": str, "genome_id": str, "contig": str, "start": int, "end": int, "margin_bp": int, "limit": int, "include_annotations": bool, "annotations": bool},
+        compiler=_compile_anchor_gene_window,
+        category="span_window",
+        returns="gene",
+        cost="cheap",
+        slot_hints={
+            "anchor_type": "crispr|protein|gene|bgc|coords",
+            "anchor_id": "optional (id for crispr/protein/gene/bgc)",
+            "genome_id": "optional (crispr selection scope)",
+            "contig": "coords only",
+            "start": "coords only",
+            "end": "coords only",
+            "margin_bp": "int",
+            "limit": "int",
+            "include_annotations": "bool"
+        },
+    ),
+    "arrays_per_genome": TemplateSpec(
+        filename="arrays_per_genome.cypher",
+        required={},
+        optional={},
+        category="count",
+        returns="table",
         cost="cheap",
         slot_hints=SLOT_HINTS_EMPTY,
     ),
@@ -254,6 +500,52 @@ SPECS: Dict[str, TemplateSpec] = {
         returns="table",
         cost="cheap",
         slot_hints={"protein_id": "protein:<id>"},
+    ),
+    # --- CRISPR templates ---
+    "crispr_arrays_by_contig": TemplateSpec(
+        filename="crispr_arrays_by_contig.cypher",
+        required={"contig": str},
+        optional={"start": int, "end": int, "limit": int},
+        category="span_window",
+        returns="table",
+        cost="cheap",
+        slot_hints={"contig": "<contig id>", "start": "int", "end": "int", "limit": "int"},
+    ),
+    "crispr_arrays_by_genome": TemplateSpec(
+        filename="crispr_arrays_by_genome.cypher",
+        required={"genome_id": str},
+        optional={"limit": int},
+        category="span_window",
+        returns="table",
+        cost="cheap",
+        slot_hints={"genome_id": "<Genome.id>", "limit": "int"},
+    ),
+    "crispr_arrays_global": TemplateSpec(
+        filename="crispr_arrays_global.cypher",
+        required={},
+        optional={"limit": int},
+        category="span_window",
+        returns="table",
+        cost="cheap",
+        slot_hints={"limit": "int"},
+    ),
+    "protein_crispr_context": TemplateSpec(
+        filename="protein_crispr_context.cypher",
+        required={"protein_id": str},
+        optional={"flank_n": int, "limit": int},
+        category="neighborhood",
+        returns="table",
+        cost="cheap",
+        slot_hints={"protein_id": "protein:<id>", "flank_n": "int", "limit": "int"},
+    ),
+    "next_edges_crossing_crispr": TemplateSpec(
+        filename="next_edges_crossing_crispr.cypher",
+        required={},
+        optional={"contig": str, "limit": int},
+        category="debug",
+        returns="table",
+        cost="cheap",
+        slot_hints={"contig": "<contig id>", "limit": "int"},
     ),
     "genes_on_contig": TemplateSpec(
         filename="genes_on_contig.cypher",
@@ -418,6 +710,11 @@ def compile_query(name: str, slots: Dict[str, Any]) -> Tuple[str, Dict[str, Any]
     if spec.compiler:
         return spec.compiler(slots)
     text = _read(name)
+    # Ensure $limit parameter exists when referenced in the template text
+    # Neo4j requires parameters to be provided even when wrapped in coalesce()
+    if "$limit" in text and "limit" not in slots:
+        slots = dict(slots)
+        slots["limit"] = None
     # Optionally append LIMIT if provided and not already present
     limit = slots.get("limit")
     try:

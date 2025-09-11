@@ -485,8 +485,9 @@ class MacroPlannerSignature(dspy.Signature):
     Allowed operators are listed in operator_catalog (JSON). Do not invent operators.
 
     Planner rubric (breadth-first reminder):
-    - Prefer breadth-first exploration across available annotation namespaces when probing a functional capability.
-    - Two-stage search pattern (generic): First run catalog search to map natural-language terms to precise identifiers; then perform exact, identifier-based retrieval. Use operator inputs to pass IDs between steps (e.g., bind outputs from catalog search and reference them via `inputs`). Do not rely on implicit inference. If identifiers are already available (from prior steps or structured inputs), skip catalog search and use them directly.
+    - Entity-first policy: Choose the minimal operator that directly answers the question for the target entity type (arrays, contigs, genes, pathways, counts). Avoid protein discovery when the question does not require proteins.
+    - Use named DB templates or exact ID retrieval when the question refers to non-protein entities (arrays, contigs, coordinate windows). If identifiers are already available, use them directly; avoid catalog search unless necessary to resolve missing IDs.
+    - Only use protein FeatureDiscovery when the plan explicitly provides a `feature_selector` with a non-empty keyword or explicit ID lists; do NOT infer protein keywords from the question text.
     - Anchor-first discipline: Prefer explicit identifier lists (e.g., accessions or canonical IDs) passed via `inputs` for rowset retrieval. If identifiers are unavailable, concise name tokens may be used — avoid long descriptions or overly broad generic terms.
     - Result formatting (facet-first): Prefer compact facet summaries over raw rows. Use AnnotationDiscovery with `output_profile='facet_summary'` and set quantity explicitly via `return_mode` and `top_k` per group. Only request rowsets when you truly need per-protein details.
     - Include a lightweight evidence assessment step (e.g., row counts) and, when evidence is insufficient, add a compact follow-up proposal step requesting minimal additional inputs (e.g., scope hints, aliases) rather than large data dumps.
@@ -554,6 +555,7 @@ class MacroPlannerSignature(dspy.Signature):
 
     question = dspy.InputField(desc="User question to answer with a macro plan")
     operator_catalog = dspy.InputField(desc="JSON catalog of allowed operators: names, inputs, outputs, params")
+    db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and their required/optional slots")
     constraints = dspy.InputField(desc="Constraints: max_steps, prefer native totals, include SM evidence if relevant")
     ko_reference = dspy.InputField(desc="Optional compact KO reference: one line per KO as 'Kxxxxx: definition' to assist keyword/operator selection")
     pfam_reference = dspy.InputField(desc="Optional compact PFAM reference: one line per PFAM as 'PFxxxxx: short_name; description' to assist keyword/operator selection")

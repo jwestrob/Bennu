@@ -15,12 +15,14 @@ WITH seed, gs, idx, off, (idx + off) AS ni
 WHERE ni >= 0 AND ni < size(gs)
 WITH off AS relative_position, gs[ni] AS ng
 OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng)
+OPTIONAL MATCH (ng)-[f:FLANKS_CRISPR]->(ca:CrisprArray)
 RETURN ng.id AS gene_id,
        ng.contig AS contig,
        toInteger(ng.startCoordinate) AS start,
        toInteger(ng.endCoordinate) AS end,
        ng.strand AS strand,
        np.id AS protein_id,
-       relative_position
+       relative_position,
+       ca.id AS crispr_id,
+       toInteger(f.distanceBp) AS crispr_distance_bp
 ORDER BY relative_position, start;
-

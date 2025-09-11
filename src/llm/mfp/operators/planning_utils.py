@@ -31,6 +31,7 @@ def _assess_evidence(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[
 
 def _propose_followup(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     metrics = inputs.get("evidence_metrics") or {}
+    data_in = inputs.get("data")
     question = str(params.get("question") or "").strip()
     try:
         top_n = int(params.get("top_n", 25))
@@ -40,26 +41,69 @@ def _propose_followup(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict
     thr = int(metrics.get("threshold", 5)) if isinstance(metrics, dict) else 5
     reason = f"insufficient_evidence: rows={rows} < threshold={thr}" if rows < thr else f"followup_requested: rows={rows} >= threshold={thr}"
 
-    # Generic next task: two-stage search then exact retrieval (catalog → IDs → query)
-    next_task = {
-        "steps": [
+    # Normalize data rows (if provided) for schema-driven branching
+    first_keys = set()
+    norm_rows = []
+    try:
+        if isinstance(data_in, list) and data_in and isinstance(data_in[0], dict):
+            norm_rows = [dict(r) for r in data_in]
+            first_keys = set(norm_rows[0].keys())
+        elif isinstance(data_in, dict) and isinstance(data_in.get("rows"), list) and data_in["rows"]:
+            norm_rows = [dict(r) for r in data_in["rows"] if isinstance(r, dict)]
+            if norm_rows:
+                first_keys = set(norm_rows[0].keys())
+    except Exception:
+        norm_rows = []
+        first_keys = set()
+
+    # Data-driven next task selection (no prompt heuristics)
+    next_task_steps = []
+    inputs_needed = []
+
+    if norm_rows:
+        # Case A: arrays_per_genome shape → list arrays for top genome then fetch ±5kb window
+        if {"genome_id", "arrays"}.issubset(first_keys):
+            # Consolidated: go straight to anchor_gene_window, scoped to the top genome (no intermediate listing)
+            next_task_steps = [
+                {
+                    "op": "DBTemplateCall",
+                    "params": {
+                        "name": "anchor_gene_window",
+                        "slots": {"anchor_type": "crispr", "genome_id": {"from": "rows", "field": "genome_id", "index": 0}, "margin_bp": 5000}
+                    }
+                }
+            ]
+        # Case B: direct CRISPR array listing present → fetch ±5kb window for first array
+        elif "crispr_id" in first_keys:
+            next_task_steps = [
+                {
+                    "op": "DBTemplateCall",
+                    "params": {
+                        "name": "anchor_gene_window",
+                        "slots": {"anchor_type": "crispr", "anchor_id": {"from": "rows", "field": "crispr_id", "index": 0}, "margin_bp": 5000}
+                    }
+                }
+            ]
+
+    # Fallback: generic discovery plan when schema is unknown
+    if not next_task_steps:
+        next_task_steps = [
             {"op": "SearchPfamCatalogFuzzy", "params": {"q": question, "top_n": top_n}, "bind": "pfam_hits"},
             {"op": "SearchKoCatalogFuzzy", "params": {"q": question, "top_n": top_n}, "bind": "ko_hits"},
             {"op": "ExtractIdsFromCatalogHits", "inputs": {"pfam_catalog_hits": "pfam_hits", "ko_catalog_hits": "ko_hits"}, "bind": "id_lists"},
             {"op": "QueryProteinsByIds", "inputs": {"pfam_ids": "id_lists", "ko_ids": "id_lists"}, "params": {"limit": 1000}, "bind": "discovered_proteins"},
         ]
-    }
-    # Inputs needed: minimal, generic, not domain-specific
-    inputs_needed = [
-        {"name": "genome_ids", "desc": "Restrict to specific genomes?", "examples": ["G0012345", "G009999"]},
-        {"name": "aliases", "desc": "Additional symbols/synonyms to prioritize in catalog search", "examples": ["gene symbols", "common abbreviations"]},
-        {"name": "pfam_ids", "desc": "Optional PFAM IDs to search (if already known)", "examples": ["PF00016", "PF00485"]},
-        {"name": "ko_ids", "desc": "Optional KO IDs to search (if already known)", "examples": ["K01601", "K00855"]},
-    ]
+        inputs_needed = [
+            {"name": "genome_ids", "desc": "Restrict to specific genomes?", "examples": ["G0012345", "G009999"]},
+            {"name": "aliases", "desc": "Additional symbols/synonyms to prioritize in catalog search", "examples": ["gene symbols", "common abbreviations"]},
+            {"name": "pfam_ids", "desc": "Optional PFAM IDs to search (if already known)", "examples": ["PF00016", "PF00485"]},
+            {"name": "ko_ids", "desc": "Optional KO IDs to search (if already known)", "examples": ["K01601", "K00855"]},
+        ]
+
     followup = {
         "type": "followup_request",
         "reason": reason,
-        "next_task": next_task,
+        "next_task": {"steps": next_task_steps},
         "inputs_needed": inputs_needed,
     }
     return {"followup_request": followup}
@@ -76,9 +120,9 @@ register_operator(OperatorSpec(
 
 register_operator(OperatorSpec(
     name="ProposeFollowup",
-    inputs=["evidence_metrics"],
+    inputs=["evidence_metrics", "data"],  # 'data' optional; enables schema-driven branching
     outputs=["followup_request"],
     params={"question": "string", "top_n": "int (default 25)"},
     run=_propose_followup,
-    description="Emit a generic follow-up proposal with minimal inputs requested",
+    description="Emit a data-driven follow-up proposal. If input rows look like CRISPR tables, propose DBTemplateCall steps; else fall back to generic discovery.",
 ))

@@ -159,6 +159,7 @@ def build(
     run_prodigal_module = importlib.import_module('src.ingest.03_prodigal')
     run_astra_scan_module = importlib.import_module('src.ingest.04_astra_scan')
     run_gecco_module = importlib.import_module('src.ingest.gecco_bgc')
+    run_minced_module = importlib.import_module('src.ingest.minced_crispr')
     run_dbcan_module = importlib.import_module('src.ingest.dbcan_cazyme')
     build_kg_module = importlib.import_module('src.build_kg.rdf_builder')
     # Post-load tuning module remains available for optional manual runs
@@ -174,6 +175,7 @@ def build(
     run_prodigal = run_prodigal_module.run_prodigal
     run_astra_scan = run_astra_scan_module.run_astra_scan
     run_gecco_analysis = run_gecco_module.gecco_bgc_detection
+    run_minced_batch = run_minced_module.run_minced_batch
     run_dbcan_analysis = run_dbcan_module.run_dbcan_batch_analysis
     build_knowledge_graph = build_kg_module.build_knowledge_graph_from_pipeline
     build_knowledge_graph_with_extended_annotations = build_kg_module.build_knowledge_graph_with_extended_annotations
@@ -253,14 +255,21 @@ def build(
             )
         },
         5: {
-            "name": "GECCO BGC Detection",
+            "name": "GECCO BGC Detection + CRISPR (MinCED)",
             "outdir": output_dir / "stage05_gecco",
-            "function": lambda: run_gecco_analysis(
-                input_dir=output_dir / "stage00_prepared",
-                output_dir=output_dir / "stage05_gecco",
-                threads=min(threads, 4),  # Threads per GECCO job
-                max_workers=2,  # Limit parallel GECCO jobs
-                force=force
+            "function": lambda: (
+                run_gecco_analysis(
+                    input_dir=output_dir / "stage00_prepared",
+                    output_dir=output_dir / "stage05_gecco",
+                    threads=min(max(1, threads), 8),  # cap at 8 threads, allow less
+                    max_workers=1,  # one GECCO job at a time to avoid oversubscription
+                    force=force
+                ),
+                run_minced_batch(
+                    input_dir=output_dir / "stage00_prepared",
+                    output_dir=output_dir / "stage05_crispr",
+                    force=force
+                )
             )
         },
         6: {

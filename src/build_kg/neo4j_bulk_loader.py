@@ -185,6 +185,13 @@ class Neo4jBulkLoader:
     def _docker_run_import(self, csv_files: List[Path]) -> Dict[str, Any]:
         if not self._docker_available():
             raise RuntimeError("Docker is not available. Install Docker or use engine='system'.")
+        # Ensure a clean destination store after previous failed imports
+        try:
+            store = self.data_dir / 'databases' / self.database_name
+            if store.exists():
+                shutil.rmtree(store)
+        except Exception as e:
+            console.print(f"[yellow]Warning: failed to clean existing store: {e}[/yellow]")
         # Build import command using /import mount
         node_files = []
         rel_files = []
@@ -200,6 +207,7 @@ class Neo4jBulkLoader:
             self.docker_image,
             "neo4j-admin", "database", "import", "full",
             "--overwrite-destination=true",
+            "--verbose",
         ]
         # Map filenames to container paths
         def label_for(stem_lower: str, filename: str) -> str:
@@ -214,6 +222,8 @@ class Neo4jBulkLoader:
                 # CAZy
                 "cazymeannotations": "Cazymeannotation",
                 "cazymefamilies": "Cazymefamily",
+                # CRISPR
+                "crispr_arrays": "CrisprArray",
             }
             return overrides.get(stem_lower, filename.split(".")[0].rstrip('s').title())
         for node in node_files:
@@ -431,7 +441,7 @@ class Neo4jBulkLoader:
             console.print(f"[yellow]Skipping constraints/indexes (connection failed): {e}[/yellow]")
             return
 
-            statements = [
+        statements = [
                 # Uniqueness constraints on core IDs
                 "CREATE CONSTRAINT genome_id IF NOT EXISTS FOR (g:Genome) REQUIRE g.id IS UNIQUE",
                 "CREATE CONSTRAINT genome_genomeId IF NOT EXISTS FOR (g:Genome) REQUIRE g.genomeId IS UNIQUE",
@@ -448,6 +458,9 @@ class Neo4jBulkLoader:
                 # Composite index for spatial gene scans
                 "CREATE INDEX gene_contig_coords IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.startCoordinate, g.endCoordinate)",
                 "CREATE INDEX gene_contig_start IF NOT EXISTS FOR (g:Gene) ON (g.contig, g.startCoordinate)",
+                # CRISPR array spatial indexes
+                "CREATE INDEX crispr_contig_coords IF NOT EXISTS FOR (ca:CrisprArray) ON (ca.contig, ca.startCoordinate, ca.endCoordinate)",
+                "CREATE INDEX crispr_contig_start IF NOT EXISTS FOR (ca:CrisprArray) ON (ca.contig, ca.startCoordinate)",
             # Helpful single-property indexes
             "CREATE INDEX protein_name IF NOT EXISTS FOR (p:Protein) ON (p.name)",
             "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",

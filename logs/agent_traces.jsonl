@@ -417,3 +417,26 @@
 {"ts": "2025-09-06T11:53:05Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
 {"ts": "2025-09-06T12:00:32Z", "event": "pipeline.start", "data": {"question": "Tell me about what's on the longest contig in this assembly."}}
 {"ts": "2025-09-07T06:49:22Z", "event": "pipeline.start", "data": {"question": "List CAZy families present in this metagenome and the top families overall."}}
+{"ts": "2025-09-11T00:30:13Z", "event": "pipeline.start", "data": {"question": "Show any Gene→Gene NEXT edges that cross CRISPR arrays, with counts per edge, limit 10."}}
+{"ts": "2025-09-11T01:33:24Z", "event": "pipeline.start", "data": {"question": "Describe the BGC repertoire of this metagenome."}}
+{"ts": "2025-09-11T03:21:15Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T04:33:15Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T05:20:56Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T05:45:44Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T06:27:12Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T06:33:24Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T06:37:00Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates"}}
+{"ts": "2025-09-11T07:54:00Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T07:54:15Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates!"}}
+{"ts": "2025-09-11T08:45:53Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates!"}}
+{"ts": "2025-09-11T09:45:42Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates!"}}
+{"ts": "2025-09-11T10:10:00Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates!"}}
+{"ts": "2025-09-11T10:10:15Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T10:16:11Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates!"}}
+{"ts": "2025-09-11T10:16:29Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates"}}
+{"ts": "2025-09-11T10:45:31Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T10:50:53Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 kb gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T10:52:54Z", "event": "pipeline.start", "data": {"question": "Tell me about the gas fixation capability of this microbiome. Use PFAM and KEGG. Be thorough and search for all the possible gas fixation reactions you can think of pls"}}
+{"ts": "2025-09-11T11:12:26Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T11:12:43Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 gene window around it with protein IDs and coordinates."}}
+{"ts": "2025-09-11T11:27:12Z", "event": "pipeline.start", "data": {"question": "Pick one CRISPR array and show the ±5 gene window around it with protein IDs and coordinates"}}

@@ -631,7 +631,8 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng) "
             "OPTIONAL MATCH (np)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain) "
             "OPTIONAL MATCH (np)-[:HASFUNCTION]->(ko:KEGGOrtholog) "
-            "WITH ng, np, "
+            "OPTIONAL MATCH (ng)-[f:FLANKS_CRISPR]->(ca:CrisprArray) "
+            "WITH ng, np, f, ca, "
             "collect(DISTINCT CASE "
             "  WHEN coalesce(d.pfamAccession, d.id) IS NOT NULL AND coalesce(d.name, d.description) IS NOT NULL AND coalesce(d.name, d.description) <> '' "
             "    THEN coalesce(d.pfamAccession, d.id) + ': ' + coalesce(d.name, d.description) "
@@ -641,7 +642,8 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             "END) AS pfams, "
             "collect(DISTINCT ko.description) AS kos "
             "RETURN ng.id AS gene_id, ng.contig AS contig, toInteger(ng.startCoordinate) AS start, "
-            "toInteger(ng.endCoordinate) AS end, ng.strand AS strand, np.id AS protein_id, pfams, kos "
+            "toInteger(ng.endCoordinate) AS end, ng.strand AS strand, np.id AS protein_id, pfams, kos, "+
+            "ca.id AS crispr_id, toInteger(f.distanceBp) AS crispr_distance_bp "
             "ORDER BY start LIMIT $limit"
         )
         with ctx.neo4j_driver.session() as s:
@@ -660,20 +662,21 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
         return rows
 
     def _run_flanking_annotated(protein_id: str, flank_n: int, limit_x: int) -> List[Dict[str, Any]]:
+        # Fetch ±flank_n genes (by contig order) AND include any CRISPR arrays flanking those genes.
+        # Arrays do not count toward the gene limit; they are attached as extras per neighbor.
         cypher = (
             "MATCH (p:Protein {id:$protein_id})-[:ENCODEDBY]->(seed:Gene) "
-            "MATCH (g:Gene {contig: seed.contig}) "
-            "WITH seed, g ORDER BY toInteger(g.startCoordinate) "
+            "MATCH (g:Gene {contig: seed.contig}) WITH seed, g ORDER BY toInteger(g.startCoordinate) "
             "WITH seed, collect(g) AS gs "
             "WITH seed, gs, [i IN range(0, size(gs)-1) WHERE gs[i].id = seed.id][0] AS idx "
             "WITH seed, gs, idx, range(-$flank_n, $flank_n) AS offsets "
-            "UNWIND offsets AS off "
-            "WITH seed, gs, idx, off WHERE off <> 0 "
+            "UNWIND offsets AS off WITH seed, gs, idx, off WHERE off <> 0 "
             "WITH gs[(idx + off)] AS ng WHERE (idx + off) >= 0 AND (idx + off) < size(gs) "
             "OPTIONAL MATCH (np:Protein)-[:ENCODEDBY]->(ng) "
             "OPTIONAL MATCH (np)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(d:Domain) "
             "OPTIONAL MATCH (np)-[:HASFUNCTION]->(ko:KEGGOrtholog) "
-            "WITH ng, np, "
+            "OPTIONAL MATCH (ng)-[f:FLANKS_CRISPR]->(ca:CrisprArray) "
+            "WITH ng, np, f, ca, "
             "collect(DISTINCT CASE "
             "  WHEN coalesce(d.pfamAccession, d.id) IS NOT NULL AND coalesce(d.name, d.description) IS NOT NULL AND coalesce(d.name, d.description) <> '' "
             "    THEN coalesce(d.pfamAccession, d.id) + ': ' + coalesce(d.name, d.description) "
@@ -682,8 +685,9 @@ def _neighborhood_context(ctx: OperatorContext, inputs: Dict[str, Any], params: 
             "  ELSE coalesce(d.name, d.description) "
             "END) AS pfams, "
             "collect(DISTINCT ko.description) AS kos "
-            "RETURN ng.id AS gene_id, ng.contig AS contig, toInteger(ng.startCoordinate) AS start, "+
-            "toInteger(ng.endCoordinate) AS end, ng.strand AS strand, np.id AS protein_id, pfams, kos "
+            "RETURN ng.id AS gene_id, ng.contig AS contig, toInteger(ng.startCoordinate) AS start, "
+            "toInteger(ng.endCoordinate) AS end, ng.strand AS strand, np.id AS protein_id, "+
+            "pfams, kos, ca.id AS crispr_id, toInteger(f.distanceBp) AS crispr_distance_bp "
             "ORDER BY start LIMIT $limit"
         )
         with ctx.neo4j_driver.session() as s:

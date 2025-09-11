@@ -1,6 +1,11 @@
 from __future__ import annotations
 from typing import Any, Dict, List
 from .operators.base import OperatorContext, get_operator
+# Ensure operator modules are imported to register all available operators
+from .operators import builtin as _op_builtin  # noqa: F401
+from .operators import catalog_search as _op_catalog  # noqa: F401
+from .operators import db_templates as _op_db  # noqa: F401
+from .operators import planning_utils as _op_utils  # noqa: F401
 import time
 import logging
 

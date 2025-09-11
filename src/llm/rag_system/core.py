@@ -335,6 +335,22 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             pf_ref = _ld_pfam(pf_max_lines)
                         except Exception:
                             ko_ref = pf_ref = ""
+                    def _db_templates_catalog() -> dict:
+                        # Expose a minimal catalog of named templates and slots to discourage inventing names
+                        from ..kg.cypher_templates import registry as _tpl
+                        out = {"templates": []}
+                        for name, spec in _tpl.SPECS.items():
+                            try:
+                                out["templates"].append({
+                                    "name": name,
+                                    "required": list((spec.required or {}).keys()),
+                                    "optional": list((spec.optional or {}).keys()),
+                                    "category": getattr(spec, 'category', 'general'),
+                                })
+                            except Exception:
+                                continue
+                        return out
+
                     def planner_call_inputs():
                         hard_constraints = (
                             "HARD CONSTRAINTS:\n"
@@ -360,9 +376,11 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         )
                         # Restrict planner-visible catalog to composites only
                         planner_catalog = planner_catalog_overlay()
+                        dbtpl_catalog = _db_templates_catalog()
                         return dict(
                             question=question,
                             operator_catalog=json.dumps(planner_catalog),
+                            db_templates_catalog=json.dumps(dbtpl_catalog),
                             constraints=hard_constraints,
                             ko_reference=ko_ref,
                             pfam_reference=pf_ref,
@@ -416,6 +434,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 expanded.extend(substeps)
                             else:
                                 expanded.append(st)
+                        # Guardrail: if no retrieval step exists, insert a minimal DB template retrieval
+                        try:
+                            retrieval_ops = {"ExecuteDBTemplate", "NeighborhoodContext", "FeatureDiscovery", "MaterializeModuleProfile", "MaterializePathwayProfile"}
+                            has_retrieval = any(((s or {}).get('op') in retrieval_ops) for s in expanded)
+                            if not has_retrieval:
+                                expanded = [{"op": "ExecuteDBTemplate", "params": {"name": "arrays_per_genome", "slots": {}}}] + expanded
+                        except Exception:
+                            pass
                         plan_dict['steps'] = expanded
                         return plan_dict
 
@@ -566,6 +592,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                     'bgcs',
                                     'cazymes',
                                     'cazyme_family_counts',
+                                    # Allow direct DB template results to be surfaced in IRB
+                                    'structured_data',
                                 }
                                 for k, v in (env_dict or {}).items():
                                     if isinstance(v, list):
