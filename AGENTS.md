@@ -1,139 +1,27 @@
-Supersedes: all prior compaction notes (2025‑08‑26, 2025‑09‑04, 2025‑09‑05). This is the current single source of truth.
+# AGENTS.md — Project Conventions for Agents
 
-Compaction Note — 2025‑09‑06
+Scope: Entire repository. These instructions constrain planner behavior, operator choices, and code changes made by agents working in this repo.
 
-Progress checkpoint (post‑cleanups)
-- Functional enrichment removed from Stage 07
-  - Dropped PFAM/KO/CAZy description adders and tests; Stage 07 focuses on Stage 04 outputs (PFAM, KO) + core graph (Genome→Gene→Protein), BGC/CAZy when available, NEXT edges, and KEGG pathways.
-  - Result: cleaner logs, no empty enrichment fields; deterministic import.
-- Stage 07 build path validated
-  - TTL created with ≈10.48M triples, CSVs emitted including `next_relationships.csv`, and bulk import completes via `neo4j-admin` (docker engine, auth=none) with no enrichment warnings.
-  - Diagnostics confirm `[:NEXT]` present, `Gene.nextDegree`/`Gene.genesOnContig` populated from CSV load; neighborhood operators see consistent degrees.
-- Post‑import indexes
-  - Constraints and indexes are created by default after import. Docker path uses unauth bolt by default; when creds are provided, they are used.
-  - Composite indexes on `:Gene(contig,startCoordinate,endCoordinate)` and `:Gene(contig,startCoordinate)` accelerate locus/flanking scans.
+## Do Not Hard‑Code Biology
 
-Context (what’s now solid)
-- Neighborhoods: deterministic and auditable
-  - NeighborhoodContext is strict about seeds; accepts `inputs.discovered_proteins` or explicit IDs; no implicit fallbacks.
-  - Degree‑aware seed filter: excludes contig‑isolated seeds (`Gene.nextDegree = 0`) by default; override with `include_degree_zero_seeds=true`.
-  - Enriched neighbors (PFAM/KO) without APOC; flanking query fixed.
-  - Tool calls (op, params, inputs, outputs preview) are persisted to `data/session_notes/<sid>/synthesis_notes/tool_calls.json`.
-- Planner / plan validation
-  - AnnotationDiscovery MUST set `params.keyword` (or `q`). Plans omitting this are rejected at validation time.
-  - Wiring rule: chain IDs via `inputs` (e.g., `inputs:{"pfam_ids":"pfam_ids"}`) rather than hard‑coding.
-  - Keyword hygiene: for gene/subunit context, prefer direct subunit terms; avoid broad class or “‑like” analog tokens unless explicitly exploring; keep synonyms ≤ 2.
-  - Rubric example uses placeholders (`<KEYWORD>`) only; numeric defaults documented separately to avoid biasing examples.
-- Stage 07 (default, no creds needed)
-  - RDF→CSV conversion precomputes `[:NEXT]` edges (`next_relationships.csv`) and writes `Gene.nextDegree` and `Gene.genesOnContig` directly into Gene CSVs.
-  - Bulk import with `neo4j-admin` loads everything in one shot; no Neo4j auth required; no post‑load fixes needed.
-  - Post‑import constraints/indexes are applied by default (no‑auth supported). Optional additional indexes can still be added manually.
-- Diagnostics
-  - `scripts/diagnostics/neo4j_check_next.py` prints a degree histogram and per‑seed computed vs stored degree, plus adjacency/flanking neighbors and PFAM/KO annotations.
+- NEVER inject biological identifiers (e.g., KO, PFAM, CAZy, gene symbols) directly into plans, prompts, code paths, or templates.
+  - Examples of disallowed suggestions/changes: “Add TonB/ExbB/ExbD (K03832/K03550/K03551) to the KO list,” “Hard‑wire FeoA/B KOs into the pipeline,” “Manually append PF05031 to the query.”
+- All identifier selection MUST be data‑driven:
+  - Use catalog operators (e.g., SearchPfamCatalogFuzzy, SearchKoCatalogFuzzy) or explicit IDs provided by the user or dataset.
+  - If curation is desired (allow/deny), it must come from data files under `data/reference/` (e.g., TSV/JSON), not from constants in code. These files are optional and should be consulted only when present.
+  - Planners and operators MUST NOT invent, expand, or “helpfully” add identifiers that are not returned by a catalog search or user input.
 
-How to run (Stage 07)
-- Build just stage 7 (creates TTL/NT, CSVs, NEXT, nextDegree, then bulk import):
-  - `python -m src.cli build -f 7 -t 7 --force`
-  - Outputs: `data/stage07_kg/knowledge_graph.ttl` and `data/stage07_kg/csv/*`, then imports via `neo4j-admin`.
+## Planner & Composite Discipline
 
-What to expect in agent logs
-- `NeighborhoodContext: filtered X degree-zero seeds; using Y seeds` (degree filter summary).
-- No Neo4j UnknownPropertyKey warnings for `nextDegree` (property exists on Gene from import).
-- Tool‑call capture file at `synthesis_notes/tool_calls.json` for full parameter audit.
+- Prefer composites that derive outputs deterministically from available data. Avoid heuristics that rely on implicit biological knowledge.
+- When comparing features across genomes, use FeatureProfile (keyword → PFAM/KO catalogs → exact counts) or PathwayProfile (KO presence/completeness) as appropriate; do not augment identifier sets beyond catalog results.
+- Avoid global queries by default. Use DatasetContext genome sampling unless the user explicitly requests full scope.
 
-Planner guidance (summary)
-- Always set AnnotationDiscovery.keyword and wire IDs via inputs. Do not call AnnotationDiscovery with only formatting params (output_profile / group_by / fields) — this yields empty results.
-- For gene/subunit context, keep keywords tight (direct subunit terms; ≤ 2 concise synonyms). Avoid “‑like” analogs unless exploring broadly.
-- Numeric defaults (documented, not enforced in examples): `pfam_tokens_top_n=30`, `ko_tokens_top_n=30`, `pfam_candidate_cap=200`, `pfam_top_k=20`, `ko_top_k=20`. For targeted rowsets, use a small budget (≈ 50–200) to control latency.
+## UX / Reporting
 
-Operator details (NeighborhoodContext)
-- Params of note: `seeds_limit` (default 10), `k` (omit for flanking ±5), `include_degree_zero_seeds` (default false), `output_profile` (`summary` or `rowset`).
-- Degree filter batching Cypher:
-  - `UNWIND $pids AS pid MATCH (p:Protein {id: pid})-[:ENCODEDBY]->(g:Gene)`
-  - `OPTIONAL MATCH (g)-[:NEXT]-(:Gene) WITH pid, g, count(*) AS c` → `WITH pid, coalesce(g.nextDegree, c) AS deg` → `RETURN pid, toInteger(deg)`
-  - This uses stored nextDegree if present, else falls back to live count.
+- Favor compact matrices and labeled summaries over raw row dumps. If labels are needed, load them from `data/reference` (e.g., `pfam_id_desc.tsv`, `ko_list`). Do not embed labels in code.
 
-Diagnostics (quick)
-- `python scripts/diagnostics/neo4j_check_next.py --k 5 --flank_n 5 --limit 6`
-  - Prints global `[:NEXT]` count; degree histogram; and per‑seed `NEXT degree=K (prop=D) | genes_on_contig=N`.
-  - Shows adjacency (k) and flanking (±N) neighbors with PFAM/KO summaries.
+## Pre‑Compaction Note — 2025‑09‑17
 
-Accessing the Augmented Neo4j Schema
-- Connection (docker default)
-  - URI: `bolt://localhost:7687`; Auth: none (container runs with `NEO4J_AUTH=none`).
-  - With creds: set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` env vars.
-- Core labels
-  - `Genome`, `Gene`, `Protein`, `Domain`, `DomainAnnotation`, `FunctionalAnnotation`, `KEGGOrtholog`, `Pathway`, `Bgc`, `QualityMetrics`, `Dataset`.
-- Key properties
-  - `Gene`: `id`, `contig`, `startCoordinate`, `endCoordinate`, `strand`, `nextDegree`, `genesOnContig`.
-  - `Protein`: `id` (optional: `name`, `description` when present).
-  - `Domain`: `id`, `pfamAccession`, `name` (description may be empty by design post‑cleanup).
-  - `KEGGOrtholog`: `id`, `description`.
-- Relationships (subset)
-  - `(:Protein)-[:ENCODEDBY]->(:Gene)`
-  - `(:Protein)-[:HASDOMAIN]->(:DomainAnnotation)-[:DOMAINFAMILY]->(:Domain)`
-  - `(:Protein)-[:HASFUNCTION]->(:KEGGOrtholog)`
-  - `(:KEGGOrtholog)-[:PARTICIPATESIN]->(:Pathway)`
-  - `(:Gene)-[:NEXT]->(:Gene)` (directed; treat as undirected for degree)
-  - `(:Gene)-[:BELONGSTOGENOME]->(:Genome)` and provenance edges (e.g., quality metrics)
-- Helpful queries
-  - Global NEXT count: `MATCH ()-[:NEXT]->() RETURN count(*) AS c`.
-  - Stored vs live degree for a seed: `MATCH (p:Protein {id:$pid})-[:ENCODEDBY]->(g:Gene) OPTIONAL MATCH (g)-[:NEXT]-() WITH g, count(*) AS c RETURN toInteger(coalesce(g.nextDegree,c)) AS degree, toInteger(g.genesOnContig) AS onContig`.
-  - Flanking neighbors (±N by contig order): see `scripts/diagnostics/neo4j_check_next.py` for a compact, index‑aware pattern.
-  - PFAM to proteins: `MATCH (d:Domain {pfamAccession:$pf})<-[:DOMAINFAMILY]-(:DomainAnnotation)<-[:HASDOMAIN]-(p:Protein) RETURN p.id LIMIT 25`.
-  - KO to pathways: `MATCH (ko:KEGGOrtholog {id:$ko})-[:PARTICIPATESIN]->(pw:Pathway) RETURN pw.id, pw.name LIMIT 25`.
-  - Index/constraint visibility (Neo4j 5): `SHOW INDEXES`, `SHOW CONSTRAINTS`.
+- Recent changes added FeatureProfile (per‑genome PFAM/KO counts), improved planner scoping, and portable Neo4j export. CRISPR arrays are integrated E2E. Future agents must adhere to the “No hard‑coded biology” rule above and keep identifier selection data‑driven.
 
-Open items / test & complete
-- Planner tightening (non‑breaking): when intent is “context around specific genes/subunits”, recommend smaller `pfam_tokens_top_n` (≈ 8–12) to reduce noise; keep wording general (no hard‑coding biology).
-- Reporter visibility: ensure neighborhoods_json is leveraged to summarize seed‑level adjacency and loci examples succinctly; prefer `output_profile='rowset'` when seed set is small (≤ 12).
-- Indexes (default): post‑import constraints/indexes are created by default (no‑auth supported; docker engine runs with `NEO4J_AUTH=none`). Includes unique IDs, composite `:Gene(contig,startCoordinate)` (and contig,start,end), and helpful full‑text indexes.
-- E2E checks:
-  - Stage 07 default path produces Gene.nextDegree on import; agent runs with no nextDegree warnings.
-  - AnnotationDiscovery validation rejects missing keyword; planner respects wiring rules.
-  - Degree filter behavior: defaults to excluding degree‑0; include when explicitly requested.
-
-Known pitfalls
-- Extremely fragmented assemblies produce many degree‑0 seeds; degree filter helps, but expect fewer neighborhoods.
-- If someone bypasses Stage 07’s CSV import and attaches to an older DB, nextDegree may be missing — the operator will still work (falls back to live count) but Neo4j will warn about the unfamiliar property key until nextDegree is set.
-
-Key files
-- Planner constraints/signatures: `src/llm/rag_system/core.py`, `src/llm/rag_system/dspy_signatures.py`
-- NeighborhoodContext: `src/llm/mfp/operators/builtin.py`
-- Tool call capture: `src/llm/mfp/executor.py`
-- Stage 07 CSV import path: `src/build_kg/rdf_to_csv_converter.py`, `src/build_kg/neo4j_bulk_loader.py`, `src/cli.py`
-
-Cleanup TODO
-- Remove functional enrichment from Stage 07 (PFAM/KO label additions from reference files). It is not required for neighborhoods and adds noisy logs; the pipeline should remain focused on annotations produced in Stage 04 and core graph structure.
-
-CAZy Integration — Status 2025‑09‑06
-
-- Current behavior
-  - Stage 06 (dbCAN) runs and produces tabular outputs (e.g., overview.tsv, uniInput.faa). Logs confirm dbCAN completion (e.g., “Completed dbCAN for SRR6231169: …”).
-  - Stage 07 builder expects JSON artifacts under `data/stage06_dbcan/` to ingest CAZy:
-    - `processing_manifest.json`
-    - `dbcan_summary.json`
-    - `<genome>_cazyme_results.json`
-  - Latest Stage 07 run shows: “WARNING  CAZyme manifest not found: data/stage06_dbcan/processing_manifest.json”, and Neo4j has 0 CAZy nodes/edges.
-
-- Root cause (CLI path)
-  - The Stage 06 CLI path invokes `run_dbcan_batch_analysis(...)` but does not persist results to JSON. The JSON‑save logic exists in `src/ingest/dbcan_cazyme.py: main()` (`save_results(...)`, `create_processing_manifest(...)`), but the CLI stage does not call these functions.
-  - A JSON synthesis fallback was added to `run_dbcan_batch_analysis` (when no `.faa` inputs are found). In the CLI path, `.faa` inputs exist, so the fallback is not triggered; the expected JSON files remain absent.
-
-- Evidence
-  - Stage 06 log: “Running dbCAN for SRR6231169 … --threads 16 … Completed dbCAN for SRR6231169: 43671/386307 CAZyme proteins.”
-  - Stage 07 log: “CAZyme manifest not found: data/stage06_dbcan/processing_manifest.json”.
-  - Neo4j checks: `MATCH (p:Protein)-[:HASCAZYME]->(:Cazymeannotation)` returns 0; no CAZy instances present.
-
-- Action items
-  - Minimal fix (recommended): After Stage 06 completes in the CLI, persist results:
-    - Call `save_results(results, output_dir)` and `create_processing_manifest(results, output_dir)` with `output_dir = data/stage06_dbcan`.
-  - Optional robustness: Keep the synthesis fallback AND always run it as a post‑step to catch externally‑run dbCAN (convert `overview.tsv` to JSON when JSON is missing).
-  - Then re‑run Stage 07 (`python -m src.cli build -f 7 -t 7 --force`) and verify CAZy presence in Neo4j.
-
-- Threads alignment (DIAMOND)
-  - CLI Stage 06 now forwards the `-j` (threads) value to dbCAN per‑job via `--threads` (observed: `--threads 16` in logs). This ensures DIAMOND uses the specified thread count.
-
-- Quick verification queries (Neo4j)
-  - Global: `MATCH (p:Protein)-[:HASCAZYME]->(:Cazymeannotation)-[:CAZYMEFAMILY]->(:Cazymefamily) RETURN count(p) AS proteins, count(DISTINCT 1) AS families`.
-  - Per‑genome: `MATCH (g:Genome)<-[:BELONGSTOGENOME]-(:Gene)<-[:ENCODEDBY]-(p:Protein)-[:HASCAZYME]->(:Cazymeannotation) RETURN g.id, count(p) ORDER BY count(p) DESC`.

@@ -57,7 +57,8 @@ def _execute_db_template(ctx: OperatorContext, inputs: Dict[str, Any], params: D
     except Exception:
         rows_in = None
 
-    slots = _resolve_slots_with_inputs(params.get("slots") or {}, rows_in)
+    raw_slots = params.get("slots") or {}
+    slots = _resolve_slots_with_inputs(raw_slots, rows_in)
     if not isinstance(name, str) or not name.strip():
         raise ValueError("ExecuteDBTemplate: params.name is required")
     name = _normalize_template_name(name)
@@ -92,6 +93,37 @@ def _execute_db_template(ctx: OperatorContext, inputs: Dict[str, Any], params: D
                     slots['bgc_id'] = cid
     except Exception:
         pass
+
+    # Friendly pre-validation: detect unresolved row-mapping in slots when no rows were provided
+    try:
+        from ...kg.cypher_templates import registry as _tpl
+        spec = _tpl.SPECS.get(name)
+    except Exception:
+        spec = None
+    unresolved = []
+    try:
+        for k, v in (raw_slots or {}).items():
+            if isinstance(v, dict) and str(v.get('from','')).strip() == 'rows' and rows_in is None:
+                unresolved.append((k, v.get('field') or ''))
+    except Exception:
+        unresolved = []
+    if unresolved and spec is not None:
+        # Compose an informative error with chaining hint
+        parts = []
+        for k, fld in unresolved:
+            exp = spec.required.get(k)
+            exp_s = ''
+            if exp is list:
+                exp_s = 'list[...]'
+            elif exp is str:
+                exp_s = 'str'
+            msg = (
+                f"Unresolved slot mapping: template '{name}' slot '{k}' references inputs.rows but no rows were provided. "
+                f"Expected type {exp_s or 'value'}. If chaining from a previous DBTemplateCall, add inputs: {{'rows':'<binding>'}} "
+                f"and slots: {{'{k}': {{'from':'rows','field':'{fld or 'id'}'}}}}."
+            )
+            parts.append(msg)
+        raise ValueError(' '.join(parts))
     # Compile (supports dynamic compilers) or read static file
     cypher, cy_params = kg_tpl_registry.compile_query(name, dict(slots))
     rows: list[dict] = []

@@ -42,9 +42,9 @@ def _resolve_alias(model_id: str) -> Optional[str]:
         # Handy short-hands for 4.1-mini
         "gpt-4.1-mini": "openai/gpt-4.1-mini",
         "4.1-mini": "openai/gpt-4.1-mini",
-        # Sonnet 4 aliases route to OpenRouter by default
-        "claude-sonnet-4": "anthropic/claude-sonnet-4",
-        "sonnet-4": "anthropic/claude-sonnet-4",
+        # Sonnet 4 aliases should route to OpenRouter when unspecified
+        "claude-sonnet-4": "openrouter/claude-4-sonnet",
+        "sonnet-4": "openrouter/claude-4-sonnet",
     }
     return alias.get(name)
 
@@ -96,7 +96,7 @@ def make_lm(model_id: str, step: str = "") -> Any:
 
     - For GPT-5/o1 reasoning: use dspy.LM with model_type='responses', temperature=1.0
     - For non-reasoning OpenAI (gpt-4.1 family): use dspy.LM, temperature=0.0
-    - For anthropic/claude-sonnet-4 via OpenRouter: use dspy.OpenAI with api_base to OpenRouter
+    - For openrouter/claude-4-sonnet via OpenRouter: use dspy.OpenAI with api_base to OpenRouter
 
     Never sets max_tokens; also drops any accidental token-limit params when supported.
     """
@@ -108,7 +108,7 @@ def make_lm(model_id: str, step: str = "") -> Any:
     lower = model.lower()
 
     # OpenRouter provider explicit prefix: openrouter/<model>
-    # Example: openrouter/claude-sonnet-4 or openrouter/anthropic/claude-sonnet-4
+    # Example: openrouter/claude-4-sonnet or openrouter/anthropic/claude-4-sonnet
     if lower.startswith("openrouter/"):
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         api_key = os.getenv("OPENROUTER_API_KEY")
@@ -117,7 +117,7 @@ def make_lm(model_id: str, step: str = "") -> Any:
         # Convert to OpenRouter's model id: prefer vendor-prefixed form
         inner = model.split("/", 1)[1]
         if "/" not in inner:
-            # Assume Anthropic when only a bare model name like 'claude-sonnet-4' is given
+            # Assume Anthropic when only a bare model name like 'claude-4-sonnet' is given
             routed_model = f"anthropic/{inner}"
         else:
             routed_model = inner

@@ -106,6 +106,35 @@ def expand_db_template_call(params: Dict[str, Any], ctx: CompositeContext) -> Li
     return [{"op": "ExecuteDBTemplate", "params": {"name": name, "slots": slots}}]
 
 
+def expand_feature_profile(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
+    """Composite: FeatureProfile
+
+    Per‑genome PFAM+KO counts derived from keyword → IDs via local catalogs.
+
+    Params:
+      - genomes?: List[str]
+      - keyword?: str (defaults to ctx.question)
+      - top_k?: int (catalog hits cap; default 20)
+    """
+    steps: List[Dict[str, Any]] = []
+    kw = (params.get("keyword") or ctx.get("question", "")).strip()
+    top_k = int(params.get("top_k", 20))
+    if kw:
+        steps.append({"op": "SearchPfamCatalogFuzzy", "params": {"q": kw, "top_n": top_k}, "bind": "pfam_search"})
+        steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": kw, "top_n": top_k}, "bind": "ko_search"})
+        # Use the direct id outputs from the catalog searches (avoid nested binding pitfalls)
+        steps.append({
+            "op": "CountByIdsPerGenome",
+            "inputs": {"pfam_ids": "pfam_ids", "ko_ids": "ko_ids"},
+            "params": {"genome_ids": params.get("genomes", [])},
+        })
+    else:
+        # If no keyword, do nothing (planner should provide keyword for this composite)
+        return []
+    steps.append({"op": "MaterializeFeatureProfile", "inputs": {"pfam_counts": "pfam_counts", "ko_counts": "ko_counts"}, "params": {}})
+    return steps
+
+
 def expand_gene_context(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
     """Composite: GeneContext
 
@@ -145,13 +174,32 @@ def expand_gene_context(params: Dict[str, Any], ctx: CompositeContext) -> List[D
 
 def expand_pathway_profile(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
     steps: List[Dict[str, Any]] = []
+    # KO presence per genome (scoped via DatasetContext by operator default)
     steps.append({"op": "FetchPresentKOs", "params": {"genome_ids": params.get("genomes", [])}})
+    # Load KO→pathway totals (for mapping)
     steps.append({"op": "LoadKoPathwayTotals", "params": {}})
-    steps.append({
-        "op": "ComputePathwayCompleteness",
-        "inputs": {"present": "present", "totals": "totals"},
-        "params": {"min_completeness": params.get("min_completeness", 0.0), "pathways": params.get("pathway_filter", [])}
-    })
+    # Derive pathway filter from KO keywords in the question when not provided
+    pw_filter = params.get("pathway_filter") or []
+    if not pw_filter:
+        steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": ctx.get("question", ""), "top_n": 25}, "bind": "ko_hits"})
+        steps.append({
+            "op": "MapKOsToPathways",
+            "inputs": {"ko_ids": "ko_hits", "totals": "totals"},
+            "params": {"top_n": 25},
+            "bind": "pw_list"
+        })
+        steps.append({
+            "op": "ComputePathwayCompleteness",
+            "inputs": {"present": "present", "totals": "totals"},
+            # slots mapping: pathways taken from pw_list.pathways
+            "params": {"min_completeness": params.get("min_completeness", 0.0), "pathways": {"from": "rows", "field": "pathways", "index": 0}}
+        })
+    else:
+        steps.append({
+            "op": "ComputePathwayCompleteness",
+            "inputs": {"present": "present", "totals": "totals"},
+            "params": {"min_completeness": params.get("min_completeness", 0.0), "pathways": pw_filter}
+        })
     steps.append({"op": "MaterializePathwayProfile", "inputs": {"present": "present", "pathway_completeness": "pathway_completeness"}, "params": {}})
     return steps
 
@@ -190,10 +238,10 @@ def expand_evidence_and_next(params: Dict[str, Any], ctx: CompositeContext) -> L
 
 COMPOSITE_EXPANDERS: Dict[str, Expansion] = {
     "FeatureDiscovery": expand_feature_discovery,
+    "FeatureProfile": expand_feature_profile,
     "GeneContext": expand_gene_context,
     "PathwayProfile": expand_pathway_profile,
     "ModuleProfile": expand_module_profile,
-    "EvidenceAndNext": expand_evidence_and_next,
     "DBTemplateCall": expand_db_template_call,
 }
 
@@ -216,6 +264,17 @@ def planner_catalog_overlay() -> Dict[str, Any]:
                     "limits": "{top_k?: int, row_cap?: int}"
                 },
                 "outputs": ["FeatureSet", "ProteinSet", "FacetSummary"],
+            },
+            {
+                "name": "FeatureProfile",
+                "description": "Per-genome PFAM+KO counts from a keyword (uses local catalogs for IDs).",
+                "inputs": ["genomes", "keyword", "top_k"],
+                "params": {
+                    "genomes": "List[str] genome IDs (optional; default dataset sample)",
+                    "keyword": "string (defaults to user question)",
+                    "top_k": "int cap for catalog hits (default 20)"
+                },
+                "outputs": ["PerGenomeFeatureCounts", "FeatureProfileSummary"],
             },
             {
                 "name": "GeneContext",
@@ -249,18 +308,6 @@ def planner_catalog_overlay() -> Dict[str, Any]:
                     "output_profile": "'global_counts' | 'per_genome' (default) | 'rowset'"
                 },
                 "outputs": ["ModuleRows", "GlobalCounts"],
-            },
-            {
-                "name": "EvidenceAndNext",
-                "description": "Assess evidence sufficiency and propose follow-up actions.",
-                "inputs": ["bound_result_ref", "min_rows", "question", "top_n"],
-                "params": {
-                    "bound_result_ref": "string binding name for data to assess (optional)",
-                    "min_rows": "int threshold (default 5)",
-                    "question": "original question (for follow-up)",
-                    "top_n": "int for catalog search in follow-up"
-                },
-                "outputs": ["EvidenceMetrics", "FollowupPlan"],
             },
             {
                 "name": "DBTemplateCall",

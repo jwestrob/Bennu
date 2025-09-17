@@ -7,7 +7,7 @@ import logging
 
 from .base import OperatorContext, OperatorSpec, register_operator
 from ...options.template_runner import FileCypherRunner
-from .catalog_search import _search_pfam, _search_ko
+from .catalog_search import _search_pfam, _search_ko, _load_pfam_catalog, _load_ko_catalog
 from ...kegg.pathway_mapping import load_ko_pathway_maps
 from ...kg.cypher_templates import registry as kg_tpl_registry
 from ..types import FeatureSet, ProteinSet, assert_featureset, assert_proteinset
@@ -16,6 +16,8 @@ from ..types import FeatureSet, ProteinSet, assert_featureset, assert_proteinset
 def _fetch_present_kos(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     runner = FileCypherRunner(ctx.neo4j_driver)
     genome_ids = params.get("genome_ids") or []
+    if not genome_ids and ctx.dataset_context:
+        genome_ids = ctx.dataset_context.get('genome_ids_sample') or []
     rows = runner.run_template("present_kos_by_genome.cypher", {"genome_ids": genome_ids})
     present: Dict[str, Any] = {}
     for r in rows or []:
@@ -37,6 +39,50 @@ def _load_ko_totals(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[s
     # Loads native ko_pathway.list mapping
     pw_to_kos, _ = load_ko_pathway_maps()
     return {"totals": {k: sorted(list(v)) for k, v in pw_to_kos.items()}}
+
+
+def _map_kos_to_pathways(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a list of KO ids to KEGG pathway ids using a totals mapping.
+
+    Inputs:
+      - ko_ids: list[str]
+      - totals: { pathway_id -> [KO ids] }
+    Params:
+      - top_n (optional): cap the number of pathways returned (default 25)
+    """
+    ko_ids_in = inputs.get("ko_ids") or params.get("ko_ids") or []
+    totals_in = inputs.get("totals") or params.get("totals") or {}
+    try:
+        top_n = int(params.get("top_n", 25))
+    except Exception:
+        top_n = 25
+    # Normalize KO ids: accept 'Kxxxxx' or 'ko:Kxxxxx'
+    kos = []
+    try:
+        for k in (ko_ids_in or []):
+            s = str(k).strip()
+            if not s:
+                continue
+            u = s.upper()
+            if u.startswith('KO:'):
+                u = u[3:]
+            kos.append(u)
+    except Exception:
+        kos = []
+    if not kos or not isinstance(totals_in, dict):
+        return {"pathways": []}
+    kos_set = set(kos)
+    out = []
+    for pw, ko_list in totals_in.items():
+        try:
+            has = any((str(x).upper() in kos_set) for x in (ko_list or []))
+        except Exception:
+            has = False
+        if has:
+            out.append(str(pw))
+    # Deterministic order and clamp
+    out = sorted(set(out))[: max(1, top_n)]
+    return {"pathways": out}
 
 
 def _compute_pathway_completeness(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
@@ -67,6 +113,14 @@ def _compute_pathway_completeness(ctx: OperatorContext, inputs: Dict[str, Any], 
 
     # optional filter
     allowed = set(pathways) if isinstance(pathways, list) and pathways else None
+    # Guard: avoid computing ALL pathways by default unless explicitly allowed
+    if allowed is None and not bool(params.get("allow_all_pathways", False)):
+        try:
+            import logging
+            logging.getLogger(__name__).info("ComputePathwayCompleteness skipped: pathways filter empty and allow_all_pathways not set")
+        except Exception:
+            pass
+        return {"pathway_completeness": []}
 
     out_rows = []
     for gid, kos in present.items():
@@ -113,6 +167,8 @@ def _compute_pathway_completeness(ctx: OperatorContext, inputs: Dict[str, Any], 
 def _bgcs_by_genome(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     genome_id = params.get("genome_id")
     genome_ids = params.get("genome_ids") or []
+    if not genome_id and not genome_ids and ctx.dataset_context:
+        genome_ids = ctx.dataset_context.get('genome_ids_sample') or []
     runner = FileCypherRunner(ctx.neo4j_driver)
     rows = runner.run_template(
         "bgcs_by_genome.cypher",
@@ -137,6 +193,8 @@ def _bgcs_by_genome(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[s
 def _cazymes_by_genome(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     genome_id = params.get("genome_id")
     genome_ids = params.get("genome_ids") or []
+    if not genome_id and not genome_ids and ctx.dataset_context:
+        genome_ids = ctx.dataset_context.get('genome_ids_sample') or []
     runner = FileCypherRunner(ctx.neo4j_driver)
     rows = runner.run_template("cazymes_by_genome.cypher", {"genome_id": genome_id, "genome_ids": genome_ids})
     return {"cazymes": rows or []}
@@ -183,6 +241,8 @@ def _annotation_discovery(ctx: OperatorContext, inputs: Dict[str, Any], params: 
     include_examples = str(params.get("include_examples") or "counts").strip().lower()  # none|counts|ids
     return_full = bool(params.get("return_full_rows") or False)
     genome_ids = params.get("genome_ids") or []
+    if not genome_ids and ctx.dataset_context:
+        genome_ids = ctx.dataset_context.get('genome_ids_sample') or []
 
     # Stage 1: catalog fuzzy search (timed)
     _t0 = time.perf_counter()
@@ -973,6 +1033,175 @@ def _materialize_feature_discovery(ctx: OperatorContext, inputs: Dict[str, Any],
     return {"FeatureSet": feature_set, "ProteinSet": protein_set, "FacetSummary": {"pfam": pf_facet, "ko": ko_facet}}
 
 
+def _count_by_ids_per_genome(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Count proteins per genome for provided PFAM and/or KO ids.
+
+    Params:
+      - pfam_ids?: List[str]
+      - ko_ids?: List[str]
+      - genome_ids?: List[str] (defaults to dataset_context.genome_ids_sample)
+    Outputs:
+      - pfam_counts: [{genome_id, pfam_id, count}]
+      - ko_counts:   [{genome_id, ko_id, count}]
+    """
+    runner = FileCypherRunner(ctx.neo4j_driver)
+    pfam_in = inputs.get("pfam_ids") or params.get("pfam_ids") or []
+    ko_in = inputs.get("ko_ids") or params.get("ko_ids") or []
+    # Unwrap when passed as a dict payload from ExtractIdsFromCatalogHits
+    if isinstance(pfam_in, dict) and "pfam_ids" in pfam_in:
+        pfam_ids = pfam_in.get("pfam_ids") or []
+    else:
+        pfam_ids = pfam_in or []
+    if isinstance(ko_in, dict) and "ko_ids" in ko_in:
+        ko_ids = ko_in.get("ko_ids") or []
+    else:
+        ko_ids = ko_in or []
+    genome_ids = params.get("genome_ids") or []
+    if not genome_ids and ctx.dataset_context:
+        genome_ids = ctx.dataset_context.get('genome_ids_sample') or []
+
+    pfam_counts: List[Dict[str, Any]] = []
+    ko_counts: List[Dict[str, Any]] = []
+    if pfam_ids:
+        try:
+            pfam_counts = runner.run_template(
+                "count_proteins_by_pfam_ids_per_genome.cypher",
+                {"pfam_ids": pfam_ids, "genome_ids": genome_ids},
+            ) or []
+        except Exception:
+            pfam_counts = []
+    if ko_ids:
+        try:
+            ko_counts = runner.run_template(
+                "count_proteins_by_ko_ids_per_genome.cypher",
+                {"ko_ids": ko_ids, "genome_ids": genome_ids},
+            ) or []
+        except Exception:
+            ko_counts = []
+
+    macro = {"type": "macro_result", "name": "CountByIdsPerGenome", "rows": {"pfam_counts": pfam_counts, "ko_counts": ko_counts}}
+    return {"pfam_counts": pfam_counts, "ko_counts": ko_counts, "macro_result": macro}
+
+
+def _materialize_feature_profile(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Materialize a compact per-genome feature profile from PFAM/KO counts.
+
+    Inputs:
+      - pfam_counts: [{genome_id,pfam_id,count}]
+      - ko_counts:   [{genome_id,ko_id,count}]
+    Outputs:
+      - PerGenomeFeatureCounts
+      - FeatureProfileSummary
+    """
+    pfam_counts = inputs.get("pfam_counts") or []
+    ko_counts = inputs.get("ko_counts") or []
+
+    # Build per-genome structure
+    per_genome: Dict[str, Dict[str, Any]] = {}
+    for r in pfam_counts:
+        gid = str(r.get("genome_id"))
+        pid = str(r.get("pfam_id"))
+        cnt = int(r.get("count") or 0)
+        if not gid or not pid:
+            continue
+        e = per_genome.setdefault(gid, {"genome_id": gid, "pfam": [], "ko": []})
+        e["pfam"].append({"id": pid, "count": cnt})
+    for r in ko_counts:
+        gid = str(r.get("genome_id"))
+        kid = str(r.get("ko_id"))
+        cnt = int(r.get("count") or 0)
+        if not gid or not kid:
+            continue
+        e = per_genome.setdefault(gid, {"genome_id": gid, "pfam": [], "ko": []})
+        e["ko"].append({"id": kid, "count": cnt})
+    rows = sorted(per_genome.values(), key=lambda d: d.get("genome_id", ""))
+
+    # Simple global summary (top features overall)
+    from collections import Counter
+    pf_c = Counter()
+    ko_c = Counter()
+    for r in pfam_counts:
+        pf_c[r.get("pfam_id")] += int(r.get("count") or 0)
+    for r in ko_counts:
+        ko_c[r.get("ko_id")] += int(r.get("count") or 0)
+    def _top(cnt: Counter, n: int = 20):
+        out = []
+        for k, v in cnt.most_common(n):
+            if isinstance(k, str) and k:
+                out.append({"id": k, "total": int(v)})
+        return out
+    # Label enrichment from local catalogs (best effort; non-fatal if missing)
+    pf_label_map: Dict[str, str] = {}
+    ko_label_map: Dict[str, str] = {}
+    try:
+        for pfid, short, desc in _load_pfam_catalog(getattr(ctx, 'project_root', None)):
+            base = (pfid or '').split('.')[0].upper()
+            if base and base not in pf_label_map:
+                pf_label_map[base] = short or desc or base
+    except Exception:
+        pass
+    try:
+        for kid, label in _load_ko_catalog(getattr(ctx, 'project_root', None)):
+            if kid and kid not in ko_label_map:
+                ko_label_map[kid] = label or kid
+    except Exception:
+        pass
+
+    def _annotate(items: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
+        out = []
+        for it in items:
+            i = dict(it)
+            fid = i.get('id') or i.get(f'{kind}_id')
+            if isinstance(fid, str):
+                name = (pf_label_map.get(fid) if kind == 'pfam' else ko_label_map.get(fid))
+                if name:
+                    i['name'] = name
+            out.append(i)
+        return out
+
+    summary = {
+        "top_pfam": _annotate(_top(pf_c), 'pfam'),
+        "top_ko": _annotate(_top(ko_c), 'ko'),
+        "labels": {
+            "pfam": pf_label_map,
+            "ko": ko_label_map,
+        }
+    }
+
+    # Optional compact matrices for the top features (improves reporter UX)
+    top_pfam_ids = [x['id'] for x in summary['top_pfam']]
+    top_ko_ids = [x['id'] for x in summary['top_ko']]
+    def _matrix(count_rows: List[Dict[str, Any]], id_key: str, top_ids: List[str]) -> List[Dict[str, Any]]:
+        by_g: Dict[str, Dict[str, int]] = {}
+        for r in count_rows:
+            gid = str(r.get('genome_id'))
+            fid = str(r.get(id_key))
+            c = int(r.get('count') or 0)
+            if gid in (None, '', 'None') or fid not in top_ids:
+                continue
+            e = by_g.setdefault(gid, {k: 0 for k in top_ids})
+            e[fid] += c
+        # emit stable rows
+        out = []
+        for gid in sorted(by_g.keys()):
+            row = {"genome_id": gid}
+            row.update({fid: by_g[gid].get(fid, 0) for fid in top_ids})
+            out.append(row)
+        return out
+
+    per_genome_matrix = {
+        "pfam": _matrix(pfam_counts, 'pfam_id', top_pfam_ids),
+        "ko": _matrix(ko_counts, 'ko_id', top_ko_ids),
+        "feature_order": {"pfam": top_pfam_ids, "ko": top_ko_ids}
+    }
+
+    return {
+        "PerGenomeFeatureCounts": rows,
+        "FeatureProfileSummary": summary,
+        "PerGenomeTopMatrix": per_genome_matrix,
+    }
+
+
 def _materialize_gene_context(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     neighborhoods = inputs.get("neighborhoods") or []
     n_summary = inputs.get("neighborhood_summary")
@@ -1022,6 +1251,24 @@ register_operator(OperatorSpec(
 ))
 
 register_operator(OperatorSpec(
+    name="CountByIdsPerGenome",
+    inputs=["pfam_ids", "ko_ids"],
+    outputs=["pfam_counts", "ko_counts", "macro_result"],
+    params={"pfam_ids": "List[str] | null", "ko_ids": "List[str] | null", "genome_ids": "List[str] | null"},
+    run=_count_by_ids_per_genome,
+    description="Count proteins per genome matching provided PFAM/KO IDs.",
+))
+
+register_operator(OperatorSpec(
+    name="MaterializeFeatureProfile",
+    inputs=["pfam_counts", "ko_counts"],
+    outputs=["PerGenomeFeatureCounts", "FeatureProfileSummary", "PerGenomeTopMatrix"],
+    params={},
+    run=_materialize_feature_profile,
+    description="Package per-genome PFAM/KO counts, labeled summaries, and a compact top-feature matrix",
+))
+
+register_operator(OperatorSpec(
     name="MaterializeGeneContext",
     inputs=["neighborhoods", "neighborhood_summary"],
     outputs=["NeighborhoodSet", "NeighborhoodSummary"],
@@ -1037,6 +1284,15 @@ register_operator(OperatorSpec(
     params={},
     run=_materialize_pathway_profile,
     description="Package KO presence and pathway completeness into typed records",
+))
+
+register_operator(OperatorSpec(
+    name="MapKOsToPathways",
+    inputs=["ko_ids", "totals"],
+    outputs=["pathways"],
+    params={"top_n": "int (default 25)"},
+    run=_map_kos_to_pathways,
+    description="Map KO ids to KEGG pathway ids using totals mapping; returns a capped pathway list.",
 ))
 
 register_operator(OperatorSpec(

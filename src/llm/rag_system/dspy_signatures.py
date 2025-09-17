@@ -484,9 +484,26 @@ class MacroPlannerSignature(dspy.Signature):
     }
     Allowed operators are listed in operator_catalog (JSON). Do not invent operators.
 
+    DatasetContext & Scoping (keep queries in-bounds):
+    - dataset_context.genome_ids_sample lists up to 500 genomes for this session.
+    - When an operator/template accepts genome_ids and none are provided, DEFAULT to dataset_context.genome_ids_sample.
+    - Do not run unscoped/global queries unless explicitly intended by the user.
+
+    DB Template Slot‑Chaining Rules (avoid placeholder errors):
+    - Before emitting DBTemplateCall, consult db_templates_catalog for required slots and types; do not invent placeholders.
+    - If a slot expects a list (e.g., kos, pfams), pass a JSON array of canonical IDs (['Kxxxxx'], ['PFxxxxx']). A scalar like 'ko_tonb' is invalid.
+    - To chain IDs from a prior DBTemplateCall, bind the previous rows and map slots:
+      inputs: {"rows":"<binding_from_previous_step>"}
+      slots:  {"kos": {"from":"rows","field":"ko_id"}} (or {"pfams": {"from":"rows","field":"pfam_id"}})
+    - If the upstream result set is empty, do NOT call downstream count/templates with placeholders; propose a follow‑up instead.
+
+    Pathway completeness scope:
+    - Do NOT call ComputePathwayCompleteness with pathways=[]. Derive a focused list from KO keywords in the question (SearchKoCatalogFuzzy → MapKOsToPathways) or ask for user‑provided pathway IDs. Only compute ALL pathways when the plan explicitly sets allow_all_pathways=true.
+
     Planner rubric (breadth-first reminder):
     - Entity-first policy: Choose the minimal operator that directly answers the question for the target entity type (arrays, contigs, genes, pathways, counts). Avoid protein discovery when the question does not require proteins.
     - Use named DB templates or exact ID retrieval when the question refers to non-protein entities (arrays, contigs, coordinate windows). If identifiers are already available, use them directly; avoid catalog search unless necessary to resolve missing IDs.
+    - Cross-genome comparisons: When the prompt includes language like "compare ... across genomes" or asks for per‑genome incidence, prefer the FeatureProfile composite to compute per‑genome PFAM+KO counts from a keyword. You may include PathwayProfile in parallel when KO→pathway mapping is available.
     - Only use protein FeatureDiscovery when the plan explicitly provides a `feature_selector` with a non-empty keyword or explicit ID lists; do NOT infer protein keywords from the question text.
     - Anchor-first discipline: Prefer explicit identifier lists (e.g., accessions or canonical IDs) passed via `inputs` for rowset retrieval. If identifiers are unavailable, concise name tokens may be used — avoid long descriptions or overly broad generic terms.
     - Result formatting (facet-first): Prefer compact facet summaries over raw rows. Use AnnotationDiscovery with `output_profile='facet_summary'` and set quantity explicitly via `return_mode` and `top_k` per group. Only request rowsets when you truly need per-protein details.
@@ -556,6 +573,9 @@ class MacroPlannerSignature(dspy.Signature):
     question = dspy.InputField(desc="User question to answer with a macro plan")
     operator_catalog = dspy.InputField(desc="JSON catalog of allowed operators: names, inputs, outputs, params")
     db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and their required/optional slots")
+    dataset_context = dspy.InputField(desc="JSON dataset overview: genome_count, genome_ids_sample (≤500), file_count, file_examples (≤20)")
+    db_template_rules = dspy.InputField(desc="Compact rules for scoping and slot-chaining between DB templates")
+    dataset_context = dspy.InputField(desc="JSON dataset overview: genome_count, genome_ids_sample (≤500), file_count, file_examples (≤20)")
     constraints = dspy.InputField(desc="Constraints: max_steps, prefer native totals, include SM evidence if relevant")
     ko_reference = dspy.InputField(desc="Optional compact KO reference: one line per KO as 'Kxxxxx: definition' to assist keyword/operator selection")
     pfam_reference = dspy.InputField(desc="Optional compact PFAM reference: one line per PFAM as 'PFxxxxx: short_name; description' to assist keyword/operator selection")

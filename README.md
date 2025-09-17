@@ -219,6 +219,28 @@ python -m src.cli build -f 7 -t 7
 python -m src.build_kg.neo4j_bulk_loader --csv-dir data/stage07_kg/csv
 ```
 
+### Export, Share, and Serve a Portable Neo4j Bundle
+
+We now support exporting a self‑contained KG bundle you can share and restore elsewhere. The bundle includes a Neo4j `.dump` (primary artifact), optional CSVs, and restore scripts.
+
+Quick commands (module CLI; alias `genome-kg='python -m src.cli'` if you want a shortcut):
+
+```bash
+# Export (default: system engine; works best on local installs)
+python -m src.cli export --format both --out bundle/SRR6231169 --engine system
+
+# Validate the bundle (presence + checksums)
+python -m src.cli validate-bundle --bundle bundle/SRR6231169
+
+# Serve via Docker (loads dump, then starts neo4j:5)
+python -m src.cli serve --bundle bundle/SRR6231169 --engine docker
+```
+
+Notes:
+- Default export engine is `system`, which uses your local `neo4j-admin`. This often works even when a Docker‑based Neo4j is running elsewhere. If your system Neo4j service is currently serving the same database, you may still need to stop it before dumping.
+- The `docker` export engine requires the mounted store (data/neo4j) not be in use. Stop any running Neo4j containers first (e.g., `docker stop kg-neo4j neo4j-bennu || true`).
+- See `KG_EXPORT.md` for full details on bundle structure and restore options.
+
 **Step 4: Start Querying**
 ```bash
 # Basic information queries
@@ -311,12 +333,12 @@ python -m src.cli ask "Summarize RuBisCO across MAGs" \
 # Native Anthropic Sonnet 4 as reporter
 export ANTHROPIC_API_KEY=sk-ant-...
 python -m src.cli ask "Which genomes encode PRK (K00855)?" \
-  -reporter anthropic/claude-sonnet-4
+  -reporter anthropic/claude-4-sonnet
 
 # OpenRouter Sonnet 4 as reporter (OpenAI‑compatible endpoint)
 export OPENROUTER_API_KEY=sk-or-...
 python -m src.cli ask "Which genomes encode PRK (K00855)?" \
-  -reporter openrouter/claude-sonnet-4
+  -reporter openrouter/claude-4-sonnet
 
 # All three with GPT‑5 planner/reporter and mini IRB
 python -m src.cli ask "Map RuBisCO and PRK co-occurrence" \
@@ -330,8 +352,8 @@ Available models and aliases
 - GPT‑4.1 family (OpenAI):
   - `gpt-4.1-mini`, `4.1-mini` → `openai/gpt-4.1-mini`
 - Claude Sonnet 4 (Anthropic):
-  - Native: `anthropic/claude-sonnet-4` (uses `ANTHROPIC_API_KEY`)
-  - OpenRouter: `openrouter/claude-sonnet-4` (uses `OPENROUTER_API_KEY`, routed via OpenAI‑compatible endpoint)
+- Native: `anthropic/claude-4-sonnet` (uses `ANTHROPIC_API_KEY`)
+- OpenRouter: `openrouter/claude-4-sonnet` (uses `OPENROUTER_API_KEY`, routed via OpenAI‑compatible endpoint)
 
 Defaults (if flags omitted)
 
@@ -349,20 +371,20 @@ Notes and pitfalls
 
 - We do not pass `max_tokens`; DSPy may warn about truncation (internal defaults). This is expected.
 - GPT‑5 uses chat semantics (no responses/completions mode) to avoid endpoint mismatch.
-- For OpenRouter Sonnet 4 we force OpenAI‑compatible routing; use `openrouter/claude-sonnet-4`.
+- For OpenRouter Sonnet 4 we force OpenAI‑compatible routing; use `openrouter/claude-4-sonnet`.
 
 Force IRB / disable fast‑path (to exercise the reporter)
 
 ```bash
 export IRB_BYPASS_TOKENS=0   # Force IRB for small contexts
 export FAST_PATH_ENABLED=0   # Disable Macro Fast Path
-python -m src.cli ask "…" -planner gpt-5-high -irb 4.1-mini -reporter openrouter/claude-sonnet-4
+python -m src.cli ask "…" -planner gpt-5-high -irb 4.1-mini -reporter openrouter/claude-4-sonnet
 ```
 
 Troubleshooting
 
 - “Chat model not supported in v1/completions” → the planner is already configured to chat mode; avoid forcing responses mode for GPT‑5.
-- “Missing Anthropic API Key” while using OpenRouter → ensure `openrouter/claude-sonnet-4` (not `anthropic/...`) and `OPENROUTER_API_KEY` is set.
+- “Missing Anthropic API Key” while using OpenRouter → ensure `openrouter/claude-4-sonnet` (not `anthropic/...`) and `OPENROUTER_API_KEY` is set.
 - LiteLLM atexit logging error → we suppress heavy logging in code; if needed: `export LITELLM_LOGGING=False LITELLM_DISABLE_COLD_STORAGE=1`.
 
 ## Data Products

@@ -303,8 +303,22 @@ register_operator(OperatorSpec(
 
 # Utility: extract id lists from catalog hits
 def _extract_ids(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    pf_hits = inputs.get("pfam_catalog_hits") or []
-    ko_hits = inputs.get("ko_catalog_hits") or []
+    pf_hits_in = inputs.get("pfam_catalog_hits") or []
+    ko_hits_in = inputs.get("ko_catalog_hits") or []
+    # Accept either a list of hit dicts, or a bound result dict that contains them
+    if isinstance(pf_hits_in, dict):
+        pf_hits = pf_hits_in.get("pfam_catalog_hits") or []
+        # If id lists were already provided, pass them through as a fallback
+        passthrough_pf = pf_hits_in.get("pfam_ids") or []
+    else:
+        pf_hits = pf_hits_in
+        passthrough_pf = []
+    if isinstance(ko_hits_in, dict):
+        ko_hits = ko_hits_in.get("ko_catalog_hits") or []
+        passthrough_ko = ko_hits_in.get("ko_ids") or []
+    else:
+        ko_hits = ko_hits_in
+        passthrough_ko = []
     pf_ids: List[str] = []
     pf_terms: List[str] = []
     ko_ids: List[str] = []
@@ -327,6 +341,11 @@ def _extract_ids(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str,
                 ko_ids.append(kid)
     except Exception:
         pass
+    # Fallback: if we extracted none but passthrough lists exist, use them
+    if not pf_ids and isinstance(passthrough_pf, list):
+        pf_ids = [str(x).strip() for x in passthrough_pf if isinstance(x, (str,)) and str(x).strip()]
+    if not ko_ids and isinstance(passthrough_ko, list):
+        ko_ids = [str(x).strip() for x in passthrough_ko if isinstance(x, (str,)) and str(x).strip()]
     return {"pfam_ids": pf_ids, "pfam_terms": pf_terms, "ko_ids": ko_ids}
 
 register_operator(OperatorSpec(

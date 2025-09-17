@@ -370,17 +370,17 @@ def ask(
     planner: Optional[str] = typer.Option(
         None,
         "--planner", "-planner",
-        help="Override model for Planner step (e.g., gpt-5-high, gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-sonnet-4 [native], openrouter/claude-sonnet-4 [OpenRouter])"
+    help="Override model for Planner step (e.g., gpt-5-high, gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-4-sonnet [native], openrouter/claude-4-sonnet [OpenRouter])"
     ),
     irb: Optional[str] = typer.Option(
         None,
         "--irb", "-irb",
-        help="Override model for IRB editor step (e.g., gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-sonnet-4, openrouter/claude-sonnet-4)"
+    help="Override model for IRB editor step (e.g., gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-4-sonnet, openrouter/claude-4-sonnet)"
     ),
     reporter: Optional[str] = typer.Option(
         None,
         "--reporter", "-reporter",
-        help="Override model for final report synthesis (e.g., gpt-5-high, anthropic/claude-sonnet-4 [native], openrouter/claude-sonnet-4 [OpenRouter])"
+    help="Override model for final report synthesis (e.g., gpt-5-high, anthropic/claude-4-sonnet [native], openrouter/claude-4-sonnet [OpenRouter])"
     ),
     config_file: Optional[Path] = typer.Option(
         None,
@@ -494,6 +494,136 @@ def ask(
 def version():
     """Show version information."""
     console.print("Genome-to-LLM Knowledge Graph Pipeline v0.1.0")
+
+
+# === Export/Serve/Validate commands ===
+
+@app.command()
+def export(
+    out: Path = typer.Option(Path("bundle/out"), "--out", help="Output bundle directory"),
+    fmt: str = typer.Option("dump", "--format", help="dump|csv|both"),
+    engine: str = typer.Option("system", "--engine", help="docker|system"),
+):
+    """Export a portable KG bundle (.dump primary; CSV optional)."""
+    from .utils.kg_export import export_bundle
+    console.print("[cyan]Exporting KG bundle…[/cyan]")
+    manifest = export_bundle(out, fmt=fmt, engine=engine)
+    console.print(f"[green]✓ Bundle written:[/green] {out}")
+    console.print(f"Artifacts: {', '.join(list((manifest.get('artifacts') or {}).keys()))}")
+
+
+@app.command()
+def validate_bundle(
+    bundle: Path = typer.Option(Path("bundle/out"), "--bundle", help="Bundle directory"),
+):
+    """Basic validation for a bundle (presence + checksums)."""
+    import json, hashlib
+    mpath = bundle / 'manifest.json'
+    if not mpath.exists():
+        console.print(f"[red]manifest.json not found in {bundle}[/red]")
+        raise typer.Exit(1)
+    manifest = json.loads(mpath.read_text(encoding='utf-8'))
+    ok = True
+    arts = manifest.get('artifacts') or {}
+    for key, meta in arts.items():
+        p = meta.get('path')
+        if not p:
+            continue
+        f = (bundle / p)
+        if not f.exists():
+            console.print(f"[red]Missing artifact[/red]: {key} -> {f}")
+            ok = False
+            continue
+        if f.is_file() and 'sha256' in meta:
+            h = hashlib.sha256(f.read_bytes()).hexdigest()
+            if h != meta['sha256']:
+                console.print(f"[red]Checksum mismatch[/red]: {key}")
+                ok = False
+    if ok:
+        console.print("[green]✓ Bundle validated[/green]")
+    else:
+        raise typer.Exit(1)
+
+
+@app.command()
+def serve(
+    bundle: Path = typer.Option(Path("bundle/out"), "--bundle", help="Bundle directory"),
+    engine: str = typer.Option("docker", "--engine", help="docker|system"),
+    db_name: str = typer.Option("neo4j", "--db-name", help="Database name"),
+    port_bolt: int = typer.Option(7687, "--bolt", help="Bolt port"),
+    port_http: int = typer.Option(7474, "--http", help="HTTP port"),
+    auth: str = typer.Option("none", "--auth", help="none or user:pass"),
+    container: str = typer.Option("kg-neo4j", "--container", help="Docker container name"),
+):
+    """Serve a bundle via Docker (default) or system Neo4j."""
+    bundle = bundle.resolve()
+    dumps = bundle / 'dumps' / 'neo4j-5.x' / 'neo4j.dump'
+    csv_dir = bundle / 'csv'
+    if engine not in ("docker", "system"):
+        console.print("[red]engine must be docker or system[/red]")
+        raise typer.Exit(1)
+
+    def _auth_env() -> str:
+        return auth
+
+    if engine == 'docker':
+        # Stop/remove existing container if present
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+        # Prepare host data dir under bundle/data
+        data_dir = bundle / 'data'
+        data_dir.mkdir(parents=True, exist_ok=True)
+        img = os.getenv('GENOME_KG_NEO4J_IMAGE', 'neo4j:5')
+        if dumps.exists():
+            cmd = [
+                'docker','run','--rm',
+                '-v', f'{(bundle / "dumps" / "neo4j-5.x").resolve()}:/import',
+                '-v', f'{data_dir.resolve()}:/data',
+                img,
+                'neo4j-admin','database','load', db_name, '--from-path=/import','--overwrite-destination=true'
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                console.print(f"[red]Dump load failed:[/red] {res.stderr}")
+                raise typer.Exit(1)
+        elif csv_dir.exists():
+            console.print("[red]CSV-only serve not implemented in CLI yet. Use export dump or restore via CSV importer manually.[/red]")
+            raise typer.Exit(1)
+        else:
+            console.print("[red]No dump or csv in bundle[/red]")
+            raise typer.Exit(1)
+        # Start container
+        env = [f'-e','NEO4J_AUTH=' + _auth_env()]
+        run = [
+            'docker','run','-d','--name',container,
+            '-p', f'{port_http}:7474','-p', f'{port_bolt}:7687',
+            *env,
+            '-v', f'{data_dir.resolve()}:/data',
+            img
+        ]
+        res2 = subprocess.run(run, capture_output=True, text=True)
+        if res2.returncode != 0:
+            console.print(f"[red]Failed to start container:[/red] {res2.stderr}")
+            raise typer.Exit(1)
+        console.print(f"[green]✓ Serving[/green] bolt://localhost:{port_bolt} | http://localhost:{port_http}")
+        return
+    else:
+        # system neo4j-admin load + start
+        if dumps.exists():
+            res = subprocess.run(['neo4j-admin','database','load',db_name,f'--from-path={(bundle/"dumps"/"neo4j-5.x").as_posix()}','--overwrite-destination=true'], capture_output=True, text=True)
+            if res.returncode != 0:
+                console.print(f"[red]system load failed:[/red] {res.stderr}")
+                raise typer.Exit(1)
+        elif csv_dir.exists():
+            console.print("[red]CSV-only serve not implemented in CLI yet. Use dump format for system serve.[/red]")
+            raise typer.Exit(1)
+        else:
+            console.print("[red]No dump or csv in bundle[/red]")
+            raise typer.Exit(1)
+        res2 = subprocess.run(['neo4j','start'], capture_output=True, text=True)
+        if res2.returncode != 0:
+            console.print(f"[red]neo4j start failed:[/red] {res2.stderr}")
+            raise typer.Exit(1)
+        console.print("[green]✓ Neo4j started[/green]")
 
 
 if __name__ == "__main__":

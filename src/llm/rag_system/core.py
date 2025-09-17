@@ -337,9 +337,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             ko_ref = pf_ref = ""
                     def _db_templates_catalog() -> dict:
                         # Expose a minimal catalog of named templates and slots to discourage inventing names
+                        # Hide templates that are redundant/brittle for keyword search on this dataset (e.g., kofam_search relies on KO descriptions not present in the graph)
                         from ..kg.cypher_templates import registry as _tpl
+                        HIDE = {"kofam_search", "pfam_search"}
                         out = {"templates": []}
                         for name, spec in _tpl.SPECS.items():
+                            if name in HIDE:
+                                continue
                             try:
                                 out["templates"].append({
                                     "name": name,
@@ -350,6 +354,66 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             except Exception:
                                 continue
                         return out
+
+                    def _build_dataset_context() -> dict:
+                        ctx: dict = {
+                            'genome_count': 0,
+                            'genome_ids_sample': [],
+                            'file_count': 0,
+                            'file_examples': [],
+                            'dataset_id': '',
+                        }
+                        # Try DB first
+                        try:
+                            if self.neo4j_processor and self.neo4j_processor.driver:
+                                with self.neo4j_processor.driver.session() as s:
+                                    rows = list(s.run("MATCH (g:Genome) RETURN g.id AS id ORDER BY g.id"))
+                                    gids = [str(r['id']) for r in rows if r and r.get('id')]
+                                    ctx['genome_count'] = len(gids)
+                                    ctx['genome_ids_sample'] = gids[:500]
+                        except Exception:
+                            pass
+                        # Fallback to CSV if empty
+                        try:
+                            if ctx['genome_count'] == 0:
+                                import csv
+                                p = os.path.join('data','stage07_kg','csv','genomes.csv')
+                                if os.path.exists(p):
+                                    with open(p, 'r', encoding='utf-8') as f:
+                                        rdr = csv.DictReader(f)
+                                        gids = [row.get('id:ID') or row.get('id') for row in rdr]
+                                        gids = [g for g in gids if g]
+                                        ctx['genome_count'] = len(gids)
+                                        ctx['genome_ids_sample'] = gids[:500]
+                        except Exception:
+                            pass
+                        # File inventory (best effort): stage00_prepared or data/raw
+                        try:
+                            files = []
+                            for root in ('data/stage00_prepared','data/raw'):
+                                if os.path.isdir(root):
+                                    for name in os.listdir(root):
+                                        if name.lower().endswith(('.fna','.fa','.fasta','.fnn','.faa')):
+                                            files.append(os.path.join(root, name))
+                            ctx['file_count'] = len(files)
+                            ctx['file_examples'] = files[:20]
+                        except Exception:
+                            pass
+                        # Dataset id heuristic: from cwd folder name or genomes.csv
+                        try:
+                            ctx['dataset_id'] = os.path.basename(os.getcwd())
+                        except Exception:
+                            ctx['dataset_id'] = ''
+                        # Persist alongside session notes for transparency
+                        try:
+                            if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                sdir = self.note_keeper.synthesis_notes_path
+                                os.makedirs(sdir, exist_ok=True)
+                                with open(os.path.join(sdir, 'dataset_context.json'), 'w', encoding='utf-8') as f_dc:
+                                    json.dump(ctx, f_dc, indent=2)
+                        except Exception:
+                            pass
+                        return ctx
 
                     def planner_call_inputs():
                         hard_constraints = (
@@ -377,10 +441,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         # Restrict planner-visible catalog to composites only
                         planner_catalog = planner_catalog_overlay()
                         dbtpl_catalog = _db_templates_catalog()
+                        dataset_ctx = _build_dataset_context()
+                        dbtpl_rules = (
+                            "DatasetContext & Scoping: default genome_ids to dataset_context.genome_ids_sample (≤500) when absent; avoid global queries unless explicitly intended. "
+                            "DB Template Slot‑Chaining: consult db_templates_catalog for required slots and types; list slots require JSON arrays of canonical IDs (['Kxxxxx'], ['PFxxxxx']); "
+                            "to chain from a prior DBTemplateCall, bind rows and map slots (inputs.rows + slots mapping, e.g., {'kos':{'from':'rows','field':'ko_id'}}); if upstream is empty, do not call downstream templates with placeholders."
+                        )
                         return dict(
                             question=question,
                             operator_catalog=json.dumps(planner_catalog),
                             db_templates_catalog=json.dumps(dbtpl_catalog),
+                            dataset_context=json.dumps(dataset_ctx),
+                            db_template_rules=dbtpl_rules,
                             constraints=hard_constraints,
                             ko_reference=ko_ref,
                             pfam_reference=pf_ref,
@@ -393,6 +465,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         "ExtractIdsFromCatalogHits": "FeatureDiscovery",
                         "QueryProteinsByIds": "FeatureDiscovery",
                         "AnnotationDiscovery": "FeatureDiscovery",
+                        "CountByIdsPerGenome": "FeatureProfile",
                         "NeighborhoodContext": "GeneContext",
                         "FetchPresentKOs": "PathwayProfile",
                         "LoadKoPathwayTotals": "PathwayProfile",
@@ -400,8 +473,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         "QueryCazymesByGenome": "ModuleProfile",
                         "CountCazymeFamilies": "ModuleProfile",
                         "QueryBGCsByGenome": "ModuleProfile",
-                        "AssessEvidence": "EvidenceAndNext",
-                        "ProposeFollowup": "EvidenceAndNext",
+                        # EvidenceAndNext removed from planner toolset; keep primitives usable directly
                     }
 
                     def _rewrite_to_composites(plan_dict: dict) -> dict:
@@ -434,14 +506,8 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 expanded.extend(substeps)
                             else:
                                 expanded.append(st)
-                        # Guardrail: if no retrieval step exists, insert a minimal DB template retrieval
-                        try:
-                            retrieval_ops = {"ExecuteDBTemplate", "NeighborhoodContext", "FeatureDiscovery", "MaterializeModuleProfile", "MaterializePathwayProfile"}
-                            has_retrieval = any(((s or {}).get('op') in retrieval_ops) for s in expanded)
-                            if not has_retrieval:
-                                expanded = [{"op": "ExecuteDBTemplate", "params": {"name": "arrays_per_genome", "slots": {}}}] + expanded
-                        except Exception:
-                            pass
+                        # Note: do not inject hard-coded retrieval steps. If the plan lacks retrieval,
+                        # allow downstream validation/retry to handle it explicitly.
                         plan_dict['steps'] = expanded
                         return plan_dict
 
@@ -582,85 +648,104 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 return False
 
                         def _collect_macro_raw_items(env_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+                            """Collect all macro-usable bindings with guardrails (caps/sampling).
+
+                            - Include any list[dict] rowsets (sample to cap), planner-produced items (type present), and small dicts as summaries.
+                            - Deduplicate discovered_proteins across bindings by (genome_id, protein_id).
+                            - Skip obvious debug/internal keys and huge scalars.
+                            """
+                            MAX_ROWS = 500
+                            MAX_BINDINGS = 50
+                            MAX_DICT_FIELDS = 200
+                            MAX_CELL_CHARS = 512
+
                             items: List[Dict[str, Any]] = []
-                            seen_proteins: set = set()
+                            seen_proteins: set[tuple[str, str]] = set()
+                            added = 0
+
+                            def _truncate_cell(val):
+                                try:
+                                    s = str(val)
+                                except Exception:
+                                    return val
+                                return (s[:MAX_CELL_CHARS] + '…') if len(s) > MAX_CELL_CHARS else s
+
                             try:
-                                # Only include whitelisted list bindings to avoid massive context
-                                allowed_list_keys = {
-                                    'discovered_proteins',
-                                    'pathway_completeness',
-                                    'bgcs',
-                                    'cazymes',
-                                    'cazyme_family_counts',
-                                    # Allow direct DB template results to be surfaced in IRB
-                                    'structured_data',
-                                }
                                 for k, v in (env_dict or {}).items():
-                                    if isinstance(v, list):
-                                        if k in allowed_list_keys:
-                                            rows = v
-                                            # Deduplicate discovered_proteins globally across items
-                                            if k == 'discovered_proteins':
-                                                filtered = []
-                                                dropped = 0
-                                                for r in rows:
-                                                    gid = str(r.get('genome_id',''))
-                                                    pid = str(r.get('protein_id',''))
-                                                    sig = (gid, pid)
-                                                    if sig in seen_proteins:
-                                                        dropped += 1
-                                                        continue
-                                                    seen_proteins.add(sig)
-                                                    filtered.append(r)
-                                                rows = filtered
-                                                if dropped:
-                                                    logger.info(f"Context trim: dropped {dropped} duplicate discovered_proteins rows (binding='{k}')")
-                                            items.append({'type': 'macro_result', 'name': k, 'rows': rows})
-                                    elif isinstance(v, dict):
-                                        # Allow planner-produced structured items (e.g., followup_request)
-                                        if isinstance(v.get('type'), str):
-                                            items.append(v)
-                                        # Also extract common list payloads from bound dicts
-                                        for key in ('discovered_proteins',):
-                                            rows2 = v.get(key)
-                                            if isinstance(rows2, list) and rows2:
-                                                # Deduplicate globally
-                                                filtered2 = []
-                                                dropped2 = 0
-                                                for r in rows2:
-                                                    gid = str(r.get('genome_id',''))
-                                                    pid = str(r.get('protein_id',''))
-                                                    sig = (gid, pid)
-                                                    if sig in seen_proteins:
-                                                        dropped2 += 1
-                                                        continue
-                                                    seen_proteins.add(sig)
-                                                    filtered2.append(r)
-                                                if dropped2:
-                                                    logger.info(f"Context trim: dropped {dropped2} duplicate discovered_proteins rows (binding='{k}.{key}')")
-                                                items.append({'type': 'macro_result', 'name': f"{k}.{key}", 'rows': filtered2, 'format': v.get('_format')})
-                                        # Pass facet_summary through as macro_result rows for KO/PFAM facets
+                                    if added >= MAX_BINDINGS:
+                                        break
+                                    if not k or k.startswith('__'):
+                                        continue
+                                    # Planner-produced structured item
+                                    if isinstance(v, dict) and isinstance(v.get('type'), str):
+                                        items.append(v)
+                                        added += 1
+                                        continue
+                                    # Rowsets: list of dicts
+                                    if isinstance(v, list) and v and all(isinstance(r, dict) for r in v):
+                                        rows = v
+                                        # Dedup discovered_proteins
+                                        if k == 'discovered_proteins':
+                                            filtered = []
+                                            dropped = 0
+                                            for r in rows:
+                                                gid = str(r.get('genome_id',''))
+                                                pid = str(r.get('protein_id',''))
+                                                sig = (gid, pid)
+                                                if sig in seen_proteins:
+                                                    dropped += 1
+                                                    continue
+                                                seen_proteins.add(sig)
+                                                filtered.append(r)
+                                            rows = filtered
+                                            if dropped:
+                                                logger.info(f"Context trim: dropped {dropped} duplicate discovered_proteins rows (binding='{k}')")
+                                        row_count = len(rows)
+                                        sample = rows[:MAX_ROWS]
+                                        # Truncate large string cells for safety
+                                        for r in sample:
+                                            for ck, cv in list(r.items()):
+                                                if isinstance(cv, str) and len(cv) > MAX_CELL_CHARS:
+                                                    r[ck] = _truncate_cell(cv)
+                                        items.append({'type': 'macro_result', 'name': k, 'rows': sample, 'row_count': row_count, 'sampled': row_count > MAX_ROWS})
+                                        added += 1
+                                        continue
+                                    # Dicts: include summaries or nested rowsets
+                                    if isinstance(v, dict):
+                                        # Common nested payloads, e.g., PresentKOsByGenome, CompletenessMatrix
+                                        extracted = False
+                                        for key, val in v.items():
+                                            if isinstance(val, list) and val and all(isinstance(r, dict) for r in val):
+                                                row_count = len(val)
+                                                sample = val[:MAX_ROWS]
+                                                items.append({'type': 'macro_result', 'name': f"{k}.{key}", 'rows': sample, 'row_count': row_count, 'sampled': row_count > MAX_ROWS})
+                                                added += 1
+                                                extracted = True
+                                                if added >= MAX_BINDINGS:
+                                                    break
+                                        if added >= MAX_BINDINGS:
+                                            break
+                                        if extracted:
+                                            continue
+                                        # Small dict summary
                                         try:
-                                            fs = v.get('facet_summary')
-                                            if isinstance(fs, dict):
-                                                kos = fs.get('kos')
-                                                if isinstance(kos, list) and kos:
-                                                    rows_k = []
-                                                    for it in kos:
-                                                        if isinstance(it, dict) and it.get('id'):
-                                                            rows_k.append({'kos': [str(it['id'])], 'count': int(it.get('count', 0) or 0)})
-                                                    if rows_k:
-                                                        items.append({'type': 'macro_result', 'name': f"{k}.facet_kos", 'rows': rows_k})
-                                                pfs = fs.get('pfams')
-                                                if isinstance(pfs, list) and pfs:
-                                                    rows_p = []
-                                                    for it in pfs:
-                                                        if isinstance(it, dict) and it.get('id'):
-                                                            rows_p.append({'pfams': [str(it['id'])], 'count': int(it.get('count', 0) or 0)})
-                                                    if rows_p:
-                                                        items.append({'type': 'macro_result', 'name': f"{k}.facet_pfams", 'rows': rows_p})
+                                            keys = list(v.keys())
+                                            items.append({'type': 'macro_result', 'name': k, 'dict_summary': {'len': len(keys), 'keys_sample': keys[:min(len(keys), MAX_DICT_FIELDS)]}})
+                                            added += 1
                                         except Exception:
                                             pass
+                                        continue
+                                    # Scalars or other lists: skip or summarize length
+                                    if isinstance(v, list):
+                                        items.append({'type': 'macro_result', 'name': k, 'list_len': len(v)})
+                                        added += 1
+                                        continue
+                                    # Strings/numbers: skip huge scalars
+                                    if isinstance(v, (str, int, float)):
+                                        s = _truncate_cell(v)
+                                        items.append({'type': 'macro_result', 'name': k, 'value': s})
+                                        added += 1
+                                        continue
                             except Exception:
                                 pass
                             return items
@@ -677,7 +762,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             except Exception:
                                 pass
                             logger.info("🧭 MacroPlanner: executing %d steps (attempt %d/%d)", len(plan.get('steps', [])), attempts + 1, max_attempts)
-                            ctx = OperatorContext(neo4j_driver=self.neo4j_processor.driver, project_root=str(getattr(self, 'project_root', '')))
+                            # Inject dataset_context for operator default scoping
+                            ds_ctx = {}
+                            try:
+                                # Reuse the builder above if available
+                                ds_ctx = _build_dataset_context()
+                            except Exception:
+                                ds_ctx = {}
+                            ctx = OperatorContext(neo4j_driver=self.neo4j_processor.driver, project_root=str(getattr(self, 'project_root', '')), dataset_context=ds_ctx)
                             env = execute_plan(plan, ctx)
                             # Merge environments (last write wins on same keys)
                             try:
