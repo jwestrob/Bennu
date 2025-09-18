@@ -382,6 +382,16 @@ def ask(
         "--reporter", "-reporter",
     help="Override model for final report synthesis (e.g., gpt-5-high, anthropic/claude-4-sonnet [native], openrouter/claude-4-sonnet [OpenRouter])"
     ),
+    ci_mode: Optional[str] = typer.Option(
+        None,
+        "--ci",
+        help="Code interpreter mode for finalizer: auto|always|never (default: auto)"
+    ),
+    ci_model: Optional[str] = typer.Option(
+        None,
+        "--ci-model",
+        help="Label for the finalizer analysis engine (printed in logs), e.g., matplotlib|python-ci"
+    ),
     config_file: Optional[Path] = typer.Option(
         None,
         "--config", "-c",
@@ -430,7 +440,16 @@ def ask(
             setattr(config, 'irb_model', irb)
         if reporter:
             setattr(config, 'reporter_model', reporter)
-        
+        # CI mode override
+        if ci_mode:
+            mode = ci_mode.strip().lower()
+            if mode in ('auto','always','never'):
+                setattr(config, 'CI_MODE', mode)
+                # Hint: enable fast-path CI only when not 'never'
+                setattr(config, 'USE_CODE_INTERPRETER_IN_FAST_PATH', mode != 'never')
+        if ci_model:
+            setattr(config, 'CI_MODEL', ci_model.strip())
+
         # Validate configuration
         status = config.validate_configuration()
         if not all(status.values()):

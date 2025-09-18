@@ -194,6 +194,12 @@ def config(
 async def _process_question(question: str, config: LLMConfig) -> dict:
     """Process a single question."""
     rag = GenomicRAG(config)
+    # Print session ID at start so users can tail artifacts immediately
+    try:
+        if hasattr(rag, 'note_keeper') and rag.note_keeper is not None:
+            console.print(f"📝 Session ID (start): {rag.note_keeper.session_id}")
+    except Exception:
+        pass
     
     try:
         response = await rag.ask(question)

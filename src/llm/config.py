@@ -60,6 +60,8 @@ class LLMConfig(BaseModel):
     USE_MFP_PLANNER: bool = Field(default=True, description="Enable agent-designed macro plan (operators) executed by Macro Fast Path.")
     USE_CODE_INTERPRETER_IN_FAST_PATH: bool = Field(default=False, description="If true, run code interpreter post-processing in fast path when supported.")
     CODE_INTERPRETER_URL: str = Field(default="http://localhost:8000", description="Base URL for code interpreter service")
+    CI_MODE: str = Field(default="auto", description="Code interpreter mode for finalizer: 'auto'|'always'|'never'")
+    CI_MODEL: str = Field(default="matplotlib", description="Finalizer analysis engine label (for printouts/logging): e.g., 'matplotlib', 'polars', 'python-ci'")
     USE_CI_TOTALS_FOR_PATHWAYS: bool = Field(default=False, description="If true, always compute pathway totals via code interpreter (ko_pathway.list) rather than Neo4j graph totals.")
     USE_NATIVE_TOTALS_FOR_PATHWAYS: bool = Field(default=True, description="If true, compute pathway totals natively from ko_pathway.list (recommended). Overrides DB totals.")
     SKEPTIC_ENABLED: bool = Field(default=True, description="Run auditor after costly batched ops; may request mini-model adjudication on anomaly.")
@@ -182,7 +184,14 @@ class LLMConfig(BaseModel):
             config_data['USE_NATIVE_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
         if os.getenv('USE_CI_TOTALS_FOR_PATHWAYS') is not None:
             config_data['USE_CI_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_CI_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
-        
+        # Code interpreter mode
+        if os.getenv('CI_MODE') is not None:
+            _ci = os.getenv('CI_MODE').strip().lower()
+            if _ci in ('auto','always','never'):
+                config_data['CI_MODE'] = _ci
+        if os.getenv('CI_MODEL') is not None:
+            config_data['CI_MODEL'] = os.getenv('CI_MODEL').strip()
+
         return cls(**config_data)
     
     @classmethod

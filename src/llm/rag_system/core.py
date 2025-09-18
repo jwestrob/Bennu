@@ -893,6 +893,229 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         except Exception as _env_save_err:
                             logger.info(f"MacroPlanner env save skipped: {_env_save_err}")
 
+                        # Write analysis payload (skeleton) and matrices to session folder for downstream compute/viz
+                        try:
+                            if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                                import csv as _csv
+                                _sid_dir = self.note_keeper.session_path
+                                os.makedirs(_sid_dir, exist_ok=True)
+                                _mat_dir = os.path.join(_sid_dir, 'matrices')
+                                os.makedirs(_mat_dir, exist_ok=True)
+                                _plots_dir = os.path.join(_sid_dir, 'plots')
+                                os.makedirs(_plots_dir, exist_ok=True)
+                                # Build feature_profile section
+                                fp = {}
+                                if isinstance(combined_env.get('PerGenomeFeatureCounts'), list):
+                                    fp['per_genome_counts'] = combined_env.get('PerGenomeFeatureCounts')
+                                if isinstance(combined_env.get('FeatureProfileSummary'), dict):
+                                    fp['summary'] = combined_env.get('FeatureProfileSummary')
+                                if isinstance(combined_env.get('PerGenomeTopMatrix'), dict):
+                                    fp['per_genome_top_matrix'] = combined_env.get('PerGenomeTopMatrix')
+                                    # Emit CSVs for matrices if present
+                                    try:
+                                        mt = combined_env.get('PerGenomeTopMatrix') or {}
+                                        order = (mt.get('feature_order') or {})
+                                        # PFAM matrix
+                                        pf_rows = mt.get('pfam') or []
+                                        pf_cols = order.get('pfam') or []
+                                        if pf_rows and pf_cols:
+                                            pf_path = os.path.join(_mat_dir, 'per_genome_top_pfam.csv')
+                                            with open(pf_path, 'w', newline='', encoding='utf-8') as f:
+                                                w = _csv.writer(f)
+                                                w.writerow(['genome_id'] + list(pf_cols))
+                                                for r in pf_rows:
+                                                    row = [r.get('genome_id')] + [int(r.get(c, 0)) for c in pf_cols]
+                                                    w.writerow(row)
+                                    except Exception as _pfw:
+                                        logger.info(f"Matrix PFAM CSV write skipped: {_pfw}")
+                                    try:
+                                        mt = combined_env.get('PerGenomeTopMatrix') or {}
+                                        order = (mt.get('feature_order') or {})
+                                        ko_rows = mt.get('ko') or []
+                                        ko_cols = order.get('ko') or []
+                                        if ko_rows and ko_cols:
+                                            ko_path = os.path.join(_mat_dir, 'per_genome_top_ko.csv')
+                                            with open(ko_path, 'w', newline='', encoding='utf-8') as f:
+                                                w = _csv.writer(f)
+                                                w.writerow(['genome_id'] + list(ko_cols))
+                                                for r in ko_rows:
+                                                    row = [r.get('genome_id')] + [int(r.get(c, 0)) for c in ko_cols]
+                                                    w.writerow(row)
+                                    except Exception as _kow:
+                                        logger.info(f"Matrix KO CSV write skipped: {_kow}")
+                                # Build functional_profile section
+                                func = {}
+                                for key_src, key_dst in (
+                                    ('PresentKOsByGenome','present_kos_by_genome'),
+                                    ('CompletenessMatrix','completeness_matrix'),
+                                    ('CompletenessSummary','completeness_summary'),
+                                    ('CAZyRowsByGenome','cazy_rows'),
+                                    ('CazymeFamilyCounts','cazy_counts'),
+                                    ('BGCsByGenome','bgcs'),
+                                ):
+                                    if key_src in combined_env:
+                                        func[key_dst] = combined_env.get(key_src)
+                                # Write completeness matrix CSV if present
+                                try:
+                                    cm = combined_env.get('CompletenessMatrix') or []
+                                    if isinstance(cm, list) and cm:
+                                        cm_path = os.path.join(_mat_dir, 'pathway_completeness.csv')
+                                        cols = ['genome_id','pathway_id','pathway_name','present_kos','total_kos','completeness']
+                                        with open(cm_path, 'w', newline='', encoding='utf-8') as f:
+                                            w = _csv.DictWriter(f, fieldnames=cols)
+                                            w.writeheader()
+                                            for r in cm:
+                                                try:
+                                                    w.writerow({k: r.get(k) for k in cols})
+                                                except Exception:
+                                                    pass
+                                except Exception as _cmw:
+                                    logger.info(f"Completeness CSV write skipped: {_cmw}")
+
+                                # Dataset context
+                                try:
+                                    ds_ctx = _build_dataset_context()
+                                except Exception:
+                                    ds_ctx = {}
+
+                                payload = {
+                                    'question': question,
+                                    'dataset_context': ds_ctx,
+                                    'plan': plan,
+                                    'feature_profile': fp,
+                                    'functional_profile': func,
+                                    'provenance': combined_env.get('__tool_calls') or [],
+                                    'omitted': [],
+                                }
+                                with open(os.path.join(_sid_dir, 'analysis_payload.json'), 'w', encoding='utf-8') as f_pl:
+                                    json.dump(payload, f_pl, indent=2, default=str)
+                                logger.info("📝 Analysis payload written to session folder")
+                        except Exception as _ap_err:
+                            logger.info(f"Analysis payload save skipped: {_ap_err}")
+
+                        # Finalizer scaffold: CI mode acknowledgment (no-op)
+                        try:
+                            mode = getattr(self.config, 'CI_MODE', 'auto')
+                            # Decide whether to run CI: mode gating + presence of matrices or 'plot/visualize' hint
+                            def _has_matrices(env):
+                                return bool(env.get('PerGenomeTopMatrix') or env.get('CompletenessMatrix'))
+                            def _wants_plots(q: str) -> bool:
+                                ql = (q or '').lower()
+                                return any(k in ql for k in ('plot','visualize','heatmap','bar chart','cluster','figure'))
+                            should_ci = (mode == 'always') or (mode == 'auto' and (_has_matrices(combined_env) or _wants_plots(question)))
+                            if mode == 'never':
+                                logger.info("🧮 Finalizer (CI) mode: never — skipping code interpreter")
+                            elif not should_ci:
+                                logger.info("🧮 Finalizer (CI) mode: auto — conditions not met; skipping")
+                            else:
+                                # Health check
+                                try:
+                                    from .external_tools import check_code_interpreter_health, code_interpreter_tool
+                                    healthy = await check_code_interpreter_health(getattr(self.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000'))  # type: ignore
+                                except Exception as _hc:
+                                    healthy = False
+                                    logger.info(f"CI health check failed: {_hc}")
+                                if not healthy:
+                                    logger.info("🧮 Code interpreter unavailable (service not running); skipping")
+                                    try:
+                                        console.print("⚠️ [dim]Finalizer: code interpreter unavailable; skipping[/dim]")
+                                    except Exception:
+                                        pass
+                                else:
+                                    # Build simple deterministic analysis code
+                                    try:
+                                        sid_dir = self.note_keeper.session_path if self.note_keeper else Path('data/session_notes/_unknown')
+                                        sid_value = self.note_keeper.session_id if self.note_keeper else '_unknown'
+                                    except Exception:
+                                        from pathlib import Path as _Path
+                                        sid_dir = _Path('data/session_notes/_unknown')
+                                        sid_value = '_unknown'
+                                    # Container-visible payload path (host data/ is mounted at /app/data)
+                                    host_payload = os.path.join(str(sid_dir), 'analysis_payload.json')
+                                    container_payload = os.path.join('/app', 'data', 'session_notes', sid_value, 'analysis_payload.json')
+                                    # Write plots into interpreter working dir (container); we will list them in report_v2
+                                    container_plots = '.'
+                                    from .finalizer import build_ci_code
+                                    code = build_ci_code(question, container_payload, container_plots)
+
+                                    # Paths already injected by build_ci_code; no replacements needed here
+                                    # Save the exact code sent to the interpreter for audit/debug
+                                    try:
+                                        code_path = os.path.join(str(sid_dir), 'ci_code.py')
+                                        with open(code_path, 'w', encoding='utf-8') as _cf:
+                                            _cf.write(code)
+                                        logger.info(f"📝 Saved CI code: {code_path}")
+                                    except Exception as _cse:
+                                        logger.info(f"CI code save skipped: {_cse}")
+                                    # Execute CI (and download artifacts to host plots folder)
+                                    session_id = self.note_keeper.session_id if self.note_keeper else 'session'
+                                    host_plots_dir = os.path.join(str(sid_dir), 'plots')
+                                    try:
+                                        console.print(f"🧮 Finalizer: calling code interpreter (model={getattr(self.config,'CI_MODEL','matplotlib')}, url={getattr(self.config,'CODE_INTERPRETER_URL','http://localhost:8000')})")
+                                    except Exception:
+                                        pass
+                                    # Defaults for CI context visible to reporter
+                                    ci_disp = None
+                                    ci_files: list[str] = []
+                                    ci_downloaded: list[str] = []
+                                    result = await code_interpreter_tool(code, session_id=session_id, timeout=int(getattr(self.config, 'timeout_seconds', 30)), download_dir=host_plots_dir)  # type: ignore
+                                    # Persist amended report (basic)
+                                    try:
+                                        disp = result.get('display_text') if isinstance(result, dict) else None
+                                        ci_disp = disp
+                                        stderr = None
+                                        try:
+                                            sd = (result or {}).get('structured_data') or []
+                                            if isinstance(sd, list) and sd:
+                                                stderr = (sd[0] or {}).get('stderr')
+                                        except Exception:
+                                            stderr = None
+                                        files = []
+                                        downloaded = []
+                                        try:
+                                            summ = (result or {}).get('summary') or {}
+                                            fc = summ.get('files_created') or []
+                                            if isinstance(fc, list):
+                                                files = fc
+                                            dl = summ.get('downloaded_files') or []
+                                            if isinstance(dl, list):
+                                                downloaded = dl
+                                        except Exception:
+                                            files = []
+                                        # expose to outer scope for reporter context
+                                        ci_files = list(files)
+                                        ci_downloaded = list(downloaded)
+                                        r2 = os.path.join(str(sid_dir), 'report_v2.md')
+                                        with open(r2, 'w', encoding='utf-8') as f:
+                                            f.write('# Amended Report (Code Analysis)\n\n')
+                                            f.write('## Code Interpreter Output\n\n')
+                                            if disp:
+                                                f.write('````\n'+disp+'\n````\n\n')
+                                            if stderr:
+                                                f.write('## Code Interpreter Stderr\n\n')
+                                                f.write('````\n'+stderr+'\n````\n\n')
+                                            if files:
+                                                f.write('## Generated Files (service working dir)\n')
+                                                for name in files:
+                                                    f.write(f'- {name}\n')
+                                            if downloaded:
+                                                f.write('\n## Downloaded Files (host)\n')
+                                                for path in downloaded:
+                                                    f.write(f'- {path}\n')
+                                        logger.info(f"📝 Amended report written: {r2}")
+                                        # Console summary
+                                        try:
+                                            if downloaded:
+                                                console.print(f"📈 [green]Downloaded {len(downloaded)} file(s) to[/green] {host_plots_dir}")
+                                            else:
+                                                console.print(f"ℹ️ [dim]No files downloaded; see 'Generated Files' in report_v2.md[/dim]")
+                                        except Exception:
+                                            pass
+                                    except Exception as _r2e:
+                                        logger.info(f"Amended report save skipped: {_r2e}")
+                        except Exception as _ci_err:
+                            logger.info(f"Finalizer (CI) skipped/failed: {_ci_err}")
+
                         # Decide whether to bypass IRB based on token budget (small contexts go straight to final synthesis)
                         def _estimate_tokens(s: str) -> int:
                             try:
@@ -951,6 +1174,30 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             except Exception:
                                 return 30000
 
+                        # Add CI artifacts note for the reporter to reference visual outputs
+                        ci_section = ""
+                        try:
+                            sid_val = self.note_keeper.session_id if self.note_keeper else "session"
+                            plots_dir_host = os.path.join(str(self.note_keeper.session_path) if self.note_keeper else 'data/session_notes', sid_val, 'plots')
+                            if 'ci_files' in locals() or 'ci_downloaded' in locals():
+                                files_list = "\n".join([f"- {os.path.basename(p)}" for p in (ci_files or [])])
+                                downloaded_list = "\n".join([f"- {p}" for p in (ci_downloaded or [])])
+                                guidance = (
+                                    "Reporter guidance: Visual assets were generated by the code interpreter. "
+                                    "Prefer referencing the plots rather than reprinting raw matrices; summarize key patterns and clustering, "
+                                    "and include the plot file paths."
+                                )
+                                ci_section = (
+                                    "\n\n=== CODE INTERPRETER ARTIFACTS ===\n"
+                                    f"Session: {sid_val}\n"
+                                    f"Plots directory (host): {plots_dir_host}\n"
+                                    + ("Generated files (service):\n" + files_list + "\n" if (ci_files or []) else "")
+                                    + ("Downloaded files (host):\n" + downloaded_list + "\n" if (ci_downloaded or []) else "")
+                                    + guidance + "\n"
+                                )
+                        except Exception:
+                            ci_section = ""
+
                         raw_tokens = _estimate_tokens(raw_context_json)
                         fits_window = raw_tokens <= max(1, _reporter_cap() - 1000)
                         should_bypass_irb = (not getattr(self.config, 'IRB_ENABLED', True)) or (raw_tokens <= bypass_cap and fits_window)
@@ -960,7 +1207,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
 
                         if should_bypass_irb:
                             # Bypass IRB: synthesize directly from compact JSON context
-                            report_context = (task_graph_text + "\n\nCONTEXT (JSON):\n" + raw_context_json)
+                            report_context = (task_graph_text + ci_section + "\n\nCONTEXT (JSON):\n" + raw_context_json)
                         else:
                             # IRB (Incremental Report Builder) path
                             try:
@@ -982,7 +1229,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             if getattr(irb, 'failed', False):
                                 raise RuntimeError(f"IRB bug-out: {getattr(irb, 'fail_reason', 'unknown')}")
                             irb_markdown = _to_md(doc)
-                            report_context = (task_graph_text + "\n\n" + irb_markdown)
+                            report_context = (task_graph_text + ci_section + "\n\n" + irb_markdown)
                             # Persist IRB outputs for inspection under session notes
                             try:
                                 if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
@@ -1051,6 +1298,14 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 final_answer = (
                                     "Report synthesis unavailable; returning compact context.\n\n" + report_context[:20000]
                                 )
+                        # If CI produced local plots, prepend a concise artifacts note
+                        try:
+                            if 'ci_downloaded' in locals() and ci_downloaded:
+                                vis_note = "\n\n[Visual assets saved to:]\n" + "\n".join(f"- {p}" for p in ci_downloaded)
+                                final_answer = vis_note + "\n\n" + (final_answer or "")
+                        except Exception:
+                            pass
+
                         return {
                             "question": question,
                             "answer": final_answer,

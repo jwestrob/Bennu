@@ -25,6 +25,7 @@ import traceback
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from rich.console import Console
 
@@ -111,6 +112,17 @@ class SessionManager:
             import math
             import numpy as np
             import pandas as pd
+            # Ensure headless-safe backend before any pyplot import
+            try:
+                import os as _os
+                _os.environ.setdefault('MPLBACKEND', 'Agg')
+                import matplotlib as _mpl
+                try:
+                    _mpl.use('Agg')
+                except Exception:
+                    pass
+            except Exception:
+                pass
             import matplotlib.pyplot as plt
             import seaborn as sns
             from pathlib import Path
@@ -231,9 +243,19 @@ class SecureCodeExecutor:
                     timeout=request.timeout
                 )
                 
-                # Check for created files
+                # Check for created files (recursive, capture all files)
                 temp_path = Path(session['temp_dir'])
-                files_created = [str(f.relative_to(temp_path)) for f in temp_path.iterdir() if f.is_file()]
+                files_created = []
+                try:
+                    for f in temp_path.rglob('*'):
+                        if f.is_file():
+                            try:
+                                files_created.append(str(f.relative_to(temp_path)))
+                            except Exception:
+                                files_created.append(str(f.name))
+                except Exception:
+                    # Fallback to top-level only
+                    files_created = [str(f.relative_to(temp_path)) for f in temp_path.iterdir() if f.is_file()]
                 
             except asyncio.TimeoutError:
                 error = f"Code execution timed out after {request.timeout} seconds"
@@ -264,9 +286,14 @@ class SecureCodeExecutor:
         )
     
     async def _execute_in_session(self, compiled_code, session):
-        """Execute compiled code in session context."""
-        # Execute in the session's namespace
-        exec(compiled_code, session['globals'], session['locals'])
+        """Execute compiled code in session context.
+
+        Use a unified globals/locals mapping so that top-level variables
+        defined by the executed code are visible to functions as globals.
+        """
+        g = session['globals']
+        # Ensure locals maps to globals for correct name resolution
+        exec(compiled_code, g, g)
 
 
 # Global session manager
@@ -341,6 +368,25 @@ async def reset_session(session_id: str):
             del session_manager.session_timeouts[session_id]
     
     return {"message": f"Session {session_id} reset"}
+
+
+@app.get("/sessions/{session_id}/files/{relpath:path}")
+async def get_session_file(session_id: str, relpath: str):
+    """Stream a file created in a session's temp dir, if present."""
+    if session_id not in session_manager.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    temp_dir = session_manager.sessions[session_id].get('temp_dir')
+    if not temp_dir:
+        raise HTTPException(status_code=404, detail="No files for this session")
+    base = Path(temp_dir).resolve()
+    target = (base / relpath).resolve()
+    try:
+        target.relative_to(base)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(str(target))
 
 
 @app.get("/sessions")

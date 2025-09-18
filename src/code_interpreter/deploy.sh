@@ -74,7 +74,8 @@ build_image() {
 
 deploy_standard() {
     echo "Deploying with standard Docker security..."
-    $DOCKER_COMPOSE_CMD up -d $SERVICE_NAME
+    # Force rebuild and recreation so new routes/endpoints are active
+    $DOCKER_COMPOSE_CMD up -d --build --force-recreate $SERVICE_NAME
     print_success "Service deployed on port $PORT"
     print_warning "Running with standard Docker security (not maximum security)"
 }
@@ -196,6 +197,7 @@ main() {
         "restart")
             stop_services
             sleep 2
+            build_image
             deploy_standard
             check_health
             ;;

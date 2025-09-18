@@ -6,6 +6,7 @@ Includes literature search, code interpreter, and tool registry.
 
 import logging
 from typing import Dict, Any, Optional, List
+from pathlib import Path
 import asyncio
 import json
 from .whole_genome_reader import read_complete_genome_spatial, read_all_genomes_spatial
@@ -379,11 +380,14 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
     """
     import httpx, os
     
-    logger.info(f"🐍 Executing code in interpreter (session: {session_id})")
+    # Log API call and endpoint
+    url_for_log = kwargs.get('base_url') or os.getenv('CODE_INTERPRETER_URL') or 'http://localhost:8000'
+    logger.info(f"🐍 Executing code in interpreter (session: {session_id}, url: {url_for_log})")
     
     try:
         # Code interpreter service endpoint
         base_url = kwargs.get('base_url') or os.getenv('CODE_INTERPRETER_URL') or 'http://localhost:8000'
+        download_dir = kwargs.get('download_dir')
         
         # Prepare request
         request_data = {
@@ -414,6 +418,76 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
                     if 'stdout' in result:
                         result['output'] = result['stdout']
                 
+                # Build artifacts list from files_created when available
+                artifacts = []
+                try:
+                    fc = result.get('files_created') or []
+                    if isinstance(fc, list):
+                        for name in fc:
+                            try:
+                                artifacts.append({"name": str(name), "type": "file", "path": str(name)})
+                            except Exception:
+                                pass
+                except Exception:
+                    artifacts = []
+
+                downloaded: list[str] = []
+                # Optionally download artifacts to host
+                if download_dir:
+                    try:
+                        outdir = Path(download_dir)
+                        outdir.mkdir(parents=True, exist_ok=True)
+                        files = (result.get('files_created') or [])
+                        for name in files:
+                            got = False
+                            # Attempt direct download via file route
+                            try:
+                                url = f"{base_url}/sessions/{request_data['session_id']}/files/{name}"
+                                r = await client.get(url)
+                                if r.status_code == 200:
+                                    dest = outdir / name
+                                    dest.parent.mkdir(parents=True, exist_ok=True)
+                                    dest.write_bytes(r.content)
+                                    downloaded.append(str(dest))
+                                    got = True
+                                else:
+                                    logger.info(f"CI download skipped (status {r.status_code}) for {url}")
+                            except Exception:
+                                pass
+
+                            # Fallback via base64/stdout if route missing
+                            if not got:
+                                try:
+                                    dl_code = (
+                                        "import builtins as bi, base64\n"
+                                        f"p=r'{name}'\n"
+                                        "try:\n"
+                                        "    b=bi.open(p,'rb').read()\n"
+                                        "    print('B64:'+base64.b64encode(b).decode('ascii'))\n"
+                                        "except Exception as e:\n"
+                                        "    print('ERR:'+str(e))\n"
+                                    )
+                                    r2 = await client.post(f"{base_url}/execute", json={
+                                        'code': dl_code,
+                                        'session_id': request_data['session_id'],
+                                        'timeout': 20
+                                    })
+                                    if r2.status_code == 200:
+                                        j = r2.json()
+                                        out = j.get('stdout') or ''
+                                        import re, base64 as _b64
+                                        m = re.search(r"B64:([A-Za-z0-9+/=]+)", out)
+                                        if m:
+                                            data = _b64.b64decode(m.group(1))
+                                            dest = outdir / name
+                                            dest.parent.mkdir(parents=True, exist_ok=True)
+                                            dest.write_bytes(data)
+                                            downloaded.append(str(dest))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        downloaded = []
+
                 env = ToolResultEnvelope(
                     tool_name="code_interpreter",
                     success=bool(result.get('success', False)),
@@ -426,7 +500,9 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
                         'output': result.get('output'),
                         'error': result.get('error'),
                         'execution_time': result.get('execution_time'),
+                        'artifacts': artifacts,
                     }).dict()],
+                    summary={"files_created": result.get('files_created'), "downloaded_files": downloaded},
                 ).dict()
                 return env
             else:
