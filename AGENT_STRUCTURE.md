@@ -1,98 +1,191 @@
-# Agent Architecture (MacroPlanner + Structured Operators)
+# Spec‑First Genomic RAG — Operating Structure (Regions + Calls)
 
-This document reflects the current, operator‑driven GenomicRAG architecture. It replaces the older typed‑router/FSM write‑up. The system now plans with a MacroPlanner over a strict operator catalog, executes deterministic DB queries and helpers, and synthesizes compact results with preserved totals.
+This document is the source of truth for how the system should run. It replaces legacy descriptions and aligns everyone on the minimal‑call, deterministic architecture we agreed on.
 
-## High‑Level Overview
+Sections:
+- A) Region‑first diagram with the only external API calls.
+- B) Implementation plan (phased) with progress checkboxes.
+- C) Artifact store policy and end‑of‑run display output (paths only; packs and non‑display reports are not printed).
 
-- MacroPlanner‑first: A DSPy plan chooses from a fixed operator catalog (no free‑form tools). Plans are executed deterministically.
-- Two‑stage annotation discovery: Catalog fuzzy search → precise IDs → exact Neo4j retrieval. Supports PFAM accessions and short names, and KEGG KOs.
-- Templates‑only DB access: Cypher runs via named templates; no model‑generated Cypher.
-- Compact handoff to synthesis: Discovered proteins are deduplicated and passed as structured lists; synthesizer pre‑compacts examples while preserving full counts.
-- Optional completeness and neighbors: KEGG pathway completeness (native KO totals) and neighborhood/kNN tools remain available.
+---
 
-## Core Components
+## A) Regions And Calls (ASCII)
 
-- Orchestrator: `src/llm/rag_system/core.py`
-  - Entry point `GenomicRAG.ask()` handles model allocation, MacroPlanner planning, deterministic operator execution, result collection, context debug, and final synthesis.
-  - Collects only whitelisted list payloads (e.g., `discovered_proteins`, `pathway_completeness`) and deduplicates proteins globally by `(genome_id, protein_id)`.
-  - Emits “Context debug” and “Context trim” logs to pinpoint large contributors and dropped duplicates.
+Each big box is an in‑process region. Small inner boxes are the only external API calls on the hot path. Everything else runs locally to economize on calls.
 
-- MacroPlanner (DSPy): `src/llm/rag_system/dspy_signatures.py`
-  - `MacroPlannerSignature`: Produces a strict JSON plan using only cataloged operators. Rubric encourages breadth‑first PFAM+KO exploration, two‑stage identifier retrieval, compact evidence, and optional follow‑ups.
-  - Planner context includes an operator catalog and optional compact references (disabled by default to avoid token bloat).
+```
+Spec‑First Genomic RAG — Regions (outer) with External API Calls (inner)
+────────────────────────────────────────────────────────────────────────
 
-- Operator Catalog + Execution
-  - Registration and specs: `src/llm/mfp/operators/base.py`
-  - Built‑ins: `src/llm/mfp/operators/builtin.py`
-    - `AnnotationDiscovery`: Performs two‑stage discovery (catalog fuzzy → IDs → exact retrieval). Returns `discovered_proteins` with PFAM/KO provenance; supports `limit`, `genome_ids`, `return_full_rows`.
-    - KEGG helpers: `FetchPresentKOs`, `LoadKoPathwayTotals` (native ko_pathway.list), `ComputePathwayCompleteness` with sensible defaults.
-  - Catalog search: `src/llm/mfp/operators/catalog_search.py`
-    - `SearchPfamCatalogFuzzy`, `SearchKoCatalogFuzzy`, `ExtractIdsFromCatalogHits`, `QueryProteinsByIds` (exact PFAM/KO ID filters). PFAM supports both accessions and short names.
-  - Plan execution: `src/llm/mfp/executor.py` executes the operator list against an `OperatorContext` (Neo4j driver + project_root).
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ INTENT (in‑process planner/orchestrator)                                      │
+│   ┌───────────────────────────────┐                                           │
+│   │  API CALL: LLM PLAN /plan     │  (single model call to generate PlanSpec) │
+│   └───────────────────────────────┘                                           │
+│   Policy evaluation & budgets → local (no API)                                │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ RETRIEVAL (in‑process QueryEngine)                                            │
+│   • Neo4j driver session/transaction (named templates, UNWIND batches)        │
+│   • Local catalogs: PFAM/KO TSV caches                                        │
+│   — no external API calls in this region —                                    │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ COMPUTE + VISUALIZATION (in‑process AnalysisEngine)                            │
+│   • Matrix transforms, stats, clustering, top‑k feature selection              │
+│   • Plot rendering (matplotlib/seaborn)                                        │
+│   — no external API calls in this region —                                     │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ FINALIZER (optional analysis backend)                                          │
+│   ┌──────────────────────────────────────┐                                     │
+│   │  API CALL: CODE INTERPRETER /execute │  (only if enabled/healthy)         │
+│   └──────────────────────────────────────┘                                     │
+│   • On failure: 1 repair attempt (local codegen), else skip                    │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ SYNTHESIS (in‑process report orchestrator)                                     │
+│   ┌────────────────────────────────┐      ┌────────────────────────────────┐   │
+│   │  API CALL: LLM REPORT /report  │ ───▶ │  API CALL: LLM AMEND /amend   │   │
+│   └────────────────────────────────┘      └────────────────────────────────┘   │
+│   • Initial table‑first report              • Optional amend with diffs         │
+└───────────────────────────────────────────────────────────────────────────────┘
 
-- Deterministic DB Layer
-  - Template runner: `src/llm/options/template_runner.py` executes file‑based Cypher with validated params.
-  - Exact retrieval templates (resources/): `resources/cypher/proteins_by_pfam_ids.cypher`, `resources/cypher/proteins_by_ko_ids.cypher` (case‑insensitive equality; list comprehensions fixed to avoid runtime errors).
-  - Present KO summary: `resources/cypher/present_kos_by_genome.cypher` for completeness computation.
 
-- Synthesis and Memory: `src/llm/rag_system/memory/`
-  - `ProgressiveSynthesizer`: Map‑Reduce capable summarizer with pre‑compaction of large lists.
-    - Default compact mode shows “rows=<true total>” and up to 10 examples (configurable via `SUMMARY_EXAMPLE_CAP`).
-    - `return_full_rows=true` on `AnnotationDiscovery` marks a binding as `_format='full'` to include complete JSON rows for small targets (≤ 2000 rows).
-  - `NoteKeeper` + `ToolResultCache`: Persist session notes and large tool outputs for reference without bloating model context.
-  - Model allocation: `model_allocation.py` picks appropriate models per task; synthesizer updates model‑aware token limits.
+                    ┌─────────────────────────────────────────────┐
+                    │ ARTIFACT STORE (local FS/manifests)         │
+                    │   • Packs (matrices, completeness)          │
+                    │   • Plots (PNG/SVG + thumbs)                │
+                    │   • Reports (v1/v2 + diffs)                 │
+                    │   — filesystem writes only; no API —        │
+                    └─────────────────────────────────────────────┘
 
-- Completeness (native): `src/llm/options/pathway_completeness.py` and `src/llm/kegg/pathway_mapping.py`
-  - Computes pathway totals from `data/reference/ko_pathway.list` and intersects with present KOs from the graph. DB‑only totals are no longer assumed.
+Legend:
+- Outer boxes = execution regions/modules that run in‑process to economize calls.
+- Inner small boxes = the only external API calls on the hot path:
+  (1) LLM PLAN (once), (2) optional CODE INTERPRETER, (3) LLM REPORT, (4) optional LLM AMEND.
+- Retrieval and Compute+Viz remain local (driver + libraries), not network APIs.
+```
 
-## Execution Flow (Typical)
+---
 
-1) Plan: MacroPlanner proposes a sequence of operator calls (often multiple `AnnotationDiscovery` steps with distinct keywords covering PFAM+KO).
-2) Execute: The MFP executor runs operators deterministically, with DB templates handling exact PFAM/KO ID matches.
-3) Collect: Core collects only whitelisted list outputs. `discovered_proteins` are deduplicated across all steps.
-4) Synthesize: Progressive synthesizer compacts large lists (counts + examples), preserving true totals. For small targeted pulls with `_format='full'`, full JSON rows are included.
+## B) Implementation Plan (Trackable)
 
-## Context Compaction Policy (Active)
+We will implement the architecture in small, verifiable increments. Keep these boxes up to date (change `[ ]` → `[x]`).
 
-- Preserve totals: For compacted lists, the synthesizer stores `total_rows` and displays correct counts (not the capped example size).
-- Default examples: Up to 10 examples per list in compact mode; override globally via `SUMMARY_EXAMPLE_CAP` env var.
-- Full rows: Use `return_full_rows=true` on `AnnotationDiscovery` for small, targeted queries (≤ 2000 rows), optionally with a low `limit`.
-- Catalog hits: PFAM/KO catalog hit metadata is not fed to synthesis; only probe metadata influences planning.
+### Phase 1 — Baseline Flow (Plan → Retrieve → Compute/Viz → Report v1)
+- [ ] Intent: add `--ci {auto|always|never}` flag (default `auto`) and surface in PolicyEngine.
+- [ ] Retrieval: ensure batched, single‑session Neo4j execution for FeatureProfile/FunctionalProfile (UNWIND, server‑side aggregates).
+- [ ] Compute+Viz: render plots in‑process (matplotlib/seaborn) from matrices; clamp figure count and sizes.
+- [ ] Synthesis: reporter renders tables first, then (if present) plots, with compact captions.
+- [ ] Artifact writes: persist packs, plots, and report v1 under `data/session_notes/<session_id>/`.
+- [ ] End‑of‑run summary: print only display artifacts (plots, report v1 path); do not print packs or raw/non‑display artifacts.
 
-## Important Flags
+### Phase 2 — Finalizer + Amended Report (Optional)
+- [ ] Health gate: check code interpreter `/health`; skip if unavailable.
+- [ ] Payload writer: create `analysis_payload.json` + CSVs (matrices) in `session_notes`.
+- [ ] Code Interpreter call: single `/execute` with templated code; 1 repair attempt on failure.
+- [ ] Reporter amend: generate report v2 with diffs; embed thumbnails; preserve provenance.
+- [ ] End‑of‑run summary: add v2 path and plot locations to printed output.
 
-- Planning
-  - `USE_MFP_PLANNER=1` (default): Enable MacroPlanner path.
-  - `INCLUDE_REFERENCE_IN_PLANNER=0` (default): Avoids stuffing KO/PFAM catalogs in planner prompts; can be enabled with optional caps.
+### Phase 3 — Contracts & Policies
+- [ ] Define PlanSpec (LLM plan output) and enforce minimal fields.
+- [ ] Define AnalysisPayload schema (see below) and validate before CI.
+- [ ] Define PlotPolicy (max_figs, max_pixels, top_k features) and enforce in compute.
+- [ ] Telemetry: record latencies/rows per region; persist `session_manifest.json` with versions/hashes.
 
-- Synthesis
-  - `SUMMARY_EXAMPLE_CAP=10`: Cap for examples per list in compact mode.
-  - `EMIT_FOLLOWUP_REQUESTS=1`: Allows planner‑visible, lightweight follow‑ups when evidence is thin.
+### Phase 4 — QA & Resilience
+- [ ] PlanLint: verify at least one retrieval step; no unused binds; gates respected.
+- [ ] ResultLint: flag all‑zero/degenerate outputs and attach hints (non‑fatal).
+- [ ] Golden runs: canned sessions for CI with snapshot plots and minimal diffs.
 
-- Completeness
-  - `USE_NATIVE_TOTALS_FOR_PATHWAYS=1` (default): Use native ko_pathway.list totals.
-  - `USE_CI_TOTALS_FOR_PATHWAYS=0`: Legacy CI‑based totals (not needed with native mode).
+---
 
-## Key Files (Quick Map)
+## Contracts & Data Shapes (authoritative)
 
-- Orchestrator: `llm/rag_system/core.py`
-- Planner/signatures: `llm/rag_system/dspy_signatures.py`
-- Operators: `llm/mfp/operators/{base.py,builtin.py,catalog_search.py,planning_utils.py}`
-- Plan executor: `llm/mfp/executor.py`
-- Template runner: `llm/options/template_runner.py`
-- Synthesis & memory: `llm/rag_system/memory/{progressive_synthesizer.py,note_keeper.py,tool_result_cache.py,model_allocation.py}`
-- Completeness: `llm/options/pathway_completeness.py`, `llm/kegg/pathway_mapping.py`
-- Config: `llm/config.py`
+### PlanSpec (LLM → Intent)
+- `question`: string
+- `operators`: ordered list of composites (e.g., FeatureProfile, FunctionalProfile)
+- `params`: composite‑level params (e.g., pfam_top_k, ko_top_k, include)
+- `policy_hints`: optional limits (e.g., prefer local only, ci=auto)
 
-## Design Notes
+### AnalysisPayload (Finalizer input)
+Written to: `data/session_notes/<sid>/analysis_payload.json`
+- `question`, `dataset_context` (genome sample, counts)
+- `plan` (operators + params actually executed)
+- `feature_profile`: { `summary`, `per_genome_counts`, `per_genome_top_matrix`, `feature_order`, `label_maps`, `warnings` }
+- `functional_profile`: { `present_kos_by_genome`, `completeness_matrix`, `completeness_summary`, `cazy_rows`, `cazy_counts`, `bgcs` }
+- `omitted`: [{ name, reason, approx_size }]
+- `provenance`: [{ operator, template, slots, row_count }]
+- `limits`: { row_caps, timeouts }
+- `versions`: { app, graph_snapshot, image_tag }
 
-- Determinism at the edges: All DB interactions are through curated templates; operators are pure functions over inputs/params.
-- Planner breadth over depth: Encourages PFAM+KO coverage first, then optional completeness or neighborhoods.
-- Token discipline: Dedup at collection, compact at synthesis, and preserve informative counts. Full detail remains opt‑in for small targets.
+### Plot artifacts (Compute+Viz)
+- Saved under `data/session_notes/<sid>/plots/`
+- Filenames include dataset id + short descriptor (e.g., `feature_heatmap_top20.png`).
+- Thumbnails (optional): `*.thumb.png` for fast embedding.
 
-## Future Directions
+### Report artifacts
+- Report v1 (initial): `data/session_notes/<sid>/report_v1.md`
+- Report v2 (amended): `data/session_notes/<sid>/report_v2.md` (adds plots/diffs)
+- Diff metadata (optional JSON): `data/session_notes/<sid>/report_diff.json`
 
-- Evidence matrix summary (marker → counts, per‑genome counts, examples) to standardize reporting.
-- Configurable post‑merge trimming to return exactly N examples after PFAM+KO union when requested.
-- Optional multi‑pass, diff‑based synthesis (incremental context ingestion) — see discussion in AGENTS.md.
+Policy reminder: Do not hard‑code biology (see AGENTS.md). All identifiers come from data or user input.
+
+---
+
+## Runtime Flow (concise)
+1) Intent: call LLM PLAN once → PlanSpec.
+2) Retrieval: execute named templates in one driver session; read catalogs from local files.
+3) Compute+Viz: produce matrices and plots in‑process; clamp outputs by policy.
+4a) Synthesis v1: generate initial report from matrices/plots.
+4b) Finalizer (optional): if `--ci!=never` and matrices exist, write AnalysisPayload + CSVs; call code interpreter once (repair once on error).
+5) Synthesis v2 (optional): amend report with diffs and embedded plot thumbnails.
+6) End‑of‑run: print a display‑safe summary with file paths (see below).
+
+---
+
+## C) Artifact Store Policy & End‑of‑Run Output
+
+We store everything for reproducibility, but we only print user‑facing artifact locations. Packs and non‑display report variants are NOT printed in the end summary.
+
+Directory layout per session (`data/session_notes/<sid>/`):
+- `plots/`                — display images (PNG/SVG) and thumbnails
+- `report_v1.md`         — initial display report
+- `report_v2.md`         — amended display report (if CI ran)
+- `analysis_payload.json` — structured input for CI (kept quiet unless `--ci=debug`)
+- `matrices/`            — CSVs (wide/long) for compute; not printed in summary
+- `packs/`               — internal JSON packs; not printed
+- `report_raw/`          — non‑display report assets (e.g., tokens, prompts); not printed
+
+End‑of‑run summary (example output):
+
+```
+Session: 08c5d4ab-01d9-4749-833b-21f961b1d899
+Artifacts (display‑safe):
+- Report (initial): data/session_notes/08c5.../report_v1.md
+- Plots directory:  data/session_notes/08c5.../plots/  (e.g., feature_heatmap_top20.png, pathway_heatmap.png)
+- Report (amended): data/session_notes/08c5.../report_v2.md   [present when CI ran]
+Other generated files written to session folder. See manifest for full list.
+```
+
+Display rules:
+- Print only the report_v1/v2 paths and the plots directory.
+- For any other generated artifacts (e.g., CI code, payloads), write them to files under the session folder and print only the directory path (not file contents).
+
+---
+
+## Notes For Implementers
+- Keep module boundaries, not network boundaries: Retrieval and Compute+Viz stay in‑process.
+- One LLM for plan; one for report; optional amend. Everything else is deterministic and local.
+- The optional code interpreter is a finalizer—not a planner tool—and only runs when policy and data warrant it.
+- Provenance is mandatory: every pack/plot/report has a manifest entry and hashes for reproducibility.
 
