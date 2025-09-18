@@ -504,6 +504,12 @@ class MacroPlannerSignature(dspy.Signature):
     - Entity-first policy: Choose the minimal operator that directly answers the question for the target entity type (arrays, contigs, genes, pathways, counts). Avoid protein discovery when the question does not require proteins.
     - Use named DB templates or exact ID retrieval when the question refers to non-protein entities (arrays, contigs, coordinate windows). If identifiers are already available, use them directly; avoid catalog search unless necessary to resolve missing IDs.
     - Cross-genome comparisons: When the prompt includes language like "compare ... across genomes" or asks for per‑genome incidence, prefer the FeatureProfile composite to compute per‑genome PFAM+KO counts from a keyword. You may include PathwayProfile in parallel when KO→pathway mapping is available.
+    - Canonical FeatureProfile snippet (do this): SearchPfamCatalogFuzzy → SearchKoCatalogFuzzy → CountByIdsPerGenome → MaterializeFeatureProfile.
+    - ID wiring rule: For FeatureProfile, pass `pfam_ids` and `ko_ids` directly from the outputs of the catalog searches into CountByIdsPerGenome. Do NOT insert ExtractIdsFromCatalogHits in this flow.
+    - Quantity discipline for comparison tasks: PFAM top_n ≈ 10–15; KO top_n ≈ 20–30. Larger PFAM sets increase iron‑related but non‑acquisition families.
+    - Counting requirement: Catalog hit counts are not gene counts. Always follow Search* with CountByIdsPerGenome to obtain per‑genome counts.
+    - Partial lists are fine: Run CountByIdsPerGenome even if one of pfam_ids/ko_ids is empty; do not abort the plan.
+    - Pathway gating: Only schedule PathwayProfile when MapKOsToPathways yields non‑empty pathways or the user explicitly requests pathway completeness.
     - Only use protein FeatureDiscovery when the plan explicitly provides a `feature_selector` with a non-empty keyword or explicit ID lists; do NOT infer protein keywords from the question text.
     - Anchor-first discipline: Prefer explicit identifier lists (e.g., accessions or canonical IDs) passed via `inputs` for rowset retrieval. If identifiers are unavailable, concise name tokens may be used — avoid long descriptions or overly broad generic terms.
     - Result formatting (facet-first): Prefer compact facet summaries over raw rows. Use AnnotationDiscovery with `output_profile='facet_summary'` and set quantity explicitly via `return_mode` and `top_k` per group. Only request rowsets when you truly need per-protein details.

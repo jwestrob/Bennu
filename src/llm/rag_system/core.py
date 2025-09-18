@@ -432,9 +432,9 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             "- Quantity discipline: For gene/subunit context, keep PFAM catalog probes small — set FeatureDiscovery.limits.top_k ≈ 3–8 (default PFAM top_n=5). Use larger values only for broad capability surveys.\n"
                             "\nINTENT HINTS (operator bias):\n"
                             "- neighborhood|context|flanking|operon|adjacent → prefer GeneContext\n"
-                            "- pathway|completeness|KEGG → prefer PathwayProfile\n"
-                            "- CAZy|cazyme|BGC|biosynthetic → prefer ModuleProfile\n"
-                            "- For counts/top N/distribution questions, set ModuleProfile.output_profile='global_counts' and DO NOT include any Query*ByGenome steps; use Count* operators only (e.g., CountCazymeFamilies).\n"
+                            "- pathways|completeness|KEGG → prefer FunctionalProfile (include=['pathways'])\n"
+                            "- CAZy|cazyme|BGC|biosynthetic → prefer FunctionalProfile (include=['cazy','bgc'])\n"
+                            "- For counts/top N/distribution questions within CAZy, set cazy_output='global_counts' and avoid rowset expansion.\n"
                             "- evidence|follow-up|sufficient → prefer EvidenceAndNext\n"
                             "- PFAM|KO|search|discover|find → prefer FeatureDiscovery\n"
                         )

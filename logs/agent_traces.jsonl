@@ -459,3 +459,6 @@
 {"ts": "2025-09-17T23:05:39Z", "event": "pipeline.start", "data": {"question": "Compare iron acquisition systems across all genomes."}}
 {"ts": "2025-09-17T23:21:26Z", "event": "pipeline.start", "data": {"question": "Compare iron acquisition systems across all genomes."}}
 {"ts": "2025-09-17T23:36:04Z", "event": "pipeline.start", "data": {"question": "Compare iron acquisition systems across all genomes."}}
+{"ts": "2025-09-17T23:41:00Z", "event": "pipeline.start", "data": {"question": "What types of secondary metabolites can each genome potentially produce?"}}
+{"ts": "2025-09-17T23:44:20Z", "event": "pipeline.start", "data": {"question": "Show me ABC transporters in the Burkholderiales genome\n\n"}}
+{"ts": "2025-09-17T23:57:39Z", "event": "pipeline.start", "data": {"question": "Compare iron acquisition systems across all genomes."}}

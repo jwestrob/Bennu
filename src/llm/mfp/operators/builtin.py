@@ -1062,6 +1062,9 @@ def _count_by_ids_per_genome(ctx: OperatorContext, inputs: Dict[str, Any], param
 
     pfam_counts: List[Dict[str, Any]] = []
     ko_counts: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    if (not pfam_ids) and (not ko_ids):
+        warnings.append("empty_id_lists")
     if pfam_ids:
         try:
             pfam_counts = runner.run_template(
@@ -1080,7 +1083,7 @@ def _count_by_ids_per_genome(ctx: OperatorContext, inputs: Dict[str, Any], param
             ko_counts = []
 
     macro = {"type": "macro_result", "name": "CountByIdsPerGenome", "rows": {"pfam_counts": pfam_counts, "ko_counts": ko_counts}}
-    return {"pfam_counts": pfam_counts, "ko_counts": ko_counts, "macro_result": macro}
+    return {"pfam_counts": pfam_counts, "ko_counts": ko_counts, "warnings": warnings, "macro_result": macro}
 
 
 def _materialize_feature_profile(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1253,10 +1256,10 @@ register_operator(OperatorSpec(
 register_operator(OperatorSpec(
     name="CountByIdsPerGenome",
     inputs=["pfam_ids", "ko_ids"],
-    outputs=["pfam_counts", "ko_counts", "macro_result"],
+    outputs=["pfam_counts", "ko_counts", "warnings", "macro_result"],
     params={"pfam_ids": "List[str] | null", "ko_ids": "List[str] | null", "genome_ids": "List[str] | null"},
     run=_count_by_ids_per_genome,
-    description="Count proteins per genome matching provided PFAM/KO IDs.",
+    description="Count proteins per genome matching provided PFAM/KO IDs. Emits non-fatal warnings when ID lists are empty.",
 ))
 
 register_operator(OperatorSpec(
@@ -1311,4 +1314,72 @@ register_operator(OperatorSpec(
     params={},
     run=_materialize_evidence_and_next,
     description="Package evidence metrics and follow-up plan into typed records",
+))
+
+# --- FunctionalProfile materializer (aggregates pathways + modules) ---
+
+def _materialize_functional_profile(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregate optional sections from pathway and module profiling.
+
+    Inputs (optional):
+      - present: { genome_id -> [KO ids] }
+      - pathway_completeness: list of rows
+      - cazymes: list of rows
+      - cazyme_family_counts: list of rows
+      - bgcs: list of rows
+    Params:
+      - include: List[str] (advisory)
+    Outputs:
+      - PresentKOsByGenome, CompletenessMatrix, CompletenessSummary
+      - CAZyRowsByGenome, CazymeFamilyCounts, BGCsByGenome
+      - ProfileKinds
+    """
+    present = inputs.get("present") or inputs.get("PresentKOsByGenome")
+    completeness = inputs.get("pathway_completeness") or inputs.get("CompletenessMatrix") or []
+    cazymes = inputs.get("cazymes")
+    cazy_counts = inputs.get("cazyme_family_counts")
+    bgcs = inputs.get("bgcs")
+
+    # Reuse PathwayProfile summarization for completeness
+    try:
+        agg: Dict[str, Dict[str, Any]] = {}
+        for r in (completeness or []):
+            pw = str(r.get("pathway_id"))
+            comp = float(r.get("completeness") or 0.0)
+            e = agg.setdefault(pw, {"pathway_id": pw, "max_completeness": 0.0, "examples": 0})
+            if comp > e["max_completeness"]:
+                e["max_completeness"] = comp
+            e["examples"] += 1
+        c_summary = sorted(agg.values(), key=lambda x: (-x["max_completeness"], x["pathway_id"]))
+    except Exception:
+        c_summary = None
+
+    kinds: List[str] = []
+    if isinstance(completeness, list) and completeness:
+        kinds.append("pathways")
+    if isinstance(cazymes, list) and cazymes:
+        kinds.append("cazy")
+    if isinstance(cazy_counts, list) and cazy_counts:
+        if "cazy" not in kinds:
+            kinds.append("cazy")
+    if isinstance(bgcs, list) and bgcs:
+        kinds.append("bgc")
+
+    return {
+        "PresentKOsByGenome": present or {},
+        "CompletenessMatrix": completeness or [],
+        "CompletenessSummary": c_summary,
+        "CAZyRowsByGenome": cazymes or [],
+        "CazymeFamilyCounts": cazy_counts or [],
+        "BGCsByGenome": bgcs or [],
+        "ProfileKinds": kinds,
+    }
+
+register_operator(OperatorSpec(
+    name="MaterializeFunctionalProfile",
+    inputs=["present", "pathway_completeness", "cazymes", "cazyme_family_counts", "bgcs"],
+    outputs=["PresentKOsByGenome", "CompletenessMatrix", "CompletenessSummary", "CAZyRowsByGenome", "CazymeFamilyCounts", "BGCsByGenome", "ProfileKinds"],
+    params={"include": "List[str] | null"},
+    run=_materialize_functional_profile,
+    description="Aggregate pathways (KO completeness) and modules (CAZy/BGC) into one profile",
 ))

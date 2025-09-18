@@ -114,14 +114,22 @@ def expand_feature_profile(params: Dict[str, Any], ctx: CompositeContext) -> Lis
     Params:
       - genomes?: List[str]
       - keyword?: str (defaults to ctx.question)
-      - top_k?: int (catalog hits cap; default 20)
+      - pfam_top_k?: int (PFAM catalog hits cap; default 12)
+      - ko_top_k?: int (KO catalog hits cap; default 25)
     """
     steps: List[Dict[str, Any]] = []
     kw = (params.get("keyword") or ctx.get("question", "")).strip()
-    top_k = int(params.get("top_k", 20))
+    try:
+        pfam_top_k = int(params.get("pfam_top_k", params.get("top_k", 12)))
+    except Exception:
+        pfam_top_k = 12
+    try:
+        ko_top_k = int(params.get("ko_top_k", params.get("top_k", 25)))
+    except Exception:
+        ko_top_k = 25
     if kw:
-        steps.append({"op": "SearchPfamCatalogFuzzy", "params": {"q": kw, "top_n": top_k}, "bind": "pfam_search"})
-        steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": kw, "top_n": top_k}, "bind": "ko_search"})
+        steps.append({"op": "SearchPfamCatalogFuzzy", "params": {"q": kw, "top_n": pfam_top_k}, "bind": "pfam_search"})
+        steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": kw, "top_n": ko_top_k}, "bind": "ko_search"})
         # Use the direct id outputs from the catalog searches (avoid nested binding pitfalls)
         steps.append({
             "op": "CountByIdsPerGenome",
@@ -204,6 +212,76 @@ def expand_pathway_profile(params: Dict[str, Any], ctx: CompositeContext) -> Lis
     return steps
 
 
+def expand_functional_profile(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
+    """Composite: FunctionalProfile
+
+    Unified pathways (KO completeness) + modules (CAZy/BGC) profiling.
+
+    Params:
+      - genomes?: List[str]
+      - include?: List[str] in {'pathways','cazy','bgc'} (default ['pathways'])
+      - pathway_filter?: List[str]
+      - min_completeness?: float
+      - cazy_output?: 'per_genome' | 'global_counts' (default 'per_genome')
+    """
+    steps: List[Dict[str, Any]] = []
+    include = params.get("include") or ["pathways"]
+    # Normalize include list
+    try:
+        include = [str(x).strip().lower() for x in include if isinstance(x, (str,))]
+    except Exception:
+        include = ["pathways"]
+
+    genomes = params.get("genomes", [])
+
+    if "pathways" in include:
+        steps.append({"op": "FetchPresentKOs", "params": {"genome_ids": genomes}})
+        steps.append({"op": "LoadKoPathwayTotals", "params": {}})
+        pw_filter = params.get("pathway_filter") or []
+        if not pw_filter:
+            steps.append({"op": "SearchKoCatalogFuzzy", "params": {"q": ctx.get("question", ""), "top_n": 25}, "bind": "ko_hits"})
+            steps.append({
+                "op": "MapKOsToPathways",
+                "inputs": {"ko_ids": "ko_hits", "totals": "totals"},
+                "params": {"top_n": 25},
+                "bind": "pw_list"
+            })
+            steps.append({
+                "op": "ComputePathwayCompleteness",
+                "inputs": {"present": "present", "totals": "totals"},
+                "params": {"min_completeness": params.get("min_completeness", 0.0), "pathways": {"from": "rows", "field": "pathways", "index": 0}}
+            })
+        else:
+            steps.append({
+                "op": "ComputePathwayCompleteness",
+                "inputs": {"present": "present", "totals": "totals"},
+                "params": {"min_completeness": params.get("min_completeness", 0.0), "pathways": pw_filter}
+            })
+
+    if "cazy" in include:
+        cazy_out = str(params.get("cazy_output") or "per_genome").strip().lower()
+        if cazy_out == "global_counts":
+            steps.append({"op": "CountCazymeFamilies", "params": {}})
+        else:
+            steps.append({"op": "QueryCazymesByGenome", "params": {"genome_ids": genomes}})
+
+    if "bgc" in include:
+        steps.append({"op": "QueryBGCsByGenome", "params": {"genome_ids": genomes}})
+
+    steps.append({
+        "op": "MaterializeFunctionalProfile",
+        "inputs": {
+            "present": "present",
+            "pathway_completeness": "pathway_completeness",
+            "cazymes": "cazymes",
+            "cazyme_family_counts": "cazyme_family_counts",
+            "bgcs": "bgcs"
+        },
+        "params": {"include": include}
+    })
+    return steps
+
+
 def expand_module_profile(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
     module = (params.get("module") or "cazy").strip().lower()
     out = params.get("output_profile") or "per_genome"
@@ -239,6 +317,7 @@ def expand_evidence_and_next(params: Dict[str, Any], ctx: CompositeContext) -> L
 COMPOSITE_EXPANDERS: Dict[str, Expansion] = {
     "FeatureDiscovery": expand_feature_discovery,
     "FeatureProfile": expand_feature_profile,
+    "FunctionalProfile": lambda p, c: expand_functional_profile(p, c),
     "GeneContext": expand_gene_context,
     "PathwayProfile": expand_pathway_profile,
     "ModuleProfile": expand_module_profile,
@@ -254,6 +333,30 @@ def planner_catalog_overlay() -> Dict[str, Any]:
     return {
         "operators": [
             {
+                "name": "FeatureProfile",
+                "description": "Per-genome PFAM+KO counts from a keyword using catalog outputs directly. Canonical flow: SearchPfamCatalogFuzzy → SearchKoCatalogFuzzy → CountByIdsPerGenome → MaterializeFeatureProfile. Do not insert ExtractIdsFromCatalogHits in this flow.",
+                "inputs": ["genomes", "keyword", "pfam_top_k", "ko_top_k"],
+                "params": {
+                    "genomes": "List[str] genome IDs (optional; default dataset sample)",
+                    "keyword": "string (defaults to user question)",
+                    "pfam_top_k": "int cap for PFAM catalog hits (default 12)",
+                    "ko_top_k": "int cap for KO catalog hits (default 25)"
+                },
+                "outputs": ["PerGenomeFeatureCounts", "FeatureProfileSummary", "PerGenomeTopMatrix"],
+            },
+            {
+                "name": "FunctionalProfile",
+                "description": "Unified pathways+modules profiling. Include any of ['pathways','cazy','bgc']; gates pathway completeness on non-empty KO→pathway mapping or explicit request.",
+                "inputs": ["genomes", "include", "pathway_filter", "min_completeness"],
+                "params": {
+                    "genomes": "List[str] genome IDs (optional; default dataset sample)",
+                    "include": "List of 'pathways'|'cazy'|'bgc' (default ['pathways'])",
+                    "pathway_filter": "List[str] map IDs (optional)",
+                    "min_completeness": "float filter (0.0–1.0)"
+                },
+                "outputs": ["PresentKOsByGenome", "CompletenessMatrix", "CompletenessSummary", "CAZyRowsByGenome", "CazymeFamilyCounts", "BGCsByGenome", "ProfileKinds"],
+            },
+            {
                 "name": "FeatureDiscovery",
                 "description": "Find proteins via PFAM/KO when an explicit feature_selector is provided. Use ONLY when params.feature_selector contains a non-empty keyword or explicit pfam_ids/ko_ids. Do not infer or invent keywords from the user question.",
                 "inputs": ["feature_selector", "feature_types", "output_profile", "limits"],
@@ -265,17 +368,7 @@ def planner_catalog_overlay() -> Dict[str, Any]:
                 },
                 "outputs": ["FeatureSet", "ProteinSet", "FacetSummary"],
             },
-            {
-                "name": "FeatureProfile",
-                "description": "Per-genome PFAM+KO counts from a keyword (uses local catalogs for IDs).",
-                "inputs": ["genomes", "keyword", "top_k"],
-                "params": {
-                    "genomes": "List[str] genome IDs (optional; default dataset sample)",
-                    "keyword": "string (defaults to user question)",
-                    "top_k": "int cap for catalog hits (default 20)"
-                },
-                "outputs": ["PerGenomeFeatureCounts", "FeatureProfileSummary"],
-            },
+            
             {
                 "name": "GeneContext",
                 "description": "Neighborhoods around seed proteins (k-step or flanking); seeds can come from FeatureDiscovery.",
@@ -288,30 +381,8 @@ def planner_catalog_overlay() -> Dict[str, Any]:
                 "outputs": ["NeighborhoodSet", "NeighborhoodSummary"],
             },
             {
-                "name": "PathwayProfile",
-                "description": "Compute per-genome KO presence and KEGG pathway completeness.",
-                "inputs": ["genomes", "pathway_filter", "min_completeness"],
-                "params": {
-                    "genomes": "List[str] genome IDs (optional; default all)",
-                    "pathway_filter": "List[str] map IDs (optional)",
-                    "min_completeness": "float filter (0.0–1.0)"
-                },
-                "outputs": ["PresentKOsByGenome", "CompletenessMatrix", "CompletenessSummary"],
-            },
-            {
-                "name": "ModuleProfile",
-                "description": "CAZy or BGC profiling. Use output_profile='global_counts' for counts-only (no row fetch); per_genome/rowset for detailed rows.",
-                "inputs": ["genomes", "module", "output_profile"],
-                "params": {
-                    "genomes": "List[str] genome IDs (optional; default all)",
-                    "module": "'cazy' | 'bgc'",
-                    "output_profile": "'global_counts' | 'per_genome' (default) | 'rowset'"
-                },
-                "outputs": ["ModuleRows", "GlobalCounts"],
-            },
-            {
                 "name": "DBTemplateCall",
-                "description": "Execute a named Neo4j DB template by name with slots (generic template runner).",
+                "description": "Execute a named Neo4j DB template with slots (advanced/explicit-ID or window queries). Use when identifiers/windows are explicit; avoid for generic discovery.",
                 "inputs": [],
                 "params": {
                     "name": "string (template name)",
