@@ -55,7 +55,7 @@ graph TB
 - **Functional Annotation**: KEGG pathways, PFAM domains, enzyme classifications
 - **Secondary Metabolite Detection**: Biosynthetic gene cluster identification
 - **Carbohydrate Enzyme Analysis**: CAZyme family classification and substrate prediction
-- **Protein Similarity Search**: ESM2-based semantic embeddings for homology detection
+- **Protein Similarity Search**: ESM2-based semantic embeddings for homology detection with automatic Neo4j enrichment (PFAM / KO annotations, genomic coordinates)
 
 ### AI-Powered Query Interface
 - **Natural Language Processing**: Ask questions in plain English about your genomic data
@@ -254,6 +254,11 @@ python -m src.cli ask "Find all transport proteins"
 # Comparative analysis
 python -m src.cli ask "Compare CAZyme distributions across genomes"
 python -m src.cli ask "Which genome has the most biosynthetic gene clusters?"
+
+# pLM similarity + annotation enrichment demo
+python -m src.cli ask --planner openrouter/claude-4-sonnet \
+  --irb openai/gpt-4.1-mini --reporter openrouter/claude-4-sonnet \
+  "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."
 ```
 
 ## Advanced Usage
@@ -386,6 +391,14 @@ Troubleshooting
 - “Chat model not supported in v1/completions” → the planner is already configured to chat mode; avoid forcing responses mode for GPT‑5.
 - “Missing Anthropic API Key” while using OpenRouter → ensure `openrouter/claude-4-sonnet` (not `anthropic/...`) and `OPENROUTER_API_KEY` is set.
 - LiteLLM atexit logging error → we suppress heavy logging in code; if needed: `export LITELLM_LOGGING=False LITELLM_DISABLE_COLD_STORAGE=1`.
+- LanceDB similarity returns 0 neighbors → verify embeddings and annotations:
+  ```bash
+  conda activate genome-kg
+  PYTHONPATH=. scripts/inspect_lancedb.py --limit 5              # confirm embeddings exist
+  PYTHONPATH=. scripts/test_lancedb_seed.py protein:<id>         # check a specific protein embedding
+  PYTHONPATH=. scripts/test_protein_annotations.py protein:<id>  # fetch Neo4j PFAM/KO annotations
+  ```
+  If embeddings are missing, rerun Stage 8 (`python -m src.cli build -f 8 -t 8 --force`). If annotations are missing, rerun the earlier annotation stages and reload Neo4j.
 
 ## Data Products
 
