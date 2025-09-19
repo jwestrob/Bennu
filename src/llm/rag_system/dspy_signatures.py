@@ -440,7 +440,7 @@ class GenomicAnswerer(dspy.Signature):
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data and annotations")
     analysis_type = dspy.InputField(desc="Analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery")
-    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID' NOT abbreviated forms like 'scaffold_XXXX').")
+    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID'; no abbreviations), and when the context supplies protein-level identifiers, name the exact protein ID alongside the contig. When referencing KEGG KO identifiers, include the functional description supplied in context so the reader is not left with bare codes.")
     confidence = dspy.OutputField(desc="Confidence level: high, medium, or low")
     citations = dspy.OutputField(desc="Data sources and references used")
 
@@ -611,7 +611,7 @@ class GenomicSynthesizer(dspy.Signature):
     neighborhoods_json = dspy.InputField(desc="Optional JSON payload from NeighborhoodContext (macro_result or full neighborhoods)")
 
     # Primary narrative output
-    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. When GlobalCounts (or other aggregated counts) are present in context, state exact totals and enumerate the top N groups with their exact counts (no inference). Keep ordering deterministic (by count desc, then ID). If neighborhoods_json is present, include seed-level adjacency and conserved motif summaries when they add value. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID', not 'scaffold_XXXX').")
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. When GlobalCounts (or other aggregated counts) are present in context, state exact totals and enumerate the top N groups with their exact counts (no inference). Keep ordering deterministic (by count desc, then ID). If neighborhoods_json is present, include seed-level adjacency and conserved motif summaries when they add value. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID', not 'scaffold_XXXX'), and when protein-level identifiers are available in context, cite the exact protein ID alongside the contig. Whenever you cite a KEGG KO identifier, append its functional description from the provided data.")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
 
     # Optional structured outputs (emitted when helpful)
@@ -648,7 +648,7 @@ class MultiPatchProposalSignature(dspy.Signature):
     schema_reminder = dspy.InputField(desc="Patch envelope JSON schema; include 'test' ops per anchor")
     editor_instructions = dspy.InputField(desc="Strict editorial constraints (how to structure each patch and what to avoid)")
     patch_envelopes = dspy.OutputField(desc="JSON array of envelopes [{anchor, obligations, patch, evidence, rationale, risk}, ...]")
-    key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data - no abbreviations or partial names allowed.")
+    key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data (no abbreviations or partial names), and when protein identifiers are provided, cite the specific protein ID together with the contig. If you mention any KEGG KO identifier, also include the associated functional description given in context.")
 
 class GenomicDataExtractor(dspy.Signature):
     """
@@ -662,7 +662,7 @@ class GenomicDataExtractor(dspy.Signature):
     genomic_data = dspy.InputField(desc="Genomic dataset chunk to extract key information from")
     focus_areas = dspy.InputField(desc="Specific biological aspects to emphasize")
     
-    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'EXAMPLE_CONTIG_ID') for all reported loci to enable verification.")
+    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'EXAMPLE_CONTIG_ID') for all reported loci to enable verification, and when protein IDs are present, pair each locus with its protein identifier. When KEGG KO IDs appear, follow them with the contextual functional description.")
     biological_context = dspy.OutputField(desc="Essential biological context and methodology used")
     quantitative_metrics = dspy.OutputField(desc="Counts, sizes, and numerical measurements")
 
@@ -688,7 +688,7 @@ class GenomicSelector(dspy.Signature):
     question = dspy.InputField(desc="Original user question that should guide selection and prioritization")
     chunk_extractions = dspy.InputField(desc="Key findings extracted from each data chunk")
     
-    final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data. VERIFICATION REQUIREMENT: For any genomic loci mentioned, always include the complete scaffold/contig identifier (not abbreviated) to enable independent verification of findings.")
+    final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data. VERIFICATION REQUIREMENT: For any genomic loci mentioned, always include the complete scaffold/contig identifier (not abbreviated) to enable independent verification, and include the protein identifier whenever one is available in context. Whenever KEGG KO identifiers are cited, provide the corresponding functional name/description from the supplied data.")
     selection_reasoning = dspy.OutputField(desc="Explanation of why specific loci were chosen based on biological significance and question relevance")
     biological_significance = dspy.OutputField(desc="Biological interpretation using only the data available in chunk_extractions")
     data_sources = dspy.OutputField(desc="Explicit list of data sources and tools actually used (must match what appears in chunk_extractions)")
@@ -812,7 +812,7 @@ class ReportSynthesisGenerator(dspy.Signature):
     cross_cutting_themes = dspy.InputField(desc="Themes that emerge across multiple parts")
     quantitative_integration = dspy.InputField(desc="Integrated quantitative analysis")
 
-    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'EXAMPLE_CONTIG_ID'). NO abbreviations like 'scaffold_XXXX' are permitted.")
+    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'EXAMPLE_CONTIG_ID'). NO abbreviations like 'scaffold_XXXX' are permitted, and when protein identifiers exist in context, cite the matching protein ID alongside the contig. Any KEGG KO identifier mentioned must be accompanied by its functional description drawn from context.")
     biological_implications = dspy.OutputField(desc="Broader biological and evolutionary implications")
     recommendations = dspy.OutputField(desc="Recommendations for future research or applications")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in conclusions")

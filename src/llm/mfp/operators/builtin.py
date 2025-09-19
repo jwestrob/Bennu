@@ -1248,6 +1248,102 @@ def _materialize_evidence_and_next(ctx: OperatorContext, inputs: Dict[str, Any],
     return {"EvidenceMetrics": inputs.get("evidence_metrics"), "FollowupPlan": inputs.get("followup_request")}
 
 
+def _plan_similarity_search(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive LanceDB similarity seeds and plan metadata from discovery outputs."""
+
+    def _coerce_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+        try:
+            return max(minimum, min(int(value), maximum))
+        except Exception:
+            return default
+
+    def _normalize_pid(candidate: str) -> str:
+        if not isinstance(candidate, str):
+            return ""
+        cid = candidate.strip()
+        if not cid:
+            return ""
+        base = cid.split(':', 1)[-1]
+        return base
+
+    seed_limit = _coerce_int(params.get("seed_limit"), default=1, minimum=1, maximum=10)
+    nn_value = _coerce_int(params.get("nn", params.get("top_k", 10)), default=10, minimum=1, maximum=50)
+
+    raw_seeds: List[str] = []
+    normalized_seeds: List[str] = []
+    seen: set[str] = set()
+
+    def _add_seed(candidate: Any) -> None:
+        if not isinstance(candidate, str):
+            return
+        cid = candidate.strip()
+        if not cid:
+            return
+        if cid not in seen:
+            seen.add(cid)
+            raw_seeds.append(cid)
+            norm = _normalize_pid(cid)
+            if norm:
+                normalized_seeds.append(norm)
+            else:
+                normalized_seeds.append(cid)
+
+    explicit_ids = params.get("protein_ids") if isinstance(params.get("protein_ids"), list) else None
+    if explicit_ids:
+        for pid in explicit_ids:
+            _add_seed(pid)
+
+    if len(raw_seeds) < seed_limit:
+        discovered = inputs.get("discovered_proteins")
+        rows: List[Dict[str, Any]] = []
+        if isinstance(discovered, dict):
+            if isinstance(discovered.get("discovered_proteins"), list):
+                rows = discovered.get("discovered_proteins")  # type: ignore[assignment]
+            elif isinstance(discovered.get("proteins"), list):
+                rows = discovered.get("proteins")  # type: ignore[assignment]
+        elif isinstance(discovered, list):
+            rows = discovered  # type: ignore[assignment]
+        for row in rows:
+            if len(raw_seeds) >= seed_limit:
+                break
+            if isinstance(row, dict):
+                _add_seed(row.get("protein_id"))
+
+    raw_seeds = raw_seeds[:seed_limit]
+    normalized_seeds = normalized_seeds[:seed_limit]
+
+    filters = params.get("filters") if isinstance(params.get("filters"), dict) else {}
+    annotate = bool(params.get("annotate", True))
+
+    plan = None
+    if normalized_seeds:
+        plan = {
+            "type": "similarity_plan",
+            "seeds": normalized_seeds,
+            "raw_seeds": raw_seeds,
+            "nn": nn_value,
+            "filters": filters,
+            "annotate": annotate,
+        }
+
+    macro = None
+    if raw_seeds:
+        macro = {
+            "type": "macro_result",
+            "name": "similarity_seeds",
+            "rows": [{"seed_protein_id": pid} for pid in raw_seeds],
+            "row_count": len(raw_seeds),
+        }
+
+    result: Dict[str, Any] = {
+        "SimilarityPlan": plan,
+        "SimilaritySeedSet": raw_seeds,
+    }
+    if macro:
+        result["SimilaritySeedMacro"] = macro
+    return result
+
+
 register_operator(OperatorSpec(
     name="MaterializeFeatureDiscovery",
     inputs=["discovered_proteins", "pf_facet", "ko_facet"],
@@ -1291,6 +1387,21 @@ register_operator(OperatorSpec(
     params={},
     run=_materialize_pathway_profile,
     description="Package KO presence and pathway completeness into typed records",
+))
+
+register_operator(OperatorSpec(
+    name="PlanSimilaritySearch",
+    inputs=["discovered_proteins"],
+    outputs=["SimilarityPlan", "SimilaritySeedSet", "SimilaritySeedMacro"],
+    params={
+        "protein_ids": "List[str] | null",
+        "seed_limit": "int (default 1)",
+        "nn": "int (default 10)",
+        "filters": "dict | null",
+        "annotate": "bool (default true)",
+    },
+    run=_plan_similarity_search,
+    description="Prepare LanceDB similarity plan metadata from seeds",
 ))
 
 register_operator(OperatorSpec(

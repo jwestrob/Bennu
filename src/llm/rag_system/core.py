@@ -6,10 +6,9 @@ Restored from backup with modular organization.
 
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import os
 import json
-import asyncio
 
 try:
     import dspy
@@ -29,6 +28,7 @@ from ..config import LLMConfig
 from ..lm_factory import make_lm
 from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
 from .dspy_signatures import NEO4J_SCHEMA
+from ..options.router import parse_macro_intent
 from .utils import setup_debug_logging, GenomicContext
 from .log_formatter import setup_enhanced_logging
 from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
@@ -416,6 +416,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         return ctx
 
                     def planner_call_inputs():
+                        include_similarity = False
+                        intent_for_planner = None
+                        try:
+                            intent_for_planner = parse_macro_intent(question)
+                            ldb_ob = getattr(getattr(intent_for_planner, 'obligations', None), 'lancedb_knn', None)
+                            include_similarity = bool(ldb_ob and getattr(ldb_ob, 'required', False))
+                        except Exception:
+                            intent_for_planner = None
+                            include_similarity = False
+                        if include_similarity and not getattr(self, 'lancedb_processor', None):
+                            include_similarity = False
+
                         hard_constraints = (
                             "HARD CONSTRAINTS:\n"
                             "- If you include NeighborhoodContext, you MUST provide explicit seeds.\n"
@@ -439,7 +451,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                             "- PFAM|KO|search|discover|find → prefer FeatureDiscovery\n"
                         )
                         # Restrict planner-visible catalog to composites only
-                        planner_catalog = planner_catalog_overlay()
+                        planner_catalog = planner_catalog_overlay(include_similarity=include_similarity)
                         dbtpl_catalog = _db_templates_catalog()
                         dataset_ctx = _build_dataset_context()
                         dbtpl_rules = (
@@ -467,6 +479,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         "AnnotationDiscovery": "FeatureDiscovery",
                         "CountByIdsPerGenome": "FeatureProfile",
                         "NeighborhoodContext": "GeneContext",
+                        "PlanSimilaritySearch": "SimilaritySearch",
                         "FetchPresentKOs": "PathwayProfile",
                         "LoadKoPathwayTotals": "PathwayProfile",
                         "ComputePathwayCompleteness": "PathwayProfile",
@@ -568,7 +581,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 f_pr.write(str(plan_text) if plan_text is not None else '')
                             # Also persist the planner-visible catalog overlay for full context
                             try:
-                                cat = planner_catalog_overlay()
+                                cat = planner_catalog_overlay(include_similarity=include_similarity)
                                 with open(os.path.join(sdir, 'planner_catalog_overlay.json'), 'w', encoding='utf-8') as f_cat:
                                     json.dump(cat, f_cat, indent=2)
                             except Exception as _cat_err:
@@ -769,8 +782,32 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 ds_ctx = _build_dataset_context()
                             except Exception:
                                 ds_ctx = {}
-                            ctx = OperatorContext(neo4j_driver=self.neo4j_processor.driver, project_root=str(getattr(self, 'project_root', '')), dataset_context=ds_ctx)
+                            ctx = OperatorContext(
+                                neo4j_driver=self.neo4j_processor.driver,
+                                project_root=str(getattr(self, 'project_root', '')),
+                                dataset_context=ds_ctx,
+                                lancedb=getattr(self, 'lancedb_processor', None),
+                            )
                             env = execute_plan(plan, ctx)
+
+                            similarity_plans: List[Dict[str, Any]] = []
+                            plan_obj = env.get('SimilarityPlan')
+                            if isinstance(plan_obj, dict):
+                                similarity_plans.append(plan_obj)
+                            elif isinstance(plan_obj, list):
+                                for entry in plan_obj:
+                                    if isinstance(entry, dict):
+                                        similarity_plans.append(entry)
+                            if similarity_plans:
+                                try:
+                                    sim_payload, sim_macro = await self._fulfill_similarity_plans(similarity_plans)
+                                    if sim_payload:
+                                        env['SimilarityResults'] = sim_payload
+                                    if sim_macro:
+                                        env['SimilarityResultsMacro'] = sim_macro
+                                except Exception as _sim_err:
+                                    logger.info(f"Similarity plan execution skipped: {_sim_err}")
+
                             # Merge environments (last write wins on same keys)
                             try:
                                 combined_env.update(env)
@@ -811,7 +848,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                 with dspy.context(lm=lm):
                                     plan_res2 = module(
                                         question=question,
-                                        operator_catalog=json.dumps(planner_catalog_overlay()),
+                                        operator_catalog=json.dumps(planner_catalog_overlay(include_similarity=include_similarity)),
                                         constraints="allow_keyword_discovery=1",
                                         ko_reference=ko_ref,
                                         pfam_reference=pf_ref,
@@ -2410,11 +2447,151 @@ print("Data available: {data_summary}")
                 # Add metadata about fallback
                 fallback_context.metadata['used_fallback'] = True
                 fallback_context.metadata['fallback_reason'] = "Scoped query returned no results"
-                return fallback_context
-        
+        return fallback_context
+
         logger.warning("❌ Both scoped and unscoped queries returned no results")
         return context
-    
+
+    async def _fetch_protein_annotations(self, protein_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not protein_ids:
+            return {}
+        try:
+            result = await self.neo4j_processor.execute_named_template(
+                'protein_annotations_by_ids',
+                {'protein_ids': protein_ids},
+            )
+        except Exception as exc:
+            logger.info(f"Annotation lookup skipped: {exc}")
+            return {}
+        rows = result.results if hasattr(result, 'results') else []
+        out: Dict[str, Dict[str, Any]] = {}
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                pid = row.get('protein_id')
+                if not isinstance(pid, str):
+                    continue
+                out[pid] = {
+                    'genome_id': row.get('genome_id'),
+                    'gene_id': row.get('gene_id'),
+                    'pfam_ids': row.get('pfam_ids') or [],
+                    'pfam_desc': row.get('pfam_desc') or [],
+                    'ko_ids': row.get('ko_ids') or [],
+                    'ko_desc': row.get('ko_desc') or [],
+                }
+        return out
+
+    async def _fulfill_similarity_plans(
+        self,
+        plans: List[Dict[str, Any]],
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        if not plans:
+            return None, None
+        processor = getattr(self, 'lancedb_processor', None)
+        if processor is None:
+            raise RuntimeError("LanceDB processor not configured; cannot execute similarity search")
+
+        result_plans: List[Dict[str, Any]] = []
+        aggregate_rows: List[Dict[str, Any]] = []
+        annotations_needed: Set[str] = set()
+        any_annotate = False
+
+        for idx, plan in enumerate(plans, start=1):
+            normalized = [str(s).strip() for s in plan.get('seeds', []) if isinstance(s, str) and str(s).strip()]
+            raw = [str(s).strip() for s in plan.get('raw_seeds', []) if isinstance(s, str) and str(s).strip()]
+            if not normalized:
+                normalized = raw
+            if not normalized:
+                continue
+            try:
+                nn = max(1, min(int(plan.get('nn', 10)), 50))
+            except Exception:
+                nn = 10
+            filters = plan.get('filters') if isinstance(plan.get('filters'), dict) else {}
+            annotate = bool(plan.get('annotate', True))
+            any_annotate = any_annotate or annotate
+
+            qr = await processor.execute_similarity_batch(normalized, nn, filters=filters)
+            result_map: Dict[str, List[Dict[str, Any]]] = {}
+            if isinstance(qr.results, list) and qr.results and isinstance(qr.results[0], dict):
+                result_map = qr.results[0]  # type: ignore[assignment]
+
+            plan_rows: List[Dict[str, Any]] = []
+            for seed_raw, seed_norm in zip(raw if raw else normalized, normalized):
+                neighbors = result_map.get(seed_norm, []) if isinstance(result_map, dict) else []
+                for rank, item in enumerate(neighbors[:nn], start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    neighbor_id = item.get('protein_id')
+                    row = {
+                        'seed_protein_id': seed_raw or seed_norm,
+                        'neighbor_rank': rank,
+                        'neighbor_protein_id': neighbor_id,
+                        'similarity': item.get('similarity'),
+                        'distance': item.get('distance'),
+                        'genome_id': item.get('genome_id'),
+                        'sequence_length': item.get('sequence_length'),
+                    }
+                    plan_rows.append(row)
+                    aggregate_rows.append({
+                        'seed_protein_id': seed_raw or seed_norm,
+                        'neighbor_protein_id': neighbor_id,
+                        'similarity': item.get('similarity'),
+                        'genome_id': item.get('genome_id'),
+                    })
+                    if annotate and isinstance(neighbor_id, str):
+                        annotations_needed.add(neighbor_id)
+
+            result_plans.append({
+                'plan_index': idx,
+                'seeds': normalized,
+                'raw_seeds': raw,
+                'nn': nn,
+                'filters': filters,
+                'annotate': annotate,
+                'neighbors': plan_rows,
+                'execution_time': getattr(qr, 'execution_time', None),
+            })
+
+        if not result_plans:
+            return None, None
+
+        if any_annotate and annotations_needed:
+            ann_ids: List[str] = []
+            for pid in annotations_needed:
+                if not isinstance(pid, str):
+                    continue
+                pid = pid.strip()
+                if not pid:
+                    continue
+                if not pid.startswith('protein:'):
+                    pid = f'protein:{pid}'
+                ann_ids.append(pid)
+            annotations = await self._fetch_protein_annotations(ann_ids)
+            for plan in result_plans:
+                for row in plan['neighbors']:
+                    pid = row.get('neighbor_protein_id')
+                    lookup_key = pid if isinstance(pid, str) and pid.startswith('protein:') else f'protein:{pid}' if isinstance(pid, str) else None
+                    if lookup_key and lookup_key in annotations:
+                        row['annotations'] = annotations[lookup_key]
+
+        payload = {
+            'type': 'similarity_results',
+            'plan_count': len(result_plans),
+            'total_neighbors': sum(len(plan['neighbors']) for plan in result_plans),
+            'plans': result_plans,
+        }
+
+        macro_rows = aggregate_rows[:500]
+        macro = {
+            'type': 'macro_result',
+            'name': 'SimilarityResults',
+            'rows': macro_rows,
+            'row_count': len(aggregate_rows),
+        }
+        return payload, macro
+
     async def _retrieve_context(self, query_type: str, retrieval_plan, question: str = "") -> GenomicContext:
         """
         Retrieve context based on query type and plan.

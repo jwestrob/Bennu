@@ -8,6 +8,7 @@ class OperatorContext:
     neo4j_driver: Any
     project_root: Optional[str] = None
     dataset_context: Optional[Dict[str, Any]] = None
+    lancedb: Optional[Any] = None
 
 
 @dataclass

@@ -1335,73 +1335,7 @@ class UnifiedAgentExecutor:
                         }))
                         logger.info(f"🔒 Obligation gate: forcing neighborhood_extractor with seeds={len(seed_ids)}")
                 elif "lancedb_knn" in unmet:
-                    # Hard enforce: redirect to lancedb_knn with best-effort seeds
-                    try:
-                        from ..options.router import parse_macro_intent
-                        intent0 = parse_macro_intent(question)
-                        nn_val = unmet["lancedb_knn"].get("nn") or (getattr(getattr(intent0, 'nn', None), 'value', None) or 2)
-                    except Exception:
-                        nn_val = 2
-                    # Try to extract recent seed_ids from cached DB results
-                    seed_ids: List[str] = []
-                    try:
-                        from pathlib import Path
-                        import json as _json2
-                        session_path = getattr(getattr(self, 'note_keeper', None), 'session_path', None)
-                        if session_path:
-                            tool_dir = Path(session_path) / 'tool_results'
-                            if tool_dir.exists():
-                                db_files = sorted(tool_dir.glob('db_*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
-                                for f in db_files[:5]:
-                                    data = _json2.loads(f.read_text())
-                                    rows = (data.get('tool_result') or {}).get('structured_data') or []
-                                    for row in rows:
-                                        # Accept sanitized rows ({"protein_id": ...}) or nested node maps
-                                        pid = row.get('protein_id') or row.get('id')
-                                        if not pid:
-                                            p = row.get('p') or row.get('protein')
-                                            if isinstance(p, dict):
-                                                pid = p.get('id')
-                                        if isinstance(pid, str) and pid not in seed_ids:
-                                            seed_ids.append(pid)
-                                    if len(seed_ids) >= 10:
-                                        break
-                    except Exception:
-                        seed_ids = []
-                    # If no seeds yet, nudge the planner to fetch PFAM seeds deterministically
-                    if not seed_ids:
-                        # Overwrite decision toward a deterministic DB fetch using registry template
-                        from ..kg.cypher_templates.registry import SPECS  # type: ignore
-                        if 'proteins_with_pfam' in SPECS:
-                            try:
-                                from ..options.router import parse_macro_intent
-                                it = parse_macro_intent(question)
-                                marker = getattr(it, 'marker', None) or 'integrase'
-                            except Exception:
-                                marker = 'integrase'
-                            setattr(result, 'next_action', 'database_query')
-                            setattr(result, 'tool_parameters', _json.dumps({
-                                'template': 'proteins_with_pfam',
-                                'slots': {'pfam': marker, 'limit': 50, 'exact': False}
-                            }))
-                            logger.info("🔒 Obligation gate: forcing database_query(proteins_with_pfam) to collect seeds")
-                        else:
-                            # As last resort, preserve decision and let repair step try again
-                            pass
-                    else:
-                        setattr(result, 'next_action', 'lancedb_knn')
-                        # Use default PFAM exclusion if present in ledger
-                        ex = unmet.get('lancedb_knn', {})
-                        tool_params = {
-                            'seed_ids': seed_ids,
-                            'nn': int(nn_val),
-                            'topk': max(10, 10 * int(nn_val)),
-                            'distance': 'cosine',
-                            'exclude_namespace': ex.get('exclude_namespace') or 'pfam',
-                            'exclude_markers': ex.get('exclude_markers') or [],
-                        }
-                        setattr(result, 'tool_parameters', _json.dumps(tool_params))
-                        logger.info(f"🔒 Obligation gate: forcing lancedb_knn with seeds={len(seed_ids)} nn={nn_val}")
+                    logger.info("🔓 LanceDB obligation unresolved; leaving tool selection to planner output")
         except Exception:
             pass
 

@@ -27,7 +27,7 @@ marker: MARKER_WORD (MARKER_WORD | "-" | "_" | "." )*
 signature: marker SIG
 // A non-side-effecting marker term for use inside filters
 marker_term: MARKER_WORD (MARKER_WORD | "-" | "_" | "." )*
-MARKER_WORD: /[A-Za-z0-9]+/
+MARKER_WORD: /(?!then\b)[A-Za-z0-9]+/i
 SIG: /signature/i
 
 // "five" | "5" | with comparators
@@ -260,6 +260,36 @@ def normalize_macro_text(text: str) -> str:
         try:
             # Map common synonyms
             nt = _re.sub(r"\bORFs?\b", "genes", nt, flags=_re.I)
+            nt = _re.sub(r"\bplm\b", "embedding", nt, flags=_re.I)
+            # Allow imperative phrasing ("pick/select/choose") -> canonical find form
+            nt = _re.sub(
+                r"\b(pick|select|choose)\s+(?:a|one)\s+single\s+([^,]+?)\s+protein\b",
+                r"find 1 loci with \2",
+                nt,
+                flags=_re.I,
+            )
+            nt = _re.sub(
+                r"\b(pick|select|choose)\s+(?:a|one)\s+([^,]+?)\s+protein\b",
+                r"find 1 loci with \2",
+                nt,
+                flags=_re.I,
+            )
+            nt = _re.sub(
+                r"\b(pick|select|choose)\s+single\s+([^,]+?)\s+protein\b",
+                r"find 1 loci with \2",
+                nt,
+                flags=_re.I,
+            )
+            # Drop dataset qualifier that breaks grammar
+            nt = _re.sub(r"\bin\s+this\s+dataset\b", "", nt, flags=_re.I)
+            # Normalize neighbor request phrasing to match nn_stage grammar
+            nt = _re.sub(
+                r"and\s+tell\s+me\s+the\s+annotations\s+of\s+its\s+([A-Za-z0-9_-]+)\s+closest\s+neighbors\s+as\s+measured\s+by\s+[A-Za-z0-9_\s-]+?\s+similarity",
+                r" then closest neighbors \1 by similarity",
+                nt,
+                flags=_re.I,
+            )
+            nt = _re.sub(r"\s*,\s*then", " then", nt, flags=_re.I)
             # Normalize colloquial 'you think are prophages' → 'with PROPHAGE signature'
             nt = _re.sub(
                 r"\bloci\s+you\s+think\s+are\s+prophages?\b",

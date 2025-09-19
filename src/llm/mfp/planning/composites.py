@@ -180,6 +180,37 @@ def expand_gene_context(params: Dict[str, Any], ctx: CompositeContext) -> List[D
     return steps
 
 
+def expand_similarity_search(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
+    """Composite: SimilaritySearch
+
+    Plans a LanceDB similarity lookup for seed proteins derived from prior FeatureDiscovery rows
+    or explicit protein_ids supplied in params.
+    """
+    steps: List[Dict[str, Any]] = []
+    seed_binding = str(params.get("seed_binding") or "discovered_proteins").strip()
+    plan_params: Dict[str, Any] = {}
+    for key in ("protein_ids", "filters"):
+        if key in params and params[key] is not None:
+            plan_params[key] = params[key]
+    for key, default in (("seed_limit", 1), ("nn", params.get("top_k", 10))):
+        val = params.get(key, default)
+        if val is not None:
+            try:
+                plan_params[key] = int(val)
+            except Exception:
+                plan_params[key] = default
+    if 'annotate' in params:
+        plan_params['annotate'] = bool(params.get('annotate'))
+    inputs_map: Dict[str, Any] = {}
+    if seed_binding and seed_binding != 'discovered_proteins':
+        inputs_map['discovered_proteins'] = seed_binding
+    step: Dict[str, Any] = {"op": "PlanSimilaritySearch", "params": plan_params}
+    if inputs_map:
+        step['inputs'] = inputs_map
+    steps.append(step)
+    return steps
+
+
 def expand_pathway_profile(params: Dict[str, Any], ctx: CompositeContext) -> List[Dict[str, Any]]:
     steps: List[Dict[str, Any]] = []
     # KO presence per genome (scoped via DatasetContext by operator default)
@@ -319,19 +350,16 @@ COMPOSITE_EXPANDERS: Dict[str, Expansion] = {
     "FeatureProfile": expand_feature_profile,
     "FunctionalProfile": lambda p, c: expand_functional_profile(p, c),
     "GeneContext": expand_gene_context,
+    "SimilaritySearch": expand_similarity_search,
     "PathwayProfile": expand_pathway_profile,
     "ModuleProfile": expand_module_profile,
     "DBTemplateCall": expand_db_template_call,
 }
 
 
-def planner_catalog_overlay() -> Dict[str, Any]:
-    """Return a minimal planner-visible catalog describing only the 5 composites.
-
-    This is used to restrict the planner's choice set without changing the runtime registry.
-    """
-    return {
-        "operators": [
+def planner_catalog_overlay(include_similarity: bool = False) -> Dict[str, Any]:
+    """Return a minimal planner-visible catalog describing planner-approved composites."""
+    ops = [
             {
                 "name": "FeatureProfile",
                 "description": "Per-genome PFAM+KO counts from a keyword using catalog outputs directly. Canonical flow: SearchPfamCatalogFuzzy → SearchKoCatalogFuzzy → CountByIdsPerGenome → MaterializeFeatureProfile. Do not insert ExtractIdsFromCatalogHits in this flow.",
@@ -390,5 +418,22 @@ def planner_catalog_overlay() -> Dict[str, Any]:
                 },
                 "outputs": ["structured_data"],
             },
-        ]
-    }
+    ]
+    if include_similarity:
+        ops.append(
+            {
+                "name": "SimilaritySearch",
+                "description": "Plan a LanceDB-based pLM similarity lookup for seed proteins. Requires explicit protein_ids or prior FeatureDiscovery output to supply seeds; outputs a SimilarityPlan for downstream execution.",
+                "inputs": ["protein_ids", "seed_binding", "seed_limit", "nn", "filters", "annotate"],
+                "params": {
+                    "protein_ids": "List[str] explicit protein IDs (optional)",
+                    "seed_binding": "string binding name providing discovered_proteins (default discovered_proteins)",
+                    "seed_limit": "int max number of seed proteins (default 1)",
+                    "nn": "int neighbors per seed (default 10)",
+                    "filters": "Object with LanceDB filter hints (optional)",
+                    "annotate": "bool fetch PFAM/KO annotations for neighbors (default true)"
+                },
+                "outputs": ["SimilarityPlan", "SimilaritySeedSet"],
+            }
+        )
+    return {"operators": ops}

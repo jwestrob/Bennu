@@ -501,6 +501,15 @@ SPECS: Dict[str, TemplateSpec] = {
         cost="cheap",
         slot_hints={"protein_id": "protein:<id>"},
     ),
+    "protein_annotations_by_ids": TemplateSpec(
+        filename="protein_annotations_by_ids.cypher",
+        required={"protein_ids": list},
+        optional={},
+        category="annotation",
+        returns="table",
+        cost="cheap",
+        slot_hints={"protein_ids": "['protein:<id>']"},
+    ),
     # --- CRISPR templates ---
     "crispr_arrays_by_contig": TemplateSpec(
         filename="crispr_arrays_by_contig.cypher",

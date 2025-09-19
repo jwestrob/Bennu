@@ -512,3 +512,15 @@
 {"ts": "2025-09-19T07:30:34Z", "event": "pipeline.start", "data": {"question": "Which genome has the most diverse transport capabilities?"}}
 {"ts": "2025-09-19T09:23:56Z", "event": "pipeline.start", "data": {"question": "Which genome has the most diverse transport capabilities?"}}
 {"ts": "2025-09-19T10:09:27Z", "event": "pipeline.start", "data": {"question": "Which genome has the most diverse transport capabilities?"}}
+{"ts": "2025-09-19T10:33:07Z", "event": "pipeline.start", "data": {"question": "Which genomes, if any, have rubisco?"}}
+{"ts": "2025-09-19T11:01:13Z", "event": "pipeline.start", "data": {"question": "Which genomes, if any, have rubisco?"}}
+{"ts": "2025-09-19T11:37:06Z", "event": "pipeline.start", "data": {"question": "Which genomes, if any, have rubisco?"}}
+{"ts": "2025-09-19T11:39:26Z", "event": "pipeline.start", "data": {"question": "Based on the surounding genes, what types of rubisco do you think we have in this dataset?"}}
+{"ts": "2025-09-19T11:47:12Z", "event": "pipeline.start", "data": {"question": "Which genome has the most diverse transport capabilities?"}}
+{"ts": "2025-09-19T12:12:11Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
+{"ts": "2025-09-19T13:09:47Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
+{"ts": "2025-09-19T13:16:48Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
+{"ts": "2025-09-19T20:31:05Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
+{"ts": "2025-09-19T20:52:42Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
+{"ts": "2025-09-19T20:53:35Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
+{"ts": "2025-09-19T21:09:54Z", "event": "pipeline.start", "data": {"question": "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."}}
