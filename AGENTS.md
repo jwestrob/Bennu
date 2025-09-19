@@ -42,6 +42,12 @@ Scope: Entire repository. These instructions constrain planner behavior, operato
 - Outputs: the CI service returns `files_created`; the caller downloads them to `data/session_notes/<sid>/plots/` via `GET /sessions/{sid}/files/{name}` and prints a one‑line summary to the console.
 - Reporting: `report_v2.md` includes stdout/stderr, the service‑side file list, and the downloaded host file paths.
 
+### Planner Contract (CI Gate)
+
+- The MacroPlanner plan JSON MUST include a top‑level boolean field `run_code_interpreter`.
+- Set `true` only when the user explicitly requests plots/visualizations (e.g., “plot”, “visualize”, “heatmap”, “cluster”, “figure”) or when figures are essential to answer the question.
+- Otherwise set `false`. When `CI_MODE=auto`, the core finalizer honors this flag to decide whether to call the CI service. `CI_MODE=always` and `CI_MODE=never` override the planner’s flag.
+
 ### CLI & Config (agent‑facing)
 
 - `--ci {auto|always|never}` controls whether finalizer runs (default: auto). Also available as `CI_MODE` env.
@@ -54,6 +60,7 @@ Scope: Entire repository. These instructions constrain planner behavior, operato
 - Keep retrieval/compute pack schemas stable (see AGENT_STRUCTURE.md Contracts & Data Shapes). If you change `FeatureProfile` or add new packs, update the generator accordingly.
 - Never introduce seaborn or os usage in CI‑side code; the sandbox runs with restricted globals. Stick to matplotlib + pathlib + builtins.
 - Console signals are part of UX: printing the CI call (model + URL) and the download summary is required; do not remove without a replacement.
+ 
 
 ### Container notes (CI service)
 
@@ -62,5 +69,13 @@ Scope: Entire repository. These instructions constrain planner behavior, operato
   - `POST /execute` — runs code
   - `GET /health` — readiness check
   - `GET /sessions/{sid}/files/{relpath}` — artifact download (with traversal protection)
+
+### Additional guardrails (2025-09-18)
+
+- Avoid feature-type hardcoding in visualization and reporting. Code that renders plots must iterate over all feature types present in `FeatureProfile` outputs (e.g., keys of `per_genome_top_matrix.feature_order`).
+- Prefer using the `host_plots_dir` computed by core when referencing artifact paths; do not reconstruct paths from session IDs.
+- Filenames for generated figures should include a short deterministic tag (derived from the session question) to prevent collisions across multiple runs within the same session.
+- When inputs are empty or all-zero, CI must still emit a placeholder PNG stating "No signal to plot" to make outcomes observable.
+- Route all model choices through `LLMConfig` (planner/IRB/reporter/CI). This is a TODO for lingering hard-coded IDs; do not introduce new literals.
 
 Follow‑ups planned: once validated, we will compact documentation and keep only the summary + authoritative contracts in `AGENT_STRUCTURE.md`, linking from here.

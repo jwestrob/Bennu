@@ -370,17 +370,17 @@ def ask(
     planner: Optional[str] = typer.Option(
         None,
         "--planner", "-planner",
-    help="Override model for Planner step (e.g., gpt-5-high, gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-4-sonnet [native], openrouter/claude-4-sonnet [OpenRouter])"
+    help="Override model for Planner step (e.g., gpt-5-high, gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-4-sonnet [native], openrouter/anthropic/claude-sonnet-4 [OpenRouter])"
     ),
     irb: Optional[str] = typer.Option(
         None,
         "--irb", "-irb",
-    help="Override model for IRB editor step (e.g., gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-4-sonnet, openrouter/claude-4-sonnet)"
+    help="Override model for IRB editor step (e.g., gpt-5-minimal, openai/gpt-4.1-mini, anthropic/claude-4-sonnet, openrouter/anthropic/claude-sonnet-4)"
     ),
     reporter: Optional[str] = typer.Option(
         None,
         "--reporter", "-reporter",
-    help="Override model for final report synthesis (e.g., gpt-5-high, anthropic/claude-4-sonnet [native], openrouter/claude-4-sonnet [OpenRouter])"
+    help="Override model for final report synthesis (e.g., gpt-5-high, anthropic/claude-4-sonnet [native], openrouter/anthropic/claude-sonnet-4 [OpenRouter])"
     ),
     ci_mode: Optional[str] = typer.Option(
         None,

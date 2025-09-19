@@ -1087,93 +1087,98 @@ def _count_by_ids_per_genome(ctx: OperatorContext, inputs: Dict[str, Any], param
 
 
 def _materialize_feature_profile(ctx: OperatorContext, inputs: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    """Materialize a compact per-genome feature profile from PFAM/KO counts.
+    """Materialize a compact per-genome feature profile from count rows.
 
-    Inputs:
+    Inputs (currently supported):
       - pfam_counts: [{genome_id,pfam_id,count}]
       - ko_counts:   [{genome_id,ko_id,count}]
-    Outputs:
-      - PerGenomeFeatureCounts
-      - FeatureProfileSummary
+    The implementation is generic over present feature types so that additional
+    types can be added later without changing this function.
     """
-    pfam_counts = inputs.get("pfam_counts") or []
-    ko_counts = inputs.get("ko_counts") or []
+    # Gather available count tables by feature type
+    counts_by_type: Dict[str, List[Dict[str, Any]]] = {
+        'pfam': inputs.get('pfam_counts') or [],
+        'ko': inputs.get('ko_counts') or [],
+    }
+    present_types = [t for t, rows in counts_by_type.items() if rows]
 
-    # Build per-genome structure
+    # Build per-genome structure generically
     per_genome: Dict[str, Dict[str, Any]] = {}
-    for r in pfam_counts:
-        gid = str(r.get("genome_id"))
-        pid = str(r.get("pfam_id"))
-        cnt = int(r.get("count") or 0)
-        if not gid or not pid:
-            continue
-        e = per_genome.setdefault(gid, {"genome_id": gid, "pfam": [], "ko": []})
-        e["pfam"].append({"id": pid, "count": cnt})
-    for r in ko_counts:
-        gid = str(r.get("genome_id"))
-        kid = str(r.get("ko_id"))
-        cnt = int(r.get("count") or 0)
-        if not gid or not kid:
-            continue
-        e = per_genome.setdefault(gid, {"genome_id": gid, "pfam": [], "ko": []})
-        e["ko"].append({"id": kid, "count": cnt})
-    rows = sorted(per_genome.values(), key=lambda d: d.get("genome_id", ""))
+    for ftype, rows in counts_by_type.items():
+        id_key = f'{ftype}_id'
+        for r in rows:
+            gid = str(r.get('genome_id'))
+            fid = str(r.get(id_key))
+            cnt = int(r.get('count') or 0)
+            if not gid or not fid:
+                continue
+            e = per_genome.setdefault(gid, {'genome_id': gid})
+            e.setdefault(ftype, []).append({'id': fid, 'count': cnt})
+    # Ensure all present types are present in each row (empty lists ok)
+    for row in per_genome.values():
+        for t in present_types:
+            row.setdefault(t, [])
+    rows = sorted(per_genome.values(), key=lambda d: d.get('genome_id', ''))
 
-    # Simple global summary (top features overall)
+    # Global summaries per feature type
     from collections import Counter
-    pf_c = Counter()
-    ko_c = Counter()
-    for r in pfam_counts:
-        pf_c[r.get("pfam_id")] += int(r.get("count") or 0)
-    for r in ko_counts:
-        ko_c[r.get("ko_id")] += int(r.get("count") or 0)
+    top_by_type: Dict[str, List[Dict[str, Any]]] = {}
     def _top(cnt: Counter, n: int = 20):
         out = []
         for k, v in cnt.most_common(n):
             if isinstance(k, str) and k:
-                out.append({"id": k, "total": int(v)})
+                out.append({'id': k, 'total': int(v)})
         return out
-    # Label enrichment from local catalogs (best effort; non-fatal if missing)
-    pf_label_map: Dict[str, str] = {}
-    ko_label_map: Dict[str, str] = {}
+    for ftype, rows in counts_by_type.items():
+        c = Counter()
+        id_key = f'{ftype}_id'
+        for r in rows:
+            fid = r.get(id_key)
+            if isinstance(fid, str) and fid:
+                c[fid] += int(r.get('count') or 0)
+        top_by_type[ftype] = _top(c)
+
+    # Label enrichment (kept per-type; safe if catalogs missing)
+    labels: Dict[str, Dict[str, str]] = {t: {} for t in present_types}
     try:
         for pfid, short, desc in _load_pfam_catalog(getattr(ctx, 'project_root', None)):
             base = (pfid or '').split('.')[0].upper()
-            if base and base not in pf_label_map:
-                pf_label_map[base] = short or desc or base
+            if base:
+                labels.setdefault('pfam', {})[base] = short or desc or base
     except Exception:
         pass
     try:
         for kid, label in _load_ko_catalog(getattr(ctx, 'project_root', None)):
-            if kid and kid not in ko_label_map:
-                ko_label_map[kid] = label or kid
+            if kid:
+                labels.setdefault('ko', {})[kid] = label or kid
     except Exception:
         pass
 
-    def _annotate(items: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
+    def _annotate(items: List[Dict[str, Any]], ftype: str) -> List[Dict[str, Any]]:
         out = []
+        lab = labels.get(ftype) or {}
         for it in items:
             i = dict(it)
-            fid = i.get('id') or i.get(f'{kind}_id')
+            fid = i.get('id') or i.get(f'{ftype}_id')
             if isinstance(fid, str):
-                name = (pf_label_map.get(fid) if kind == 'pfam' else ko_label_map.get(fid))
+                name = lab.get(fid)
                 if name:
                     i['name'] = name
             out.append(i)
         return out
 
     summary = {
-        "top_pfam": _annotate(_top(pf_c), 'pfam'),
-        "top_ko": _annotate(_top(ko_c), 'ko'),
-        "labels": {
-            "pfam": pf_label_map,
-            "ko": ko_label_map,
-        }
+        'feature_types': present_types,
+        'top': {t: _annotate(top_by_type.get(t, []), t) for t in present_types},
+        'labels': {t: labels.get(t) or {} for t in present_types},
     }
+    # Backward-compat aliases for existing consumers
+    if 'pfam' in present_types:
+        summary['top_pfam'] = summary['top']['pfam']
+    if 'ko' in present_types:
+        summary['top_ko'] = summary['top']['ko']
 
-    # Optional compact matrices for the top features (improves reporter UX)
-    top_pfam_ids = [x['id'] for x in summary['top_pfam']]
-    top_ko_ids = [x['id'] for x in summary['top_ko']]
+    # Build compact matrices per feature type (top features only)
     def _matrix(count_rows: List[Dict[str, Any]], id_key: str, top_ids: List[str]) -> List[Dict[str, Any]]:
         by_g: Dict[str, Dict[str, int]] = {}
         for r in count_rows:
@@ -1184,24 +1189,23 @@ def _materialize_feature_profile(ctx: OperatorContext, inputs: Dict[str, Any], p
                 continue
             e = by_g.setdefault(gid, {k: 0 for k in top_ids})
             e[fid] += c
-        # emit stable rows
         out = []
         for gid in sorted(by_g.keys()):
-            row = {"genome_id": gid}
+            row = {'genome_id': gid}
             row.update({fid: by_g[gid].get(fid, 0) for fid in top_ids})
             out.append(row)
         return out
 
-    per_genome_matrix = {
-        "pfam": _matrix(pfam_counts, 'pfam_id', top_pfam_ids),
-        "ko": _matrix(ko_counts, 'ko_id', top_ko_ids),
-        "feature_order": {"pfam": top_pfam_ids, "ko": top_ko_ids}
-    }
+    feature_order: Dict[str, List[str]] = {t: [x['id'] for x in summary['top'].get(t, [])] for t in present_types}
+    per_genome_matrix: Dict[str, Any] = {'feature_order': feature_order, 'feature_types': present_types}
+    for t in present_types:
+        top_ids = feature_order.get(t) or []
+        per_genome_matrix[t] = _matrix(counts_by_type.get(t, []), f'{t}_id', top_ids)
 
     return {
-        "PerGenomeFeatureCounts": rows,
-        "FeatureProfileSummary": summary,
-        "PerGenomeTopMatrix": per_genome_matrix,
+        'PerGenomeFeatureCounts': rows,
+        'FeatureProfileSummary': summary,
+        'PerGenomeTopMatrix': per_genome_matrix,
     }
 
 

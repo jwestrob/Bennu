@@ -43,8 +43,9 @@ def _resolve_alias(model_id: str) -> Optional[str]:
         "gpt-4.1-mini": "openai/gpt-4.1-mini",
         "4.1-mini": "openai/gpt-4.1-mini",
         # Sonnet 4 aliases should route to OpenRouter when unspecified
-        "claude-sonnet-4": "openrouter/claude-4-sonnet",
-        "sonnet-4": "openrouter/claude-4-sonnet",
+        "claude-sonnet-4": "openrouter/anthropic/claude-sonnet-4",
+        "claude-4-sonnet": "openrouter/anthropic/claude-sonnet-4",
+        "sonnet-4": "openrouter/anthropic/claude-sonnet-4",
     }
     return alias.get(name)
 
@@ -114,20 +115,28 @@ def make_lm(model_id: str, step: str = "") -> Any:
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY not set for OpenRouter provider")
-        # Convert to OpenRouter's model id: prefer vendor-prefixed form
-        inner = model.split("/", 1)[1]
-        if "/" not in inner:
-            # Assume Anthropic when only a bare model name like 'claude-4-sonnet' is given
-            routed_model = f"anthropic/{inner}"
+        # Convert to canonical OpenRouter model id while preserving existing provider prefix if supplied
+        inner = model.split("/", 1)[1].strip()
+        # Normalize bare model names (no provider segment) via alias map
+        alias_map = {
+            "claude-4-sonnet": "anthropic/claude-sonnet-4",
+            "claude-sonnet-4": "anthropic/claude-sonnet-4",
+        }
+        key = inner.lower()
+        inner_lookup = alias_map.get(key, inner)
+
+        if inner_lookup.startswith("openrouter/"):
+            routed_model = inner_lookup
+        elif "/" in inner_lookup:
+            routed_model = f"openrouter/{inner_lookup}"
         else:
-            routed_model = inner
-        # Route dspy.LM via OpenRouter by setting OpenAI-compatible env vars
-        os.environ["OPENAI_API_KEY"] = api_key
-        os.environ["OPENAI_API_BASE"] = base_url
-        # Minimal LM; drop params that could introduce caps or wrong routes
-        # IMPORTANT: force OpenAI provider path by prefixing model with 'openai/'
-        lm = dspy.LM(
-            model=f"openai/{routed_model}",
+            # Default Anthropc catalog when provider missing
+            routed_model = f"openrouter/anthropic/{inner_lookup}"
+        # Instantiate LM with explicit OpenRouter routing without mutating global OpenAI env
+        kwargs = dict(
+            model=routed_model,
+            api_key=api_key,
+            api_base=base_url,
             drop_params=True,
             additional_drop_params=[
                 "max_tokens",
@@ -136,6 +145,19 @@ def make_lm(model_id: str, step: str = "") -> Any:
                 "response_format",
             ],
         )
+        try:
+            site_url = os.getenv("OPENROUTER_SITE_URL") or os.getenv("OR_SITE_URL")
+            app_name = os.getenv("OPENROUTER_APP_NAME") or os.getenv("OR_APP_NAME")
+            headers = {}
+            if site_url:
+                headers["HTTP-Referer"] = site_url
+            if app_name:
+                headers["X-Title"] = app_name
+            if headers:
+                kwargs["extra_headers"] = headers
+        except Exception:
+            pass
+        lm = dspy.LM(**kwargs)
         try:
             for k in ("max_tokens", "max_output_tokens", "max_completion_tokens", "response_format"):
                 lm.kwargs.pop(k, None)

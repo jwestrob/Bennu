@@ -986,6 +986,9 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                                     'functional_profile': func,
                                     'provenance': combined_env.get('__tool_calls') or [],
                                     'omitted': [],
+                                    'planner_decision': {
+                                        'run_code_interpreter': bool((plan or {}).get('run_code_interpreter', False))
+                                    },
                                 }
                                 with open(os.path.join(_sid_dir, 'analysis_payload.json'), 'w', encoding='utf-8') as f_pl:
                                     json.dump(payload, f_pl, indent=2, default=str)
@@ -996,13 +999,20 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         # Finalizer scaffold: CI mode acknowledgment (no-op)
                         try:
                             mode = getattr(self.config, 'CI_MODE', 'auto')
-                            # Decide whether to run CI: mode gating + presence of matrices or 'plot/visualize' hint
-                            def _has_matrices(env):
-                                return bool(env.get('PerGenomeTopMatrix') or env.get('CompletenessMatrix'))
-                            def _wants_plots(q: str) -> bool:
-                                ql = (q or '').lower()
-                                return any(k in ql for k in ('plot','visualize','heatmap','bar chart','cluster','figure'))
-                            should_ci = (mode == 'always') or (mode == 'auto' and (_has_matrices(combined_env) or _wants_plots(question)))
+                            # Decide whether to run CI: planner-controlled when CI_MODE=auto
+                            def _planner_wants_ci(plan_dict) -> bool:
+                                try:
+                                    return bool((plan_dict or {}).get('run_code_interpreter', False))
+                                except Exception:
+                                    return False
+                            planner_flag = _planner_wants_ci(plan)
+                            if mode == 'always':
+                                should_ci = True
+                            elif mode == 'never':
+                                should_ci = False
+                            else:
+                                # auto mode honors the planner decision; default False when absent
+                                should_ci = planner_flag
                             if mode == 'never':
                                 logger.info("🧮 Finalizer (CI) mode: never — skipping code interpreter")
                             elif not should_ci:
@@ -1178,7 +1188,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                         ci_section = ""
                         try:
                             sid_val = self.note_keeper.session_id if self.note_keeper else "session"
-                            plots_dir_host = os.path.join(str(self.note_keeper.session_path) if self.note_keeper else 'data/session_notes', sid_val, 'plots')
+                            plots_dir_host = host_plots_dir
                             if 'ci_files' in locals() or 'ci_downloaded' in locals():
                                 files_list = "\n".join([f"- {os.path.basename(p)}" for p in (ci_files or [])])
                                 downloaded_list = "\n".join([f"- {p}" for p in (ci_downloaded or [])])

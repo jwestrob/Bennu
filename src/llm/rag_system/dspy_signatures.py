@@ -585,7 +585,7 @@ class MacroPlannerSignature(dspy.Signature):
     constraints = dspy.InputField(desc="Constraints: max_steps, prefer native totals, include SM evidence if relevant")
     ko_reference = dspy.InputField(desc="Optional compact KO reference: one line per KO as 'Kxxxxx: definition' to assist keyword/operator selection")
     pfam_reference = dspy.InputField(desc="Optional compact PFAM reference: one line per PFAM as 'PFxxxxx: short_name; description' to assist keyword/operator selection")
-    plan_json = dspy.OutputField(desc="Return ONLY the strict JSON plan (no commentary)")
+    plan_json = dspy.OutputField(desc="Return ONLY the strict JSON plan (no commentary). The JSON MUST include a top-level boolean field `run_code_interpreter` indicating whether downstream visualization (code interpreter) should run for this question. Set it to true only when the user explicitly requests plotting/visualization (e.g., 'plot', 'visualize', 'heatmap', 'cluster', 'figure') or when figures are essential to answer the question. Otherwise set it to false.")
 
 class GenomicSynthesizer(dspy.Signature):
     """
@@ -620,6 +620,9 @@ class GenomicSynthesizer(dspy.Signature):
     loci_table = dspy.OutputField(desc="Optional compact per-seed table listing contig and coordinates for reproducibility")
     verification_citations = dspy.OutputField(desc="Optional explicit contig:coordinate spans cited for verification")
     limitations = dspy.OutputField(desc="Optional concise caveats relevant to interpretation (e.g., assembly fragmentation)")
+
+
+ 
 
 
 # === IRB Editor/Repair Signatures ===

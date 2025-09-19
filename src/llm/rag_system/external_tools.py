@@ -451,7 +451,9 @@ async def code_interpreter_tool(code: str, session_id: str = None, timeout: int 
                                     downloaded.append(str(dest))
                                     got = True
                                 else:
-                                    logger.info(f"CI download skipped (status {r.status_code}) for {url}")
+                                    # Quietly skip; a fallback will attempt retrieval via stdout
+                                    # (do not log at info level to avoid noisy output)
+                                    pass
                             except Exception:
                                 pass
 
