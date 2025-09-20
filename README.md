@@ -55,7 +55,11 @@ graph TB
 - **Functional Annotation**: KEGG pathways, PFAM domains, enzyme classifications
 - **Secondary Metabolite Detection**: Biosynthetic gene cluster identification
 - **Carbohydrate Enzyme Analysis**: CAZyme family classification and substrate prediction
+<<<<<<< HEAD
 - **Protein Similarity Search**: ESM2-based semantic embeddings for homology detection
+=======
+- **Protein Similarity Search**: ESM2-based semantic embeddings for homology detection with automatic Neo4j enrichment (PFAM / KO annotations, genomic coordinates)
+>>>>>>> feat/agent-router-typed
 
 ### AI-Powered Query Interface
 - **Natural Language Processing**: Ask questions in plain English about your genomic data
@@ -101,13 +105,26 @@ conda activate genome-kg
 
 # Install LLM dependencies
 pip install -r requirements-llm.txt
+<<<<<<< HEAD
+=======
+
+Bioinformatics tools included in `env/environment.yml`:
+- mash, skani, minced, dbcan (CLI: run_dbcan), pyhmmer, ete3, rdflib, lancedb, transformers, pytorch
+
+Verify tools are on PATH after activation:
+which quast.py; which prodigal; which dfast_qc; which mash; which skani; which minced; which run_dbcan
+>>>>>>> feat/agent-router-typed
 ```
 
 ### Step 2: Database Setup
 
 **Start Neo4j Database:**
 ```bash
+<<<<<<< HEAD
 # Option 1: Using Docker (recommended)
+=======
+# Option 1: Using Docker (quick start)
+>>>>>>> feat/agent-router-typed
 docker run -d \
     --name neo4j-bennu \
     -p 7474:7474 -p 7687:7687 \
@@ -115,10 +132,36 @@ docker run -d \
     -v neo4j_data:/data \
     neo4j:5.0
 
+<<<<<<< HEAD
 # Option 2: Local Neo4j installation
 # Follow Neo4j installation guide for your platform
 ```
 
+=======
+# Option 2: Local install (Homebrew on macOS)
+brew install neo4j            # if not already installed
+
+# (One‑time) Set initial password BEFORE first start
+# If your DB is new and has no password set yet, run:
+neo4j-admin dbms set-initial-password 'your_new_password'
+
+# Start/stop/status (foreground process under your user)
+neo4j start
+neo4j status
+# Or run as a background service (managed by launchctl)
+brew services start neo4j
+brew services list | grep neo4j
+
+# Verify connectivity
+cypher-shell -u neo4j -p 'your_new_password' "RETURN 1 AS ok"
+```
+
+Notes (local install):
+- Binaries: typically under `/opt/homebrew/bin/{neo4j,cypher-shell}`.
+- Data/logs: `/opt/homebrew/var/neo4j/data`, logs in `/opt/homebrew/var/log/neo4j`.
+- Config: `.../Cellar/neo4j/*/libexec/conf/neo4j.conf`.
+
+>>>>>>> feat/agent-router-typed
 **Configure Database Connection:**
 Create `.env` file in project root:
 ```bash
@@ -127,6 +170,14 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
 ```
 
+<<<<<<< HEAD
+=======
+For your local non‑Docker setup, set:
+```bash
+NEO4J_PASSWORD=your_new_password
+```
+
+>>>>>>> feat/agent-router-typed
 ### Step 3: Code Interpreter Setup
 
 ```bash
@@ -157,6 +208,13 @@ python -c "from src.llm.query_processor import QueryProcessor; qp = QueryProcess
 python -c "import requests; print('Code interpreter:', requests.get('http://localhost:8000/health').status_code == 200)"
 ```
 
+<<<<<<< HEAD
+=======
+Tip: Python interpreter selection
+- After `conda activate genome-kg`, prefer `python` over `python3` to ensure the conda interpreter is used (some macOS setups have pyenv shims for `python3`).
+- You can always force it with: `conda run -n genome-kg python -m src.cli ask "..."`.
+
+>>>>>>> feat/agent-router-typed
 ## Getting Started
 
 ### Processing Your First Genome
@@ -170,9 +228,16 @@ cp /path/to/your/genome.fasta data/raw/
 
 **Step 2: Run the Processing Pipeline**
 ```bash
+<<<<<<< HEAD
 # Process all genomes (takes 10-30 minutes depending on size)
+=======
+# Process all genomes (threads default to `SYSTEM_JOBS` or CPU cores)
+>>>>>>> feat/agent-router-typed
 python -m src.cli build
+# or limit threads for all stages
+python -m src.cli build -j 16
 
+<<<<<<< HEAD
 # Optional: Resume from specific stage if interrupted
 python -m src.cli build --from-stage 4
 ```
@@ -189,6 +254,46 @@ python -m src.build_kg.neo4j_bulk_loader --csv-dir data/stage07_kg/csv
 python -m src.cli ask "How many genomes were processed?"
 python -m src.cli ask "What organisms are in my dataset?"
 
+=======
+# Optional: Run a specific stage range (e.g., only Stage 7 Knowledge Graph)
+python -m src.cli build -f 7 -t 7
+```
+
+**Step 3: Load Data into Neo4j**
+```bash
+# Use the bulk loader for optimal performance
+python -m src.build_kg.neo4j_bulk_loader --csv-dir data/stage07_kg/csv
+```
+
+### Export, Share, and Serve a Portable Neo4j Bundle
+
+We now support exporting a self‑contained KG bundle you can share and restore elsewhere. The bundle includes a Neo4j `.dump` (primary artifact), optional CSVs, and restore scripts.
+
+Quick commands (module CLI; alias `genome-kg='python -m src.cli'` if you want a shortcut):
+
+```bash
+# Export (default: system engine; works best on local installs)
+python -m src.cli export --format both --out bundle/SRR6231169 --engine system
+
+# Validate the bundle (presence + checksums)
+python -m src.cli validate-bundle --bundle bundle/SRR6231169
+
+# Serve via Docker (loads dump, then starts neo4j:5)
+python -m src.cli serve --bundle bundle/SRR6231169 --engine docker
+```
+
+Notes:
+- Default export engine is `system`, which uses your local `neo4j-admin`. This often works even when a Docker‑based Neo4j is running elsewhere. If your system Neo4j service is currently serving the same database, you may still need to stop it before dumping.
+- The `docker` export engine requires the mounted store (data/neo4j) not be in use. Stop any running Neo4j containers first (e.g., `docker stop kg-neo4j neo4j-bennu || true`).
+- See `KG_EXPORT.md` for full details on bundle structure and restore options.
+
+**Step 4: Start Querying**
+```bash
+# Basic information queries
+python -m src.cli ask "How many genomes were processed?"
+python -m src.cli ask "What organisms are in my dataset?"
+
+>>>>>>> feat/agent-router-typed
 # Functional analysis
 python -m src.cli ask "What metabolic pathways are present?"
 python -m src.cli ask "Find all transport proteins"
@@ -196,6 +301,14 @@ python -m src.cli ask "Find all transport proteins"
 # Comparative analysis
 python -m src.cli ask "Compare CAZyme distributions across genomes"
 python -m src.cli ask "Which genome has the most biosynthetic gene clusters?"
+<<<<<<< HEAD
+=======
+
+# pLM similarity + annotation enrichment demo
+python -m src.cli ask --planner openrouter/claude-4-sonnet \
+  --irb openai/gpt-4.1-mini --reporter openrouter/claude-4-sonnet \
+  "Pick a single rubisco large subunit protein in this dataset, and tell me the annotations of its ten closest neighbors as measured by pLM similarity."
+>>>>>>> feat/agent-router-typed
 ```
 
 ## Advanced Usage
@@ -257,6 +370,89 @@ proteins = rag.get_proteins_by_function("transporter")
 pathways = rag.get_pathways_by_genome("genome_id")
 ```
 
+<<<<<<< HEAD
+=======
+## Model Selection
+
+You can pick different LLMs for each stage of the pipeline when running `ask`:
+
+- `--planner` / `-planner`: model for Planner and retrieval planning
+- `--irb` / `-irb`: model for IRB (Incremental Report Builder) editing
+- `--reporter` / `-reporter`: model for final report synthesis
+
+Examples
+
+```bash
+# Cost‑effective planner + IRB, premium reporter
+python -m src.cli ask "Summarize RuBisCO across MAGs" \
+  -planner 4.1-mini -irb gpt-4.1-mini -reporter gpt-5-high
+
+# Native Anthropic Sonnet 4 as reporter
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m src.cli ask "Which genomes encode PRK (K00855)?" \
+  -reporter anthropic/claude-4-sonnet
+
+# OpenRouter Sonnet 4 as reporter (OpenAI‑compatible endpoint)
+export OPENROUTER_API_KEY=sk-or-...
+python -m src.cli ask "Which genomes encode PRK (K00855)?" \
+  -reporter openrouter/claude-4-sonnet
+
+# All three with GPT‑5 planner/reporter and mini IRB
+python -m src.cli ask "Map RuBisCO and PRK co-occurrence" \
+  -planner gpt-5-high -irb gpt-4.1-mini -reporter gpt-5-high
+```
+
+Available models and aliases
+
+- GPT‑5 (OpenAI):
+  - `gpt-5-high`, `gpt-5-medium`, `gpt-5-minimal` → `openai/gpt-5-2025-08-07`
+- GPT‑4.1 family (OpenAI):
+  - `gpt-4.1-mini`, `4.1-mini` → `openai/gpt-4.1-mini`
+- Claude Sonnet 4 (Anthropic):
+- Native: `anthropic/claude-4-sonnet` (uses `ANTHROPIC_API_KEY`)
+- OpenRouter: `openrouter/claude-4-sonnet` (uses `OPENROUTER_API_KEY`, routed via OpenAI‑compatible endpoint)
+
+Defaults (if flags omitted)
+
+- Planner: `gpt-5-high`
+- IRB: `gpt-4.1-mini`
+- Reporter: `gpt-5-high`
+
+API keys and routing
+
+- `OPENAI_API_KEY` for OpenAI models
+- `ANTHROPIC_API_KEY` for native Anthropic models
+- `OPENROUTER_API_KEY` for OpenRouter (we route to `https://openrouter.ai/api/v1` under the hood)
+
+Notes and pitfalls
+
+- We do not pass `max_tokens`; DSPy may warn about truncation (internal defaults). This is expected.
+- GPT‑5 uses chat semantics (no responses/completions mode) to avoid endpoint mismatch.
+- For OpenRouter Sonnet 4 we force OpenAI‑compatible routing; use `openrouter/claude-4-sonnet`.
+
+Force IRB / disable fast‑path (to exercise the reporter)
+
+```bash
+export IRB_BYPASS_TOKENS=0   # Force IRB for small contexts
+export FAST_PATH_ENABLED=0   # Disable Macro Fast Path
+python -m src.cli ask "…" -planner gpt-5-high -irb 4.1-mini -reporter openrouter/claude-4-sonnet
+```
+
+Troubleshooting
+
+- “Chat model not supported in v1/completions” → the planner is already configured to chat mode; avoid forcing responses mode for GPT‑5.
+- “Missing Anthropic API Key” while using OpenRouter → ensure `openrouter/claude-4-sonnet` (not `anthropic/...`) and `OPENROUTER_API_KEY` is set.
+- LiteLLM atexit logging error → we suppress heavy logging in code; if needed: `export LITELLM_LOGGING=False LITELLM_DISABLE_COLD_STORAGE=1`.
+- LanceDB similarity returns 0 neighbors → verify embeddings and annotations:
+  ```bash
+  conda activate genome-kg
+  PYTHONPATH=. scripts/inspect_lancedb.py --limit 5              # confirm embeddings exist
+  PYTHONPATH=. scripts/test_lancedb_seed.py protein:<id>         # check a specific protein embedding
+  PYTHONPATH=. scripts/test_protein_annotations.py protein:<id>  # fetch Neo4j PFAM/KO annotations
+  ```
+  If embeddings are missing, rerun Stage 8 (`python -m src.cli build -f 8 -t 8 --force`). If annotations are missing, rerun the earlier annotation stages and reload Neo4j.
+
+>>>>>>> feat/agent-router-typed
 ## Data Products
 
 ### Knowledge Graph Schema

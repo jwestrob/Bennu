@@ -269,7 +269,11 @@ class UnifiedGenomeSelector:
         
         from .dspy_signatures import GenomeSelectionSignature
         response = self.model_allocator.create_context_managed_call(
+<<<<<<< HEAD
             task_name="biological_interpretation",  # COMPLEX = o3 for biological reasoning
+=======
+            task_name="biological_interpretation",  # COMPLEX = gpt-5 for biological reasoning
+>>>>>>> feat/agent-router-typed
             signature_class=GenomeSelectionSignature,
             module_call_func=analyze_call,
             query=query,
@@ -799,4 +803,8 @@ async def test_unified_genome_selector():
 
 if __name__ == "__main__":
     import asyncio
+<<<<<<< HEAD
     asyncio.run(test_unified_genome_selector())
+=======
+    asyncio.run(test_unified_genome_selector())
+>>>>>>> feat/agent-router-typed

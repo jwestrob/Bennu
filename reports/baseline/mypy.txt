@@ -1,0 +1,2 @@
+src/tests/test_esm2_no_truncation.py:16: error: invalid decimal literal  [syntax]
+Found 1 error in 1 file (errors prevented further checking)

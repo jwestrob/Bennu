@@ -1,0 +1,17 @@
+# Curate before use; leave empty to force fail-fast until populated.
+phage:
+  integration: { pfam: [], kegg: [] }
+  structural_capsid: { pfam: [], kegg: [] }
+  structural_portal: { pfam: [], kegg: [] }
+  terminase: { pfam: [], kegg: [] }
+  tail: { pfam: [], kegg: [] }
+  lysis_holin: { pfam: [], kegg: [] }
+  lysis_endolysin: { pfam: [], kegg: [] }
+  lysogeny_regulators: { pfam: [], kegg: [] }
+
+bgc_caution:
+  core_biosynthesis: { pfam: [], kegg: [] }
+
+housekeeping:
+  ribosomal_core: { pfam: [], kegg: [] }
+

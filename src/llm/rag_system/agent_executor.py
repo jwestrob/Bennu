@@ -18,6 +18,10 @@ import time
 import ast
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
+<<<<<<< HEAD
+=======
+import os
+>>>>>>> feat/agent-router-typed
 
 try:
     import dspy
@@ -29,6 +33,12 @@ from .external_tools import AVAILABLE_TOOLS, TOOL_CAPABILITIES
 from .memory import NoteKeeper, get_model_allocator
 from .memory.tool_result_cache import ToolResultCache
 from .utils import safe_log_data
+<<<<<<< HEAD
+=======
+from .fsm.action_graph import FSM, State
+from ..kg.cypher_templates.registry import SPECS  # type: ignore
+import json as _json
+>>>>>>> feat/agent-router-typed
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +74,7 @@ class AgentExecutionResult:
 class AgentDecisionMaker(dspy.Signature if DSPY_AVAILABLE else object):
     """
     Intelligent agent that decides the next action based on current context.
+<<<<<<< HEAD
     
     The agent examines previous results and decides whether to:
     1. Use another tool to gather more information
@@ -71,47 +82,114 @@ class AgentDecisionMaker(dspy.Signature if DSPY_AVAILABLE else object):
     
     TOOL SELECTION CRITERIA:
     
+=======
+
+    The agent examines previous results and decides whether to:
+    1. Use another tool to gather more information
+    2. Synthesize the current results into a final answer
+
+    TOOL SELECTION CRITERIA:
+
+>>>>>>> feat/agent-router-typed
     Use 'database_query' for:
     - Initial exploration or specific lookups
     - Finding proteins, genes, pathways, or annotations
     - Counting or quantifying biological features
     - Answering questions with direct database matches
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> feat/agent-router-typed
     Use 'whole_genome_reader' for:
     - Spatial genomic analysis (prophage, operons, gene clusters)
     - Global discovery across all genomes
     - Questions requiring gene coordinate order
     - Neighborhood context and genomic organization
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> feat/agent-router-typed
     Use 'code_interpreter' for:
     - Statistical analysis of collected data
     - Pattern detection in large datasets
     - Visualization and plotting
     - Quantitative assessments after data collection
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> feat/agent-router-typed
     Use 'literature_search' for:
     - Recent research validation
     - Novel finding verification
     - Background information on discoveries
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> feat/agent-router-typed
     Use 'synthesize' action when:
     - Statistical analysis with comprehensive findings is complete (e.g., detailed protein/gene analysis with quantitative results)
     - Questions asking for comparison/distribution have been answered with descriptive statistics
     - Code interpreter has provided complete statistical breakdown with means, std deviations, and patterns
     - Database queries have retrieved necessary data AND code interpreter has analyzed it thoroughly
     - Ready to provide comprehensive answer based on completed analysis
+<<<<<<< HEAD
     """
     
+=======
+
+    Consider dataset scale (data_profile) and available budgets (budget_state). Prefer lower-cost actions that still make progress. If an action may be expensive, you may mark it as requiring approval.
+    """
+
+>>>>>>> feat/agent-router-typed
     user_question = dspy.InputField(desc="Original user question with biological context")
     previous_steps = dspy.InputField(desc="Summary of previous tool executions and their results")
     available_tools = dspy.InputField(desc="Available tools with their capabilities and decision criteria")
     current_findings = dspy.InputField(desc="Current biological findings and data collected so far")
+<<<<<<< HEAD
     
+=======
+    # Optional, non-binding hints (kept generic; safe defaults provided by caller)
+    data_profile = dspy.InputField(desc="Summarized data scale/complexity (e.g., contigs/genes/estimated chunks); may be empty")
+    policy_hints = dspy.InputField(desc="Generic hints such as 'cheap-first', 'templates-only'; may be empty")
+    budget_state = dspy.InputField(desc="Token/time budget context; may be empty")
+    db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and slots; may be empty")
+    tool_costs = dspy.InputField(desc="JSON map of tool cost tags; may be empty")
+    functional_signatures_catalog = dspy.InputField(desc="JSON of optional functional signatures (e.g., PFAM/KOFAM); may be empty")
+    progress_state = dspy.InputField(desc="JSON progress indicators: candidates collected, loci built, last_row_count, zero_result_streak")
+
+>>>>>>> feat/agent-router-typed
     next_action = dspy.OutputField(desc="Next action: tool name from available_tools or 'synthesize' to finish")
     tool_parameters = dspy.OutputField(desc="JSON parameters for the selected tool (empty object {} for synthesize)")
     biological_reasoning = dspy.OutputField(desc="Detailed biological reasoning for this decision based on current findings")
     confidence = dspy.OutputField(desc="Confidence level 0.0-1.0 in this decision")
     exploration_complete = dspy.OutputField(desc="true if comprehensive analysis is complete (statistical analysis done, patterns identified, question fully answered), false if more tools needed")
+<<<<<<< HEAD
+=======
+    # Optional, non-binding outputs
+    requires_approval = dspy.OutputField(desc="true if the chosen action may require user approval; optional and advisory")
+    alternatives_json = dspy.OutputField(desc="Optional JSON array of alternative actions with brief justifications and cost/benefit notes")
+
+
+class DecisionParamRepair(dspy.Signature if DSPY_AVAILABLE else object):
+    """Repair invalid or missing tool parameters for a chosen action.
+
+    Provide ONLY a JSON object that matches the provided schema. Use the
+    db_templates_catalog to select valid template names when repairing
+    database_query parameters.
+    """
+
+    instruction = dspy.InputField(desc="Short instruction about the repair task")
+    tool_name = dspy.InputField(desc="Chosen tool name")
+    user_question = dspy.InputField(desc="Original user question")
+    bad = dspy.InputField(desc="Bad or missing tool parameters (JSON or text)")
+    db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and slots")
+    param_schema_json = dspy.InputField(desc="JSON schema for the expected parameters")
+    json_payload = dspy.OutputField(desc="Return ONLY a JSON object matching the schema")
+>>>>>>> feat/agent-router-typed
 
 
 class AnalysisCodeGenerator(dspy.Signature if DSPY_AVAILABLE else object):
@@ -177,9 +255,28 @@ class UnifiedAgentExecutor:
         self.tools = {
             "database_query": self._execute_database_query,
             "whole_genome_reader": self._execute_whole_genome_reader,
+<<<<<<< HEAD
             "code_interpreter": self._execute_code_interpreter,
             "literature_search": self._execute_literature_search
         }
+=======
+            "neighborhood_extractor": self._execute_neighborhood_extractor,
+            "annotation_discovery": self._execute_annotation_discovery,
+            "code_interpreter": self._execute_code_interpreter,
+            "literature_search": self._execute_literature_search,
+            "lancedb_knn": self._execute_lancedb_knn,
+            "report_synthesis": self._execute_report_synthesis,
+        }
+        # Optionally disable whole_genome_reader tool entirely
+        try:
+            if getattr(self.rag_system.config, 'DISABLE_WHOLE_GENOME_READER', False):
+                self.tools.pop('whole_genome_reader', None)
+                logger.info("🛑 whole_genome_reader disabled by configuration; removed from tool registry")
+        except Exception:
+            pass
+        # Dedup cache for database queries (template+slots signature → envelope)
+        self._db_dedup_cache: Dict[str, Any] = {}
+>>>>>>> feat/agent-router-typed
         
         # Execution state
         self.max_steps = 8  # Prevent infinite loops
@@ -188,11 +285,25 @@ class UnifiedAgentExecutor:
         
         # Initialize data collection for code interpreter
         self._previous_step_data = {}
+<<<<<<< HEAD
+=======
+        # Progress tracking for decisions (generic, non-hardcoded)
+        self._progress = {
+            "distinct_protein_ids": set(),
+            "loci_built": 0,
+            "last_row_count": 0,
+            "zero_result_streak": 0,
+            "last_query_signature": None,
+        }
+        # Seed steps appended before FSM (e.g., from Macro Fast Path)
+        self._seed_steps: List[AgentStep] = []
+>>>>>>> feat/agent-router-typed
         
         # Code generator will use model allocation system
         # (no need to initialize here, will use model_allocator.create_context_managed_call)
         
         logger.info("🤖 UnifiedAgentExecutor initialized - dynamic tool chaining enabled")
+<<<<<<< HEAD
     
     async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
         # Store current user question for hierarchical analysis context
@@ -227,11 +338,750 @@ class UnifiedAgentExecutor:
                 logger.info(f"🔄 Agent step {step_number}/{self.max_steps}")
                 
                 # Agent decides next action
+=======
+        # Initialize FSM only if enabled
+        if getattr(self.rag_system.config, 'DISABLE_FSM', True):
+            self._fsm = None
+            self.obligation_ledger = None
+            logger.info("🛑 FSM disabled by configuration; skipping FSM initialization")
+        else:
+            self._fsm = FSM()
+            # Obligation ledger for deterministic scheduling (optional)
+            self.obligation_ledger = None
+            # Router config debug
+            try:
+                from ..options.router import USE_GRAMMAR_ROUTER as _UGR
+                logger.info(f"ROUTER_CONFIG: USE_GRAMMAR_ROUTER={_UGR}")
+            except Exception:
+                pass
+    
+    async def execute_agent_workflow(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
+        """Entrypoint for user questions.
+        
+        Guarded Macro Fast Path (MFP) runs first if enabled and intent matches;
+        otherwise falls back to the FSM-governed reactive planner.
+        """
+        try:
+            # Stash current question for downstream guards/fallbacks
+            try:
+                self.current_question = question
+            except Exception:
+                pass
+            # Fast Path preflight (deterministic, zero LLM calls)
+            if getattr(self.rag_system.config, "FAST_PATH_ENABLED", True):
+                fp_result = await self._try_fast_path_locus_discovery(question)
+                if fp_result is not None:
+                    return fp_result
+        except Exception as e:
+            logger.warning(f"Fast Path preflight failed or skipped: {e}")
+
+        # Enforce FSM-governed workflow to avoid oscillations
+        return await self._execute_agent_workflow_fsm(question, selected_genome)
+
+    async def _try_fast_path_locus_discovery(self, question: str) -> Optional[AgentExecutionResult]:
+        """Attempt Macro Fast Path locus discovery if the intent matches.
+
+        Returns AgentExecutionResult on success, or None to fall back.
+        """
+        try:
+            # Canonicalizer-first: NL → Canonical JSON
+            from ..intent.canonicalizer import canonicalize
+            from ..intent.models import TaskFamily
+            canon, _raw = canonicalize(question, self.note_keeper, self.model_allocator)
+        except Exception as e:
+            logger.info(f"MFP_PRECHECK: canonicalizer_exception: {e}")
+            canon = None
+
+        # Special branch: Pathway completeness (no DSL/PEG)
+        if canon and getattr(canon, 'task', None) == TaskFamily.PATHWAY_COMPLETENESS:
+            try:
+                from ..options.template_runner import FileCypherRunner
+                from ..options.pathway_completeness import PathwayCompletenessOption
+                from .external_tools import code_interpreter_tool
+                import os, json as _json
+                db_runner = FileCypherRunner(self.rag_system.neo4j_processor.driver)
+                opt = PathwayCompletenessOption(db_runner)
+                genome_ids = []
+                # Prefer explicitly selected genome if available
+                try:
+                    if getattr(self, 'selected_genome', None):
+                        genome_ids = [self.selected_genome]
+                    elif isinstance(getattr(canon, 'genome_ids', None), list):
+                        genome_ids = list(getattr(canon, 'genome_ids'))
+                except Exception:
+                    pass
+                min_c = getattr(canon, 'min_completeness', None)
+                pathways = getattr(canon, 'pathways', None)
+                # Decide totals source (default native)
+                import os as _os
+                use_native_totals = (
+                    _os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS', '1').lower() in ('1','true','yes')
+                    or bool(getattr(self.rag_system.config, 'USE_NATIVE_TOTALS_FOR_PATHWAYS', True))
+                )
+                rows, meta = opt.run(
+                    genome_ids=genome_ids or None,
+                    min_completeness=min_c,
+                    pathways=pathways,
+                    use_native_totals=use_native_totals,
+                )
+                # Seed fast-path result and continue into the agent FSM; do not return early
+                try:
+                    src_tag = meta.get('totals_source') if isinstance(meta, dict) else None
+                except Exception:
+                    src_tag = None
+                logger.info(f"FASTPATH_PC: rows={len(rows)} use_ci=False totals_source={src_tag}")
+                step = AgentStep(
+                    step_number=1,
+                    tool_name="fast_path_pathway_completeness",
+                    tool_parameters={
+                        "genome_ids": genome_ids or "ALL",
+                        "min_completeness": min_c,
+                        "pathways": pathways or "ALL",
+                        "totals_source": (meta or {}).get('totals_source') if isinstance(meta, dict) else None,
+                    },
+                    reasoning="Deterministic KEGG pathway completeness via KO→Pathway graph",
+                    result={"rows": [r.__dict__ for r in rows], "meta": meta},
+                    execution_time=0.0,
+                    success=True,
+                    error=None,
+                )
+                self._seed_steps.append(step)
+                return None
+                # Default concise result
+                lines = ["KEGG Pathway Completeness:"]
+                if not rows:
+                    lines.append("No pathways evaluated or data missing.")
+                else:
+                    shown = 0
+                    for r in rows:
+                        try:
+                            # Avoid duplicate ID/Name when identical
+                            label = r.pathway_id if (not r.pathway_name or r.pathway_name == r.pathway_id) else f"{r.pathway_id} {r.pathway_name}"
+                            lines.append(f"- [{r.genome_id}] {label}: {r.present_kos}/{r.total_kos} ({r.completeness:.2f})")
+                            shown += 1
+                            if shown >= 25:
+                                break
+                        except Exception:
+                            continue
+                answer = "\n".join(lines)
+
+                # Optional: post-process with code interpreter for nicer formatting (no network/file IO needed)
+                try:
+                    # Flag can be enabled via config or environment
+                    env_flag = os.getenv('USE_CODE_INTERPRETER_IN_FAST_PATH')
+                    use_ci = (
+                        (str(env_flag).lower() in ('1','true','yes'))
+                        or bool(getattr(self.rag_system.config, 'USE_CODE_INTERPRETER_IN_FAST_PATH', False))
+                    )
+                    src_tag = meta.get('totals_source') if isinstance(meta, dict) else None
+                    logger.info(f"FASTPATH_PC: rows={len(rows)} use_ci={use_ci} totals_source={src_tag}")
+                    # If configured, force CI recompute of totals using ko_pathway.list even when Neo4j returned rows
+                    env_ci_totals = os.getenv('USE_CI_TOTALS_FOR_PATHWAYS')
+                    use_ci_totals = (
+                        (str(env_ci_totals).lower() in ('1','true','yes'))
+                        or bool(getattr(self.rag_system.config, 'USE_CI_TOTALS_FOR_PATHWAYS', False))
+                    )
+                    if use_ci and rows:
+                        rows_payload = [r.__dict__ for r in rows]
+                        rows_json = _json.dumps(rows_payload)
+                        ci_code = (
+                            "import json\n"
+                            f"rows = json.loads('''{rows_json}''')\n"
+                            "from collections import defaultdict\n"
+                            "by_genome = defaultdict(list)\n"
+                            "for r in rows:\n"
+                            "    by_genome[r['genome_id']].append(r)\n"
+                            "for gid, arr in by_genome.items():\n"
+                            "    arr.sort(key=lambda x: (-float(x.get('completeness',0.0)), -int(x.get('present_kos',0)), x.get('pathway_id','')))\n"
+                            "    print(f'Genome: {gid}')\n"
+                            "    complete = [t for t in arr if abs(float(t.get('completeness',0.0)) - 1.0) < 1e-9]\n"
+                            "    show = complete if complete else arr[:25]\n"
+                            "    for t in show:\n"
+                            "        print(f""  {t['pathway_id']} {t.get('pathway_name','')}: {t.get('present_kos',0)}/{t.get('total_kos',0)} ({float(t.get('completeness',0.0)):.2f})"")\n"
+                            "    print()\n"
+                        )
+                        # Rebuild ci_code with safe embedded JSON to avoid quoting issues
+                        try:
+                            import base64 as _b64, gzip as _gz
+                            _rows_b64 = _b64.b64encode(_gz.compress(rows_json.encode('utf-8'))).decode('ascii')
+                            ci_code = (
+                                "import json, base64, gzip\n"
+                                f"rows = json.loads(gzip.decompress(base64.b64decode('{_rows_b64}')).decode('utf-8'))\n"
+                                "from collections import defaultdict\n"
+                                "by_genome = defaultdict(list)\n"
+                                "for r in rows:\n"
+                                "    gid = r.get('genome_id','')\n"
+                                "    by_genome[gid].append(r)\n"
+                                "for gid, arr in by_genome.items():\n"
+                                "    try:\n"
+                                "        arr.sort(key=lambda x: (-float(x.get('completeness',0.0)), -int(x.get('present_kos',0)), x.get('pathway_id','')))\n"
+                                "    except Exception:\n"
+                                "        pass\n"
+                                "    print('Genome:', gid)\n"
+                                "    complete = [t for t in arr if abs(float(t.get('completeness',0.0)) - 1.0) < 1e-9]\n"
+                                "    show = complete if complete else arr[:25]\n"
+                                "    for t in show:\n"
+                                "        pk = int(t.get('present_kos',0)); tk = int(t.get('total_kos',0)); comp=float(t.get('completeness',0.0))\n"
+                                "        pid = t.get('pathway_id',''); pname = t.get('pathway_name','')\n"
+                                "        label = pid if (not pname or pname==pid) else f'{pid} {pname}'\n"
+                                "        print(' ', label, f': {pk}/{tk} ({comp:.2f})')\n"
+                            "    print()\n"
+                            )
+                        except Exception as _embed_err:
+                            logger.info(f"FASTPATH_PC: CI code embedding skipped: {_embed_err}")
+                        # Use env override for base URL if present
+                        base_url = os.getenv('CODE_INTERPRETER_URL') or getattr(self.rag_system.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000')
+                        logger.info(f"FASTPATH_PC: invoking code_interpreter (base_url={base_url})")
+                        env = await code_interpreter_tool(ci_code, session_id='fastpath-pathway', timeout=60, base_url=base_url)
+                        if env and env.get('success'):
+                            out = env.get('display_text') or ''
+                            if out.strip():
+                                answer = out.strip()
+                        else:
+                            logger.info(f"FASTPATH_PC: CI result: success={env.get('success') if isinstance(env, dict) else None} message={env.get('message') if isinstance(env, dict) else None}")
+
+                    # Force CI totals recompute if requested (disabled when native totals already used)
+                    if use_ci and use_ci_totals and (not use_native_totals):
+                        try:
+                            from ..options.template_runner import FileCypherRunner as _Runner
+                            rr = _Runner(self.rag_system.neo4j_processor.driver).run_template(
+                                "present_kos_by_genome.cypher", {}
+                            ) or []
+                            present_map = {}
+                            for rec in rr:
+                                gid = rec.get('genome_id')
+                                kos = rec.get('present_ko_ids') or []
+                                if gid:
+                                    present_map[str(gid)] = [str(k) for k in kos]
+                            from pathlib import Path as _Path
+                            import base64 as _b64, gzip as _gz
+                            repo_root = _Path(__file__).resolve().parents[3]
+                            ko_p = repo_root / 'data' / 'reference' / 'ko_pathway.list'
+                            if ko_p.exists():
+                                ko_b64 = _b64.b64encode(_gz.compress(ko_p.read_bytes())).decode('ascii')
+                                present_json = _json.dumps(present_map)
+                                ci_code_totals = (
+                                    "import json, base64, gzip\n"
+                                    f"present = json.loads('''{present_json}''')\n"
+                                    f"KO_LIST_B64 = '{ko_b64}'\n"
+                                    "ko_text = gzip.decompress(base64.b64decode(KO_LIST_B64)).decode('utf-8')\n"
+                                    "from collections import defaultdict\n"
+                                    "pathway_kos = defaultdict(set)\n"
+                                    "for line in ko_text.splitlines():\n"
+                                    "    line = line.strip()\n"
+                                    "    if not line: continue\n"
+                                    "    parts = line.split('\t')\n"
+                                    "    if len(parts) != 2: continue\n"
+                                    "    ko, path = parts\n"
+                                    "    ko = ko.replace('ko:', '')\n"
+                                    "    path = path.replace('path:', '')\n"
+                                    "    if not path.startswith('map'): continue\n"
+                                    "    pathway_kos[path].add(ko)\n"
+                                    "for gid, kos in present.items():\n"
+                                    "    print('Genome:', gid)\n"
+                                    "    s = set(kos)\n"
+                                    "    # Show only complete pathways (present == total)\n"
+                                    "    for pw, all_kos in sorted(pathway_kos.items()):\n"
+                                    "        tot = len(all_kos)\n"
+                                    "        if tot == 0: continue\n"
+                                    "        pc = len(all_kos & s)\n"
+                                    "        if pc == tot:\n"
+                                    "            print(' ', pw, f': {pc}/{tot} (1.00)')\n"
+                                    "    print()\n"
+                                )
+                                base_url = os.getenv('CODE_INTERPRETER_URL') or getattr(self.rag_system.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000')
+                                logger.info("FASTPATH_PC: invoking CI totals recompute (embedded ko_list)")
+                                envt = await code_interpreter_tool(ci_code_totals, session_id='fastpath-pathway-totals', timeout=90, base_url=base_url)
+                                if envt and envt.get('success'):
+                                    outt = envt.get('display_text') or ''
+                                    if outt.strip():
+                                        answer = outt.strip()
+                                else:
+                                    logger.info(f"FASTPATH_PC: CI totals recompute failed: success={envt.get('success') if isinstance(envt, dict) else None} message={envt.get('message') if isinstance(envt, dict) else None}")
+                            else:
+                                logger.info(f"FASTPATH_PC: ko_pathway.list not found at {ko_p}")
+                        except Exception as _ci_tot_err:
+                            logger.info(f"FASTPATH_PC: CI totals recompute error: {_ci_tot_err}")
+
+                    # Fallback: if no rows from Neo4j, optionally compute completeness via CI using KO_LIST_URL + Neo4j HTTP
+                    if use_ci and not rows and (not use_native_totals):
+                        # Fallback: compute present KO sets via Bolt (server-side) and embed KO list into CI code
+                        try:
+                            # 1) Present KO sets via Bolt (no CI network)
+                            from ..options.template_runner import FileCypherRunner as _Runner
+                            rr = _Runner(self.rag_system.neo4j_processor.driver).run_template(
+                                "present_kos_by_genome.cypher", {}
+                            ) or []
+                            present_map = {}
+                            for rec in rr:
+                                gid = rec.get('genome_id')
+                                kos = rec.get('present_ko_ids') or []
+                                if gid:
+                                    present_map[str(gid)] = [str(k) for k in kos]
+                            try:
+                                logger.info(f"FASTPATH_PC: embedded fallback present genomes={len(present_map)} total_kos={sum(len(v) for v in present_map.values())}")
+                            except Exception:
+                                pass
+                            # 2) Embed KO list from repo
+                            from pathlib import Path as _Path
+                            import base64 as _b64, gzip as _gz
+                            repo_root = _Path(__file__).resolve().parents[3]
+                            ko_p = repo_root / 'data' / 'reference' / 'ko_pathway.list'
+                            if ko_p.exists():
+                                ko_b64 = _b64.b64encode(_gz.compress(ko_p.read_bytes())).decode('ascii')
+                                present_json = _json.dumps(present_map)
+                                ci_code3 = (
+                                    "import json, base64, gzip\n"
+                                    f"present = json.loads('''{present_json}''')\n"
+                                    f"KO_LIST_B64 = '{ko_b64}'\n"
+                                    "ko_text = gzip.decompress(base64.b64decode(KO_LIST_B64)).decode('utf-8')\n"
+                                    "from collections import defaultdict\n"
+                                    "pathway_kos = defaultdict(set)\n"
+                                    "for line in ko_text.splitlines():\n"
+                                    "    line = line.strip()\n"
+                                    "    if not line: continue\n"
+                                    "    parts = line.split('\t')\n"
+                                    "    if len(parts) != 2: continue\n"
+                                    "    ko, path = parts\n"
+                                    "    ko = ko.replace('ko:', '')\n"
+                                    "    path = path.replace('path:', '')\n"
+                                    "    if not path.startswith('map'): continue\n"
+                                    "    pathway_kos[path].add(ko)\n"
+                                    "print(f'Summary: genomes={len(present)} pathways={len(pathway_kos)}')\n"
+                                    "def rows_for(genome_kos):\n"
+                                    "    s = set(genome_kos)\n"
+                                    "    out = []\n"
+                                    "    for pw, all_kos in pathway_kos.items():\n"
+                                    "        tot = len(all_kos)\n"
+                                    "        if tot == 0: continue\n"
+                                    "        pc = len(all_kos & s)\n"
+                                    "        comp = pc / tot\n"
+                                    "        out.append((pw, pc, tot, comp))\n"
+                                    "    out.sort(key=lambda x: (-x[3], -x[1], x[0]))\n"
+                                    "    return out\n"
+                                    "shown_genomes = 0\n"
+                                    "for gid, kos in present.items():\n"
+                                    "    print(f'Genome: {gid}')\n"
+                                    "    rr = rows_for(kos)\n"
+                                    "    if not rr:\n"
+                                    "        print('  No pathways evaluated.')\n"
+                                    "        continue\n"
+                                    "    complete = [t for t in rr if abs(t[3] - 1.0) < 1e-9]\n"
+                                    "    show = complete if complete else rr[:25]\n"
+                                    "    for pw, pc, tot, comp in show:\n"
+                                    "        print(f'  {pw}: {pc}/{tot} ({comp:.2f})')\n"
+                                    "    print()\n"
+                                    "    shown_genomes += 1\n"
+                                    "    if shown_genomes >= 5: break\n"
+                                )
+                                base_url = os.getenv('CODE_INTERPRETER_URL') or getattr(self.rag_system.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000')
+                                logger.info("FASTPATH_PC: invoking CI embedded KO fallback")
+                                env3 = await code_interpreter_tool(ci_code3, session_id='fastpath-pathway-embed', timeout=90, base_url=base_url)
+                                if env3 and env3.get('success'):
+                                    out3 = env3.get('display_text') or ''
+                                    if out3.strip():
+                                        answer = out3.strip()
+                                else:
+                                    logger.info(f"FASTPATH_PC: CI embedded fallback failed: success={env3.get('success') if isinstance(env3, dict) else None} message={env3.get('message') if isinstance(env3, dict) else None}")
+                            else:
+                                logger.info(f"FASTPATH_PC: embedded KO list unavailable at {ko_p}")
+                        except Exception as _bolt_ci_err:
+                            logger.info(f"FASTPATH_PC: CI embedded fallback error: {_bolt_ci_err}")
+                except Exception as _ci_err:
+                    logger.info(f"Code interpreter post-processing skipped: {_ci_err}")
+                step = AgentStep(
+                    step_number=1,
+                    tool_name="fast_path_pathway_completeness",
+                    tool_parameters={
+                        "genome_ids": genome_ids or "ALL",
+                        "min_completeness": min_c,
+                        "pathways": pathways or "ALL",
+                        "totals_source": (meta or {}).get('totals_source') if isinstance(meta, dict) else None,
+                    },
+                    reasoning="Deterministic KEGG pathway completeness via KO→Pathway graph",
+                    result={"rows": [r.__dict__ for r in rows], "meta": meta},
+                    execution_time=0.0,
+                    success=True,
+                    error=None,
+                )
+                # Always run synthesis at the end of the pipeline
+                try:
+                    complete_counts = (meta or {}).get('complete_counts', {}) if isinstance(meta, dict) else {}
+                    pf_scope = (meta or {}).get('pathway_scope', 'ALL') if isinstance(meta, dict) else 'ALL'
+                    cf_brief = ", ".join(f"{k}:{v}" for k,v in complete_counts.items()) if isinstance(complete_counts, dict) else ""
+                    current_findings = (
+                        f"evaluated={len(rows)} pathways; complete_by_genome=({cf_brief}); scope={pf_scope}"
+                    )
+                except Exception:
+                    current_findings = f"evaluated={len(rows)} pathways"
+                synth_answer, synth_conf, synth_citations = await self._synthesize_agent_results(
+                    question, [step], current_findings
+                )
+                final_out = synth_answer.strip() if isinstance(synth_answer, str) and synth_answer.strip() else answer
+                return AgentExecutionResult(
+                    question=question,
+                    success=True,
+                    steps=[step],
+                    final_answer=final_out,
+                    confidence=synth_conf or "high",
+                    citations=synth_citations or "",
+                    total_execution_time=0.0,
+                    total_steps=1,
+                    tools_used=["fast_path_pathway_completeness", "report_synthesis"],
+                    error=None,
+                )
+            except Exception as e:
+                logger.info(f"Pathway completeness fast path failed: {e}")
+                return None
+
+        # Locus path requires DSL/PEG intent
+        try:
+            from ..intent.dsl_renderer import render_to_dsl
+            from ..options.intent_grammar import parse_intent as _parse_dsl
+            intent = None
+            if canon:
+                dsl = render_to_dsl(canon)
+                try:
+                    if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                        dbg = self.note_keeper.session_path / "debug_data_flow"
+                        dbg.mkdir(exist_ok=True)
+                        with open(dbg / "canonicalizer.dsl.txt", 'w') as f:
+                            f.write(dsl)
+                except Exception:
+                    pass
+                intent = _parse_dsl(dsl)
+            if not intent:
+                from ..options.router import parse_macro_intent
+                intent = parse_macro_intent(question)
+            if not intent or intent.option_name != "LocusDiscovery":
+                logger.info("MFP_PRECHECK: intent_unparsed_or_not_locus")
+                return None
+        except Exception as e:
+            logger.info(f"MFP_PRECHECK: intent_exception: {e}")
+            return None
+
+        # Build deterministic option with file-based template runner
+        try:
+            from ..options.template_runner import FileCypherRunner
+            from ..options.locus_discovery import LocusDiscoveryOption, LocusCard
+        except Exception as e:
+            logger.warning(f"Fast Path modules unavailable: {e}")
+            return None
+
+        from ..options.obligations import ObligationLedger
+        db_runner = FileCypherRunner(self.rag_system.neo4j_processor.driver)
+        # Provide lancedb only if present and configured; otherwise keep None to avoid imports
+        ldb = None
+        option = LocusDiscoveryOption(
+            db=db_runner,
+            lancedb=ldb,
+            config={
+                "SKEPTIC_ENABLED": getattr(self.rag_system.config, "SKEPTIC_ENABLED", True),
+                "min_contig_len": 1500,
+            }
+        )
+        ledger = ObligationLedger.from_intent(intent)
+        logger.info(
+            "MFP_INTENT: marker=%s N=%s k=%s ldb_required=%s nn=%s",
+            intent.marker,
+            getattr(intent.N, "value", None),
+            getattr(intent.flank, "value", None),
+            ledger.state.get("lancedb_knn", {}).get("required"),
+            ledger.state.get("lancedb_knn", {}).get("nn"),
+        )
+
+        start = time.time()
+        k = int(intent.flank.value or 4)
+        required_knn = getattr(intent.obligations, "lancedb_knn", None)
+        nn = int(required_knn.nn) if (required_knn and required_knn.required and required_knn.nn) else 0
+        # Branch: signature-based discovery vs. marker-based
+        if getattr(intent, 'signature_name', None):
+            try:
+                from ..signatures.registry import SignatureRegistry
+                from ..options.locus_signature_discovery import find_loci_by_signature
+                reg = SignatureRegistry(self.rag_system.config.project_root if hasattr(self.rag_system.config, 'project_root') else __import__('pathlib').Path('.'))
+                cards, meta = find_loci_by_signature(intent.signature_name, int(intent.N.value or 5), k, db_runner, reg)
+                meta.setdefault('knn', False)
+            except Exception as e:
+                logger.info(f"Signature discovery failed: {e}")
+                return None
+        else:
+            cards, meta = option.run(
+                marker=intent.marker,
+                N=int(intent.N.value or 5),
+                k=k,
+                nn=nn,
+            )
+        elapsed = time.time() - start
+
+        # Mark obligations
+        ledger.mark_done("seed_selection")
+        ledger.mark_done("neighborhoods")
+        # Add marker context to meta for synthesis
+        try:
+            if isinstance(meta, dict):
+                meta.setdefault('marker', intent.marker)
+        except Exception:
+            pass
+        # If LanceDB required, satisfy via first-class tool wrapper for cache/synth compatibility
+        if nn > 0 and getattr(self.rag_system, 'lancedb_processor', None):
+            try:
+                ids = [c.seed_protein_id for c in cards if getattr(c, 'seed_protein_id', None)]
+                if ids:
+                    logger.info("TOOL_INVOCATION: lancedb_knn (fast_path)")
+                    logger.info(f"LDB_KNN_PARAMS: seeds={len(ids)} nn={nn}")
+                    ex_ns = (required_knn.exclude_namespace or 'pfam') if required_knn else 'pfam'
+                    ex_markers = (required_knn.exclude_markers or []) if required_knn else []
+                    env = await self._execute_lancedb_knn({
+                        'seed_ids': ids,
+                        'nn': nn,
+                        'topk': max(10, 10 * nn),
+                        'distance': getattr(required_knn, 'distance', 'cosine'),
+                        'exclude_namespace': ex_ns,
+                        'exclude_markers': ex_markers,
+                    })
+                    # Populate meta in a shape the synthesizer recognizes
+                    sd = env.get('structured_data') if isinstance(env, dict) else None
+                    neighbors_full = None
+                    picked = None
+                    stats = None
+                    try:
+                        if isinstance(sd, list) and len(sd) >= 2 and isinstance(sd[1], dict):
+                            neighbors_full = sd[1].get('neighbors_full')
+                        if isinstance(sd, list) and len(sd) >= 1 and isinstance(sd[0], dict):
+                            picked = (sd[0].get('picked') or {})
+                            stats = sd[0].get('stats')
+                    except Exception:
+                        neighbors_full = None
+                    meta['knn'] = True
+                    # Persist results/stats even if empty so synthesis can report zero matches
+                    if picked is not None:
+                        meta['knn_results'] = picked
+                    if neighbors_full is not None:
+                        meta['neighbors_full'] = neighbors_full
+                    if stats is not None:
+                        meta['knn_stats'] = stats
+                    ledger.mark_done('lancedb_knn')
+            except Exception as e:
+                logger.info(f"Fast Path: LanceDB stage skipped due to error: {e}")
+
+        if meta.get("escalate") or ledger.unmet():
+            # Attempt concept discovery before escalating to planner
+            try:
+                need = int(getattr(intent.N, 'value', None) or 5)
+                logger.info("MFP_FALLBACK: invoking concept_discovery before planner escalation")
+                # Extract concise concept phrase like "metal transport" from the question
+                concept_text = question
+                try:
+                    import re as _re
+                    m = _re.search(r"find\s+\w+\s+(.*?)\s+loci", question, _re.I)
+                    if m:
+                        concept_text = m.group(1).strip()
+                except Exception:
+                    pass
+                cd = await self._execute_concept_discovery({
+                    "concept": concept_text,
+                    "n": need,
+                    "flank_k": k,
+                })
+                loci = (cd.get("structured_data") or []) if isinstance(cd, dict) else []
+                # structured_data may be a list with loci and aggregated rows
+                cards_for_heavy = []
+                if isinstance(loci, list):
+                    # Try to locate aggregated rows
+                    aggregated = None
+                    for item in loci:
+                        if isinstance(item, dict) and 'aggregated' in item:
+                            aggregated = item.get('aggregated')
+                            break
+                    # Build minimal cards from aggregated if present
+                    if isinstance(aggregated, list):
+                        for item in aggregated[:need]:
+                            sid = item.get('seed_protein_id') or item.get('seed')
+                            neighbors = item.get('neighbors') or []
+                            contig = item.get('contig_id') or ''
+                            cards_for_heavy.append({
+                                'seed_protein_id': sid,
+                                'contig_id': contig,
+                                'genome_id': '',
+                                'contig_len': None,
+                                'neighbors': neighbors,
+                                'verdict': 'CONTEXTUALIZED' if neighbors else 'PARTIAL_SIGNAL',
+                                'seed_pfams': item.get('seed_pfams') or [],
+                                'seed_kos': item.get('seed_kos') or [],
+                            })
+                if cards_for_heavy and len(cards_for_heavy) >= min(1, need):
+                    # Always use heavy finalizer for narrative
+                    # Build meta with scope and seed_selection provenance for the heavy finalizer
+                    summary_cd = cd.get('summary') if isinstance(cd, dict) else {}
+                    meta_cd = {
+                        'escalate': False,
+                        'signature': f'CONCEPT:{concept_text}',
+                        'marker': concept_text,
+                        'k': int(k),
+                        'nn': 0,
+                        'analysis_scope': {"mode": "locus_window", "window_k": int(k), "contig_semantics": "gene_order"},
+                        'seed_selection': {"method": "concept_anchors", "anchors_count": len((summary_cd or {}).get('anchors_used', []) )},
+                        'witness': {},
+                    }
+                    final_answer = self.rag_system._finalize_from_locus_cards(cards_for_heavy[:need], meta_cd, use_heavy=True)
+                    step = AgentStep(
+                        step_number=1,
+                        tool_name="concept_discovery",
+                        tool_parameters={"concept": concept_text, "n": need, "flank_k": k},
+                        reasoning="Anchors → PFAM/KO → proteins → batch neighborhoods → select loci",
+                        result={"count": len(cards_for_heavy), "loci": cards_for_heavy[:need], "summary": cd.get("summary")},
+                        execution_time=elapsed,
+                        success=True,
+                        error=None,
+                    )
+                    return AgentExecutionResult(
+                        question=question,
+                        success=True,
+                        steps=[step],
+                        final_answer=final_answer,
+                        confidence="high",
+                        citations="",
+                        total_execution_time=elapsed,
+                        total_steps=1,
+                        tools_used=["concept_discovery"],
+                        error=None,
+                    )
+            except Exception as _cd_err:
+                logger.info(f"Concept discovery fallback skipped: {_cd_err}")
+            logger.info(
+                f"Fast Path: escalating to planner; meta={meta}, unmet={list(ledger.unmet().keys())}"
+            )
+            return None
+
+        # Synthesize final answer (FSM-parity heavy summary)
+        try:
+            final_answer = self.rag_system._finalize_from_locus_cards(cards, meta, use_heavy=True)
+        except Exception:
+            final_answer = self._render_locus_cards_summary(cards)
+
+        # Emit final MFP_RESULT after kNN/meta updates
+        try:
+            logger.info(
+                "MFP_RESULT: seeds=%d escalate=%s knn_present=%s",
+                len(cards or []),
+                meta.get("escalate"),
+                bool(meta.get("knn")),
+            )
+        except Exception:
+            pass
+
+        step = AgentStep(
+            step_number=1,
+            tool_name="fast_path_signature_discovery" if getattr(intent, 'signature_name', None) else "fast_path_locus_discovery",
+            tool_parameters={
+                "marker": intent.marker,
+                "N": int(intent.N.value or 5),
+                "k": k,
+                "nn": nn,
+            },
+            reasoning="Deterministic MFP (signature-aware): seeds → neighborhoods → DNF motifs → persist loci",
+            result={
+                "count": len(cards),
+                "meta": meta,
+                "seeds": [getattr(c, 'seed_protein_id', None) for c in cards],
+                "contigs": list({c.contig_id for c in cards}),
+            },
+            execution_time=elapsed,
+            success=True,
+            error=None,
+        )
+
+        return AgentExecutionResult(
+            question=question,
+            success=True,
+            steps=[step],
+            final_answer=final_answer,
+            confidence="high",
+            citations="",
+            total_execution_time=elapsed,
+            total_steps=1,
+            tools_used=["fast_path_locus_discovery"],
+            error=None,
+        )
+
+    def _render_locus_cards_summary(self, cards: List[Any]) -> str:
+        if not cards:
+            return "No loci passed deterministic gating; planner escalation not needed."
+        lines = []
+        lines.append(f"LocusDiscovery (deterministic): {len(cards)} seeds contextualized.")
+        for i, c in enumerate(cards, 1):
+            contig = getattr(c, "contig_id", "")
+            genome = getattr(c, "genome_id", "")
+            neigh = len(getattr(c, "neighbors", []) or [])
+            seed = getattr(c, 'seed_protein_id', None)
+            lines.append(f"{i}. seed={seed} contig={contig} genome={genome} neighbors={neigh}")
+        return "\n".join(lines)
+
+    async def _execute_agent_workflow_fsm(self, question: str, selected_genome: Optional[str] = None) -> AgentExecutionResult:
+        """FSM-governed agent workflow with typed transitions and strict cycle control."""
+        self.current_user_question = question
+        # Stash selected genome for decision context (scale-aware hints)
+        self.selected_genome = selected_genome
+        logger.info(f"🚀 Starting FSM agent workflow for: {question[:100]}...")
+        start_time = time.time()
+        steps: List[AgentStep] = []
+        current_findings = f"Analyzing question: {question}"
+        tools_used: List[str] = []
+        # Consume any pre-seeded steps (from Macro Fast Path) before agent decisions
+        try:
+            if getattr(self, '_seed_steps', None):
+                for s in self._seed_steps:
+                    steps.append(s)
+                    if s.tool_name and s.tool_name not in tools_used:
+                        tools_used.append(s.tool_name)
+                    elif s.tool_name is None and 'database_query' not in tools_used:
+                        tools_used.append('database_query')
+                    try:
+                        result_summary = self._summarize_step_result(s)
+                        current_findings += f"\n\nSeed step findings: {result_summary}"
+                    except Exception:
+                        pass
+                self._seed_steps = []
+        except Exception:
+            pass
+        # Reset FSM state
+        self._fsm.state = State.PLAN
+        if self.note_keeper:
+            self.note_keeper.set_session_context(question, "unified_agent_fsm")
+        # Initialize obligation ledger early for scheduling if applicable
+        try:
+            from ..options.router import parse_macro_intent
+            from ..options.obligations import ObligationLedger
+            intent0 = parse_macro_intent(question)
+            if intent0:
+                self.obligation_ledger = ObligationLedger.from_intent(intent0)
+                # Fail fast if tool is required but missing
+                if self.obligation_ledger.state.get("lancedb_knn", {}).get("required"):
+                    from .external_tools import AVAILABLE_TOOLS
+                    if "lancedb_knn" not in AVAILABLE_TOOLS or AVAILABLE_TOOLS.get("lancedb_knn") is None:
+                        raise RuntimeError("CONFIG_ERROR: obligation 'lancedb_knn' requires tool 'lancedb_knn' but it is not registered.")
+        except Exception as e:
+            logger.info(f"Obligation ledger init skipped: {e}")
+        try:
+            for step_number in range(1, self.max_steps + 1):
+                logger.info(f"🔄 FSM Agent step {step_number}/{self.max_steps}")
+                # Decision must occur at DECIDE or PLAN
+                if self._fsm.state in (State.DB, State.SIM, State.GENOME):
+                    # Should not happen at start of loop; force ACCUM->DECIDE
+                    try:
+                        self._fsm.transition(State.ACCUM)
+                        self._fsm.transition(State.DECIDE)
+                    except Exception as fsm_err:
+                        logger.error(f"FSM correction before decision: {fsm_err}")
+
+>>>>>>> feat/agent-router-typed
                 decision = await self._make_agent_decision(
                     question=question,
                     steps=steps,
                     current_findings=current_findings
                 )
+<<<<<<< HEAD
                 
                 if decision.exploration_complete and decision.next_action == "synthesize":
                     logger.info("🎯 Agent decided to synthesize final answer")
@@ -240,6 +1090,38 @@ class UnifiedAgentExecutor:
                 # Allow multiple consecutive tool calls - agent can use code_interpreter multiple times
                 
                 # Execute the chosen tool
+=======
+
+                if decision.exploration_complete and decision.next_action == "synthesize":
+                    try:
+                        if self._fsm.state == State.ACCUM:
+                            self._fsm.transition(State.DECIDE)
+                        if self._fsm.state in (State.PLAN, State.DECIDE):
+                            self._fsm.transition(State.SYN)
+                    except Exception as fsm_err:
+                        logger.error(f"FSM synthesize transition warning: {fsm_err}")
+                    break
+
+                # DECIDE -> PLAN
+                try:
+                    if self._fsm.state == State.DECIDE:
+                        self._fsm.transition(State.PLAN)
+                except Exception as fsm_err:
+                    logger.error(f"FSM DECIDE->PLAN warning: {fsm_err}")
+
+                # PLAN -> tool state
+                try:
+                    if decision.next_action == "database_query" and self._fsm.state == State.PLAN:
+                        self._fsm.transition(State.DB)
+                    elif decision.next_action == "similarity_search" and self._fsm.state == State.PLAN:
+                        self._fsm.transition(State.SIM)
+                    elif decision.next_action == "whole_genome_reader" and self._fsm.state == State.PLAN:
+                        self._fsm.transition(State.GENOME)
+                except Exception as fsm_err:
+                    logger.error(f"FSM PLAN->tool warning: {fsm_err}")
+
+                # Execute step
+>>>>>>> feat/agent-router-typed
                 step_result = await self._execute_agent_step(
                     step_number=step_number,
                     tool_name=decision.next_action,
@@ -247,6 +1129,7 @@ class UnifiedAgentExecutor:
                     reasoning=decision.biological_reasoning,
                     selected_genome=selected_genome
                 )
+<<<<<<< HEAD
                 
                 steps.append(step_result)
                 
@@ -269,11 +1152,40 @@ class UnifiedAgentExecutor:
                 
                 # CRITICAL FIX: Update findings IMMEDIATELY after step execution
                 # This ensures the agent sees current results when making the next decision
+=======
+                steps.append(step_result)
+                self._update_previous_step_data(steps)
+                self._update_progress(step_result)
+                self._save_task_debug_data(step_result, step_number)
+                # Optional fail-fast: abort agent workflow on first tool error (e.g., template compile failure)
+                if (not step_result.success) and getattr(self.rag_system.config, 'FAIL_FAST_ON_TOOL_ERROR', False):
+                    total_time = time.time() - start_time
+                    logger.error(f"FAIL_FAST: Aborting on step {step_number} error: {step_result.error}")
+                    return AgentExecutionResult(
+                        question=question,
+                        success=False,
+                        steps=steps,
+                        final_answer=f"Aborted due to tool error at step {step_number}: {step_result.error}",
+                        confidence="low",
+                        citations="",
+                        total_execution_time=total_time,
+                        total_steps=len(steps),
+                        tools_used=tools_used,
+                        error=step_result.error,
+                    )
+                if self.note_keeper and step_result.success:
+                    self._save_agent_step_as_note(step_result, question)
+                if step_result.tool_name and step_result.tool_name not in tools_used:
+                    tools_used.append(step_result.tool_name)
+                elif step_result.tool_name is None and "database_query" not in tools_used:
+                    tools_used.append("database_query")
+>>>>>>> feat/agent-router-typed
                 if step_result.success and step_result.result:
                     result_summary = self._summarize_step_result(step_result)
                     current_findings += f"\n\nStep {step_number} findings: {result_summary}"
                 else:
                     current_findings += f"\n\nStep {step_number} failed: {step_result.error or 'Unknown error'}"
+<<<<<<< HEAD
                 
                 logger.info(f"✅ Step {step_number} completed: {step_result.tool_name or 'database_query'}")
                 
@@ -298,14 +1210,62 @@ class UnifiedAgentExecutor:
             
             # HYBRID MODEL: Final comprehensive reporting synthesis
             logger.info("📊 Running final reporting synthesis with all notes")
+=======
+                logger.info(f"✅ FSM Step {step_number} completed: {step_result.tool_name or 'database_query'}")
+
+                # Post-exec transitions
+                try:
+                    if self._fsm.state in (State.DB, State.SIM, State.GENOME):
+                        self._fsm.transition(State.ACCUM)
+                    if self._fsm.state == State.ACCUM:
+                        self._fsm.transition(State.DECIDE)
+                except Exception as fsm_err:
+                    logger.error(f"FSM post-exec warning: {fsm_err}")
+
+            # Final synthesis (pre-synthesis obligation gate)
+            # Build ledger opportunistically once before finalization
+            if self.obligation_ledger is None:
+                try:
+                    from ..options.router import parse_macro_intent
+                    from ..options.obligations import ObligationLedger
+                    intent = parse_macro_intent(question)
+                    if intent:
+                        self.obligation_ledger = ObligationLedger.from_intent(intent)
+                except Exception:
+                    self.obligation_ledger = None
+            if self.obligation_ledger is None:
+                logger.info("FINALIZATION_GATE: no_obligation_ledger_present")
+            if self.obligation_ledger is not None and self.obligation_ledger.unmet():
+                unmet = list(self.obligation_ledger.unmet().keys())
+                logger.error(f"FINALIZATION_BLOCKED: unmet obligations: {unmet}")
+                total_time = time.time() - start_time
+                return AgentExecutionResult(
+                    question=question,
+                    success=False,
+                    steps=steps,
+                    final_answer=f"Cannot finalize; unmet obligations: {unmet}",
+                    confidence="low",
+                    citations="",
+                    total_execution_time=total_time,
+                    total_steps=len(steps),
+                    tools_used=tools_used,
+                    error="unmet_obligations",
+                )
+
+            logger.info("📊 Running final reporting synthesis with all notes (FSM mode)")
+>>>>>>> feat/agent-router-typed
             final_answer, confidence, citations = await self._run_reporting_synthesis(
                 question=question,
                 steps=steps,
                 current_findings=current_findings
             )
+<<<<<<< HEAD
             
             total_time = time.time() - start_time
             
+=======
+            total_time = time.time() - start_time
+>>>>>>> feat/agent-router-typed
             return AgentExecutionResult(
                 question=question,
                 success=True,
@@ -317,11 +1277,17 @@ class UnifiedAgentExecutor:
                 total_steps=len(steps),
                 tools_used=tools_used
             )
+<<<<<<< HEAD
             
         except Exception as e:
             logger.error(f"❌ Agent execution failed: {str(e)}")
             total_time = time.time() - start_time
             
+=======
+        except Exception as e:
+            logger.error(f"❌ FSM agent execution failed: {str(e)}")
+            total_time = time.time() - start_time
+>>>>>>> feat/agent-router-typed
             return AgentExecutionResult(
                 question=question,
                 success=False,
@@ -358,27 +1324,160 @@ class UnifiedAgentExecutor:
         else:
             steps_summary = "No previous steps - starting exploration"
         
+<<<<<<< HEAD
         # Prepare available tools information
         available_tools_json = str(TOOL_CAPABILITIES)
         
         # Use model allocation for agent decisions (o3 for complex reasoning)
         def decision_call(module):
+=======
+        # Prepare available tools information (structured JSON)
+        try:
+            caps = TOOL_CAPABILITIES
+            # Obligation-aware restriction: prioritize neighborhoods, then LanceDB
+            if getattr(self, "obligation_ledger", None):
+                unmet = self.obligation_ledger.unmet()
+                if "neighborhoods" in unmet:
+                    caps = {k: v for k, v in TOOL_CAPABILITIES.items() if k == "neighborhood_extractor"}
+                    logger.info("FSM_ALLOWED_TOOLS: ['neighborhood_extractor']")
+                elif "lancedb_knn" in unmet:
+                    caps = {k: v for k, v in TOOL_CAPABILITIES.items() if k == "lancedb_knn"}
+                    logger.info("FSM_ALLOWED_TOOLS: ['lancedb_knn']")
+            available_tools_json = _json.dumps(caps)
+        except Exception:
+            available_tools_json = str(TOOL_CAPABILITIES)
+
+        # Build a concise DB templates catalog (name, required, optional)
+        def _catalog_from_specs():
+            try:
+                items = []
+                for name, spec in SPECS.items():
+                    items.append({
+                        "name": name,
+                        "required": list(spec.required.keys()),
+                        "optional": list(spec.optional.keys()),
+                        "category": getattr(spec, 'category', 'general'),
+                        "returns": getattr(spec, 'returns', 'table'),
+                        "cost": getattr(spec, 'cost', 'cheap'),
+                        "slot_hints": getattr(spec, 'slot_hints', {}) or {},
+                    })
+                return _json.dumps({"templates": items})
+            except Exception:
+                return _json.dumps({"templates": []})
+
+        db_templates_catalog = _catalog_from_specs()
+
+        # Optional functional signatures catalog (external config; advisory only)
+        def _load_functional_signatures() -> str:
+            import os
+            from pathlib import Path
+            path = os.getenv("FUNCTIONAL_SIGNATURES_PATH", "config/functional_signatures.json")
+            p = Path(path)
+            if p.exists():
+                try:
+                    return p.read_text(encoding="utf-8")
+                except Exception:
+                    return _json.dumps({})
+            return _json.dumps({})
+
+        functional_signatures_catalog = _load_functional_signatures()
+
+        # Compute lightweight data profile (scale hints) if a genome was selected earlier in the workflow
+        data_profile = ""
+        try:
+            selected_genome = getattr(self, 'selected_genome', None)
+            if selected_genome and hasattr(self.rag_system, 'neo4j_processor') and self.rag_system.neo4j_processor.driver:
+                with self.rag_system.neo4j_processor.driver.session() as session:
+                    # Count genes for the selected genome
+                    gene_count = session.run(
+                        "MATCH (g:Gene)-[:BELONGSTOGENOME]->(gen:Genome {genomeId: $gid}) RETURN count(g) as c",
+                        gid=selected_genome,
+                    ).single().get("c", 0)
+                    # Approximate contig count via distinct gene.contig
+                    contig_count = session.run(
+                        "MATCH (g:Gene)-[:BELONGSTOGENOME]->(gen:Genome {genomeId: $gid}) RETURN count(DISTINCT g.contig) as c",
+                        gid=selected_genome,
+                    ).single().get("c", 0)
+                # Rough chunk estimate assuming ~100 genes per analysis chunk (heuristic only)
+                try:
+                    import math
+                    est_chunks = int(math.ceil((gene_count or 0) / 100.0))
+                except Exception:
+                    est_chunks = 0
+                data_profile = f"genome={selected_genome}; contigs={contig_count}; genes={gene_count}; est_chunks≈{est_chunks}"
+                # Stash in progress for later advisory checks
+                try:
+                    self._progress["est_chunks"] = est_chunks
+                except Exception:
+                    pass
+        except Exception as _e:
+            # Keep empty if any failure; hints are optional
+            data_profile = ""
+
+        # Generic policy/budget/tool-cost hints (non-binding)
+        policy_hints = "templates-only-db; prefer-cheap-first; actions-may-require-approval"
+        budget_state = "tokens_left=unknown; time_left=unknown; tool_budget=moderate"
+        tool_costs = _json.dumps({
+            "database_query": "cheap",
+            "whole_genome_reader": "expensive",
+            "similarity_search": "moderate",
+            "code_interpreter": "moderate",
+            "literature_search": "moderate",
+            "synthesize": "cheap"
+        })
+        
+        # Use model allocation for agent decisions (gpt-5 for complex reasoning)
+        # Build progress_state JSON (advisory)
+        try:
+            progress_state = {
+                "candidates_collected": len(self._progress.get("distinct_protein_ids", set())),
+                "loci_built": int(self._progress.get("loci_built", 0)),
+                "last_row_count": int(self._progress.get("last_row_count", 0)),
+                "zero_result_streak": int(self._progress.get("zero_result_streak", 0)),
+            }
+            progress_state_json = _json.dumps(progress_state)
+        except Exception:
+            progress_state_json = _json.dumps({})
+
+        # Add dynamic hint for repeated no-op results
+        if self._progress.get("zero_result_streak", 0) >= 2:
+            policy_hints = policy_hints + "; no-op-repeat"
+
+        def decision_call(module):
+            # Provide enriched, but non-binding, context to improve tool selection
+>>>>>>> feat/agent-router-typed
             return module(
                 user_question=question,
                 previous_steps=steps_summary,
                 available_tools=available_tools_json,
+<<<<<<< HEAD
                 current_findings=current_findings
+=======
+                current_findings=current_findings,
+                data_profile=data_profile,
+                policy_hints=policy_hints,
+                budget_state=budget_state,
+                db_templates_catalog=db_templates_catalog,
+                tool_costs=tool_costs,
+                functional_signatures_catalog=functional_signatures_catalog,
+                progress_state=progress_state_json,
+>>>>>>> feat/agent-router-typed
             )
         
         logger.debug(f"🧠 Agent making decision for step {len(steps) + 1}")
         
         result = self.model_allocator.create_context_managed_call(
+<<<<<<< HEAD
             task_name="agent_decision",  # Maps to COMPLEX = o3
+=======
+            task_name="agent_decision",  # Maps to COMPLEX = gpt-5
+>>>>>>> feat/agent-router-typed
             signature_class=AgentDecisionMaker,
             module_call_func=decision_call,
             query=question,
             task_context=f"Agent decision making for step {len(steps) + 1}"
         )
+<<<<<<< HEAD
         
         if result is None:
             raise Exception("Model allocation failed for agent decision")
@@ -386,6 +1485,193 @@ class UnifiedAgentExecutor:
         logger.info(f"🧠 Agent decision: {result.next_action} (confidence: {result.confidence})")
         logger.debug(f"🎯 Reasoning: {result.biological_reasoning[:200]}...")
         
+=======
+
+        if result is None:
+            raise Exception("Model allocation failed for agent decision")
+
+        logger.info(f"🧠 Agent decision: {result.next_action} (confidence: {result.confidence})")
+        logger.debug(f"🎯 Reasoning: {result.biological_reasoning[:200]}...")
+
+        # Enforce obligation-aware tool choice (neighborhoods first, then lancedb_knn)
+        try:
+            if getattr(self, "obligation_ledger", None):
+                unmet = self.obligation_ledger.unmet()
+                if "neighborhoods" in unmet:
+                    # Force neighborhoods using recent seeds from cache if present
+                    seed_ids: List[str] = []
+                    try:
+                        from pathlib import Path
+                        import json as _json2
+                        session_path = getattr(getattr(self, 'note_keeper', None), 'session_path', None)
+                        if session_path:
+                            tool_dir = Path(session_path) / 'tool_results'
+                            if tool_dir.exists():
+                                db_files = sorted(tool_dir.glob('db_*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+                                for f in db_files[:5]:
+                                    data = _json2.loads(f.read_text())
+                                    rows = (data.get('tool_result') or {}).get('structured_data') or []
+                                    for row in rows:
+                                        pid = row.get('protein_id') or row.get('id')
+                                        if isinstance(pid, str) and pid not in seed_ids:
+                                            seed_ids.append(pid)
+                                    if len(seed_ids) >= 10:
+                                        break
+                    except Exception:
+                        seed_ids = []
+                    if seed_ids:
+                        setattr(result, 'next_action', 'neighborhood_extractor')
+                        setattr(result, 'tool_parameters', _json.dumps({
+                            'protein_ids': seed_ids,
+                            'seeds_limit': 5,
+                        }))
+                        logger.info(f"🔒 Obligation gate: forcing neighborhood_extractor with seeds={len(seed_ids)}")
+                elif "lancedb_knn" in unmet:
+                    logger.info("🔓 LanceDB obligation unresolved; leaving tool selection to planner output")
+        except Exception:
+            pass
+
+        # Advisory: mark WGR as requiring approval on large datasets based on est_chunks threshold (env-driven)
+        try:
+            import os as _os
+            threshold = int(_os.getenv("AGENT_WGR_APPROVAL_CHUNKS", "0"))  # 0 means disabled
+            est = int(self._progress.get("est_chunks", 0)) if isinstance(self._progress, dict) else 0
+            if result.next_action == "whole_genome_reader" and threshold > 0 and est >= threshold:
+                try:
+                    setattr(result, 'requires_approval', True)
+                    logger.info(f"⚠️ WGR on large dataset (est_chunks≈{est}) marked requires_approval (threshold={threshold})")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Attempt to repair or enrich tool parameters for strict tool schemas (non-binding, best-effort)
+        try:
+            next_action = getattr(result, 'next_action', '') or ''
+            params_text = getattr(result, 'tool_parameters', '') or ''
+            # Normalize to dict if JSON
+            try:
+                params_obj = _json.loads(params_text) if isinstance(params_text, str) and params_text.strip().startswith('{') else params_text
+            except Exception:
+                params_obj = {}
+
+            # If the agent mistakenly returned a DB template name as a tool, map it to database_query
+            try:
+                from ..kg.cypher_templates.registry import SPECS  # type: ignore
+                if next_action and next_action not in self.tools and next_action in SPECS:
+                    orig = next_action
+                    setattr(result, 'next_action', 'database_query')
+                    # Seed minimal parameters; downstream repair/validation will fill slots
+                    setattr(result, 'tool_parameters', _json.dumps({"template": orig, "slots": params_obj if isinstance(params_obj, dict) else {}}))
+                    next_action = 'database_query'
+                    params_text = getattr(result, 'tool_parameters', '') or ''
+                    try:
+                        params_obj = _json.loads(params_text)
+                    except Exception:
+                        params_obj = {}
+                    logger.info(f"🔁 Mapped template-name '{orig}' to database_query tool")
+            except Exception:
+                pass
+
+            if next_action == 'database_query':
+                # Expect {'template': <str>, 'slots': {}}
+                need_repair = not isinstance(params_obj, dict) or 'template' not in params_obj or 'slots' not in params_obj or not isinstance(params_obj.get('slots'), dict)
+                if need_repair:
+                    schema = {
+                        "type": "object",
+                        "required": ["template", "slots"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "template": {"type": "string"},
+                            "slots": {"type": "object"}
+                        }
+                    }
+                    def repair_call(module):
+                        return module(
+                            instruction="Repair tool_parameters to match param_schema_json using db_templates_catalog.",
+                            tool_name=next_action,
+                            user_question=question,
+                            bad=params_text if isinstance(params_text, str) else _json.dumps(params_obj),
+                            db_templates_catalog=db_templates_catalog,
+                            param_schema_json=_json.dumps(schema)
+                        )
+                    fixed = self.model_allocator.create_context_managed_call(
+                        task_name="agent_decision_repair",
+                        signature_class=DecisionParamRepair,
+                        module_call_func=repair_call,
+                        query="agent_decision_repair",
+                        task_context="Agent decision parameter repair"
+                    )
+                    if fixed is not None:
+                        fixed_text = getattr(fixed, 'json_payload', '') or ''
+                        try:
+                            fixed_obj = _json.loads(fixed_text)
+                            if isinstance(fixed_obj, dict) and 'template' in fixed_obj and 'slots' in fixed_obj:
+                                # Overwrite decision parameters with repaired JSON and update locals
+                                setattr(result, 'tool_parameters', _json.dumps(fixed_obj))
+                                params_text = getattr(result, 'tool_parameters', '') or ''
+                                params_obj = fixed_obj
+                                logger.info("🔧 Repaired agent decision tool_parameters for database_query")
+                        except Exception:
+                            pass
+                # Secondary validation: try compiling the template; if it fails, perform one more repair with error context
+                try:
+                    from ..kg.cypher_templates.registry import compile_query  # type: ignore
+                    name = params_obj.get('template') if isinstance(params_obj, dict) else None
+                    slots = params_obj.get('slots') if isinstance(params_obj, dict) else None
+                    if isinstance(name, str) and isinstance(slots, dict):
+                        try:
+                            _cypher, _p = compile_query(name, slots)
+                        except Exception as comp_err:
+                            logger.warning(f"⚠️ Compile failed for template '{name}': {comp_err}. Attempting param repair with constraints.")
+                            def repair2_call(module):
+                                instruction = (
+                                    "Fix database_query parameters so that the template compiles.\n"
+                                    f"Current template: {name}\n"
+                                    f"Compile error: {str(comp_err)}\n"
+                                    "Use only templates/slots from db_templates_catalog; adjust slots accordingly."
+                                )
+                                return module(
+                                    instruction=instruction,
+                                    tool_name=next_action,
+                                    user_question=question,
+                                    bad=_json.dumps(params_obj),
+                                    db_templates_catalog=db_templates_catalog,
+                                    param_schema_json=_json.dumps({
+                                        "type": "object",
+                                        "required": ["template", "slots"],
+                                        "additionalProperties": False,
+                                        "properties": {"template": {"type": "string"}, "slots": {"type": "object"}},
+                                    }),
+                                )
+                            fixed2 = self.model_allocator.create_context_managed_call(
+                                task_name="agent_decision_repair",
+                                signature_class=DecisionParamRepair,
+                                module_call_func=repair2_call,
+                                query="agent_decision_repair2",
+                                task_context="Agent decision parameter repair (compile failure)"
+                            )
+                            if fixed2 is not None:
+                                fixed_text2 = getattr(fixed2, 'json_payload', '') or ''
+                                try:
+                                    fixed_obj2 = _json.loads(fixed_text2)
+                                    if isinstance(fixed_obj2, dict) and 'template' in fixed_obj2 and 'slots' in fixed_obj2:
+                                        # Validate compile again
+                                        _cy2, _p2 = compile_query(fixed_obj2['template'], fixed_obj2['slots'])
+                                        setattr(result, 'tool_parameters', _json.dumps(fixed_obj2))
+                                        params_text = getattr(result, 'tool_parameters', '') or ''
+                                        params_obj = fixed_obj2
+                                        logger.info("🔧 Repaired agent decision tool_parameters after compile failure")
+                                except Exception:
+                                    pass
+                except Exception:
+                    # Ignore validation errors in preflight; downstream execution will still validate
+                    pass
+        except Exception as _e:
+            # Non-fatal; proceed with original decision
+            pass
+
+>>>>>>> feat/agent-router-typed
         return result
     
     async def _execute_agent_step(self, step_number: int, tool_name: str, tool_parameters: str, 
@@ -454,6 +1740,7 @@ class UnifiedAgentExecutor:
             success=success,
             error=error
         )
+<<<<<<< HEAD
     
     async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
         """Execute database query using existing processors."""
@@ -463,12 +1750,212 @@ class UnifiedAgentExecutor:
         # Use existing query processing logic from core.py
         # This will generate appropriate Cypher queries and execute them
         return await self._execute_traditional_query_logic(description)
+=======
+
+    async def _execute_lancedb_knn(self, params: Dict[str, Any]) -> Any:
+        """Execute LanceDB kNN tool via first-class tool wrapper."""
+        from .external_tools import AVAILABLE_TOOLS
+        tool = AVAILABLE_TOOLS.get("lancedb_knn")
+        if tool is None:
+            raise RuntimeError("Tool 'lancedb_knn' not registered")
+        # Required params
+        seed_ids = params.get("seed_ids") or []
+        nn = int(params.get("nn") or 0)
+        if not seed_ids or nn <= 0:
+            raise ValueError("lancedb_knn requires 'seed_ids' (list) and 'nn' (>0)")
+        # Optional params
+        topk = int(params.get("topk") or max(10, 10 * nn))
+        distance = params.get("distance", "cosine")
+        exclude_namespace = params.get("exclude_namespace", "pfam")
+        exclude_markers = params.get("exclude_markers") or []
+        # Invoke tool
+        result = await tool(
+            rag_system=self.rag_system,
+            seed_ids=seed_ids,
+            nn=nn,
+            topk=topk,
+            distance=distance,
+            exclude_namespace=exclude_namespace,
+            exclude_markers=exclude_markers,
+        )
+        # Mark obligation done on success
+        try:
+            if getattr(self, 'obligation_ledger', None) and result and result.get('success'):
+                self.obligation_ledger.mark_done('lancedb_knn')
+        except Exception:
+            pass
+        return result
+
+    async def _execute_concept_discovery(self, params: Dict[str, Any]) -> Any:
+        """Execute concept discovery (anchors → PFAM/KO → proteins → neighborhoods)."""
+        from .external_tools import AVAILABLE_TOOLS
+        tool = AVAILABLE_TOOLS.get("concept_discovery")
+        if tool is None:
+            raise RuntimeError("Tool 'concept_discovery' not registered")
+        concept = params.get("concept")
+        if not concept or not isinstance(concept, str):
+            raise ValueError("concept_discovery requires 'concept' (string)")
+        n = int(params.get("n") or 5)
+        flank_k = int(params.get("flank_k") or 5)
+        max_rounds = int(params.get("max_rounds") or 2)
+        anchor_limit = int(params.get("anchor_limit") or 8)
+        protein_limit = int(params.get("protein_limit") or 200)
+        seeds_limit = int(params.get("seeds_limit") or 100)
+        return await tool(
+            rag_system=self.rag_system,
+            concept=concept,
+            n=n,
+            flank_k=flank_k,
+            max_rounds=max_rounds,
+            anchor_limit=anchor_limit,
+            protein_limit=protein_limit,
+            seeds_limit=seeds_limit,
+        )
+    
+    async def _execute_database_query(self, params: Dict[str, Any]) -> Any:
+        """Execute database query via STRICT template path only (envelope result)."""
+        from .tool_schemas import ToolResultEnvelope  # For shape reference only
+        from ..kg.cypher_templates.registry import SPECS  # type: ignore
+        from ..options.router import parse_macro_intent
+
+        template = params.get("template")
+        slots = params.get("slots", {})
+        if not template:
+            raise ValueError("database_query requires 'template' and 'slots' (strict mode)")
+        # Hard guard: if template not in registry, attempt one deterministic fallback using parsed intent
+        if template not in SPECS:
+            try:
+                it = parse_macro_intent(self.current_question if hasattr(self, 'current_question') else '')
+            except Exception:
+                it = None
+            marker = getattr(it, 'marker', None) if it else None
+            if marker and 'proteins_with_pfam' in SPECS:
+                logger.warning(f"FORCED_TEMPLATE_SELECTION: unknown template '{template}' → proteins_with_pfam")
+                template = 'proteins_with_pfam'
+                slots = {'pfam': marker, 'limit': 50, 'exact': False}
+            elif 'proteins_with_pfam' in SPECS:
+                logger.warning(f"FORCED_TEMPLATE_SELECTION: unknown template '{template}' → proteins_with_pfam (default integrase)")
+                template = 'proteins_with_pfam'
+                slots = {'pfam': 'integrase', 'limit': 50, 'exact': False}
+            else:
+                raise ValueError(f"Unknown template: {template}")
+        # Inject default limit for list-style templates when missing
+        try:
+            spec = SPECS.get(template)
+            if spec is not None:
+                returns = getattr(spec, 'returns', 'table')
+                # Heuristic: list-like templates that return gene/protein rows can be bounded by limit
+                if returns in ("protein", "gene") and isinstance(slots, dict) and "limit" not in slots:
+                    try:
+                        # Prefer policy engine if available
+                        default_limit = int(self.rag_system.policy_engine.get_max_results("database_query"))
+                    except Exception:
+                        import os as _os
+                        default_limit = int(_os.getenv("AGENT_DEFAULT_DB_LIMIT", "100"))
+                    slots["limit"] = max(1, min(default_limit, 5000))
+        except Exception:
+            pass
+        # Deduplicate identical template+slots within this executor instance
+        import json as _json
+        try:
+            sig = _json.dumps({"template": template, "slots": slots}, sort_keys=True)
+        except Exception:
+            sig = f"{template}|{str(sorted(slots.items()))}"
+        if sig in self._db_dedup_cache:
+            cached_env = self._db_dedup_cache[sig]
+            env = dict(cached_env)
+            env.setdefault("summary", {}).update({"deduplicated": True})
+            return env
+
+        # Execute template safely through Neo4j processor
+        qres = await self.rag_system.neo4j_processor.execute_named_template(template, slots)
+        rows = qres.results or []
+        row_count = len(rows)
+
+        # Build concise display text and structured envelope
+        display = f"template={template} rows={row_count}"
+        try:
+            logger.info(f"🔎 DB template executed: {template} slots={slots} rows={row_count}")
+            # Seed summary for common discovery templates
+            if template in ("proteins_with_pfam", "proteins_with_pfams") and row_count:
+                # Try to extract a few stable identifiers for debugging
+                seeds = []
+                for r in rows[:5]:
+                    pid = r.get("protein_id") or r.get("id") or r.get("pid")
+                    if pid:
+                        seeds.append(str(pid))
+                logger.info(f"DB_SEED_SUMMARY: n={row_count} sample={seeds}")
+        except Exception:
+            pass
+        # Sanitize rows for common discovery templates so downstream tools can consume stable IDs
+        try:
+            if template in ("proteins_with_pfam", "proteins_with_pfams", "proteins_with_kos", "proteins_by_genome"):
+                sanitized = []
+                for r in rows:
+                    # Attempt to extract protein ID from various shapes
+                    pid = None
+                    # First, accept already-sanitized rows
+                    if isinstance(r, dict) and 'protein_id' in r and isinstance(r['protein_id'], str):
+                        sanitized.append({"protein_id": r['protein_id']})
+                        continue
+                    pval = r.get('p') or r.get('protein') or r
+                    try:
+                        if isinstance(pval, dict) and 'id' in pval:
+                            pid = pval['id']
+                        elif hasattr(pval, '__getitem__'):
+                            pid = pval['id']
+                    except Exception:
+                        pid = None
+                    if pid:
+                        sanitized.append({"protein_id": pid})
+                if sanitized:
+                    rows = sanitized
+        except Exception:
+            pass
+
+        envelope = {
+            "tool_name": "database_query",
+            "success": True,
+            "version": "1.0",
+            "display_text": display,
+            "structured_data": rows,
+            "summary": {
+                "template": template,
+                "slots": slots,
+                "row_count": row_count,
+                "debug": {
+                    "cypher": qres.metadata.get("cypher"),
+                    "execution_time_sec": qres.execution_time,
+                },
+            },
+            "references": [],
+        }
+        # Store in dedup cache and return
+        self._db_dedup_cache[sig] = envelope
+        # Mark seed selection obligation done for seed-fetching templates
+        try:
+            if getattr(self, 'obligation_ledger', None) and envelope.get('success'):
+                if template in ("proteins_with_pfam", "proteins_with_pfams", "proteins_with_kos") and row_count > 0:
+                    self.obligation_ledger.mark_done('seed_selection')
+        except Exception:
+            pass
+        return envelope
+>>>>>>> feat/agent-router-typed
     
     async def _execute_whole_genome_reader(self, params: Dict[str, Any]) -> Any:
         """Execute hierarchical genomic analysis instead of raw data dumping."""
         from .whole_genome_reader import WholeGenomeReader
         from .hierarchical_analysis import HierarchicalGenomeAnalyzer
+<<<<<<< HEAD
         
+=======
+        from ..kg.cypher_templates.registry import compile_query
+        
+        # Hard guard by config
+        if getattr(self.rag_system.config, 'DISABLE_WHOLE_GENOME_READER', False):
+            raise RuntimeError("whole_genome_reader is disabled by configuration")
+
+>>>>>>> feat/agent-router-typed
         # Get the user's original question for context-driven analysis
         user_question = getattr(self, 'current_user_question', '') or params.get('user_question', '')
         
@@ -483,6 +1970,23 @@ class UnifiedAgentExecutor:
         max_genes = params.get("max_genes_per_contig", 2000)  # Increased for chunking
         
         if not genome_id:
+<<<<<<< HEAD
+=======
+            # Global preflight size check: total gene count
+            try:
+                cy, pr = compile_query('count_by_label', {'label': 'Gene'})
+                qres = await self.rag_system.neo4j_processor.process_query(cy, query_type='cypher')
+                total = 0
+                if qres and isinstance(qres.results, list) and qres.results:
+                    c = qres.results[0].get('count')
+                    total = int(c or 0)
+                threshold = int(getattr(self.rag_system.config, 'WGR_MAX_TOTAL_GENES', 100000))
+                if total > threshold:
+                    raise RuntimeError(f"whole_genome_reader blocked: total genes {total} exceeds cap {threshold}")
+            except Exception as pre_err:
+                # Surface clear message for planner/agent
+                raise RuntimeError(f"whole_genome_reader preflight failed: {pre_err}")
+>>>>>>> feat/agent-router-typed
             # If no specific genome, use global spatial reading
             from .whole_genome_reader import read_all_genomes_spatial
             raw_result = await read_all_genomes_spatial(self.rag_system.neo4j_processor)
@@ -768,6 +2272,52 @@ class UnifiedAgentExecutor:
         result = literature_search(query, email, max_results=5)
         
         return result
+<<<<<<< HEAD
+=======
+
+    async def _execute_report_synthesis(self, params: Dict[str, Any]) -> Any:
+        """Execute report synthesis tool wrapper."""
+        from .external_tools import report_synthesis_tool
+        description = params.get("description", "Generate final report")
+        original_question = getattr(self, 'current_user_question', '')
+        return report_synthesis_tool(
+            description=description,
+            original_question=original_question,
+        )
+
+    async def _execute_neighborhood_extractor(self, params: Dict[str, Any]) -> Any:
+        """Execute DB-backed neighborhood extraction via curated templates."""
+        from .external_tools import neighborhood_extractor_tool
+        # Pass rag_system so the tool can execute DB templates
+        result = await neighborhood_extractor_tool(
+            rag_system=self.rag_system,
+            protein_id=params.get("protein_id"),
+            contig=params.get("contig"),
+            start=params.get("start"),
+            end=params.get("end"),
+            k=params.get("k"),
+            limit=params.get("limit"),
+            protein_ids=params.get("protein_ids"),
+            seeds_limit=params.get("seeds_limit", 5),
+        )
+        # Mark neighborhoods obligation done on success
+        try:
+            if getattr(self, 'obligation_ledger', None) and result and result.get('success'):
+                self.obligation_ledger.mark_done('neighborhoods')
+        except Exception:
+            pass
+        return result
+
+    async def _execute_annotation_discovery(self, params: Dict[str, Any]) -> Any:
+        """Execute integrated PFAM+KOFAM discovery for a keyword (default 'integrase')."""
+        from .external_tools import annotation_discovery_tool
+        return await annotation_discovery_tool(
+            rag_system=self.rag_system,
+            keyword=params.get("keyword") or params.get("q") or "integrase",
+            limit=int(params.get("limit", 100)),
+            protein_limit=int(params.get("protein_limit", 100)),
+        )
+>>>>>>> feat/agent-router-typed
     
     async def _execute_traditional_query_logic(self, question: str) -> Any:
         """
@@ -1493,12 +3043,34 @@ analysis_results = {{
             
             # Handle database query results
             elif step.tool_name is None:  # database_query
+<<<<<<< HEAD
                 if isinstance(step.result, list) and len(step.result) > 0:
                     findings.append(f"Retrieved {len(step.result)} database records")
                     
                     # Sample first few results to extract patterns
                     sample_size = min(3, len(step.result))
                     for i, record in enumerate(step.result[:sample_size]):
+=======
+                # New envelope shape: dict with structured_data
+                if isinstance(step.result, dict) and 'structured_data' in step.result:
+                    rows = step.result.get('structured_data') or []
+                    if isinstance(rows, list) and rows:
+                        findings.append(f"Retrieved {len(rows)} database records")
+                        sample_size = min(3, len(rows))
+                        for record in rows[:sample_size]:
+                            if isinstance(record, dict):
+                                if "protein_id" in record or "gene_id" in record:
+                                    findings.append("Database results include protein/gene identifiers")
+                                    break
+                                if "ko_description" in record:
+                                    findings.append("Results include KEGG functional annotations")
+                                    break
+                # Legacy shape: direct list of rows
+                elif isinstance(step.result, list) and len(step.result) > 0:
+                    findings.append(f"Retrieved {len(step.result)} database records")
+                    sample_size = min(3, len(step.result))
+                    for record in step.result[:sample_size]:
+>>>>>>> feat/agent-router-typed
                         if isinstance(record, dict):
                             if "protein_id" in record or "gene_id" in record:
                                 findings.append("Database results include protein/gene identifiers")
@@ -1604,7 +3176,67 @@ analysis_results = {{
             with open(debug_file, 'w') as f:
                 json.dump(debug_payload, f, indent=2, default=str)
             
+<<<<<<< HEAD
             logger.info(f"🐛 DEBUG: Saved task step {step_number} result to {debug_file.name} ({debug_payload['result_size_chars']} chars)")
             
         except Exception as e:
             logger.warning(f"⚠️ Failed to save task debug data for step {step_number}: {e}")
+=======
+            logger.debug(f"🐛 DEBUG: Saved task step {step_number} result to {debug_file.name} ({debug_payload['result_size_chars']} chars)")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to save task debug data for step {step_number}: {e}")
+
+    def _update_progress(self, step: AgentStep) -> None:
+        """Update generic progress indicators from a completed step (non-hardcoded)."""
+        try:
+            prog = self._progress
+            if not isinstance(prog, dict):
+                return
+            # Database query path (tool_name None)
+            if step.tool_name is None:
+                rows = []
+                if isinstance(step.result, dict) and 'structured_data' in step.result:
+                    rows = step.result.get('structured_data') or []
+                elif isinstance(step.result, list):
+                    rows = step.result
+                row_count = len(rows) if isinstance(rows, list) else 0
+                prog["last_row_count"] = row_count
+
+                # Query signature from parameters
+                sig = None
+                try:
+                    if isinstance(step.tool_parameters, dict):
+                        if 'template' in step.tool_parameters and 'slots' in step.tool_parameters:
+                            sig = f"{step.tool_parameters['template']}|{_json.dumps(step.tool_parameters['slots'], sort_keys=True)}"
+                        else:
+                            sig = _json.dumps(step.tool_parameters, sort_keys=True)
+                    else:
+                        sig = str(step.tool_parameters)
+                except Exception:
+                    sig = None
+
+                last_sig = prog.get("last_query_signature")
+                if row_count == 0 and sig and sig == last_sig:
+                    prog["zero_result_streak"] = int(prog.get("zero_result_streak", 0)) + 1
+                else:
+                    prog["zero_result_streak"] = 0
+                if sig:
+                    prog["last_query_signature"] = sig
+
+                # Track distinct protein ids (if present generically)
+                if isinstance(rows, list):
+                    ids = [r.get('protein_id') for r in rows if isinstance(r, dict) and r.get('protein_id')]
+                    if ids and isinstance(prog.get("distinct_protein_ids"), set):
+                        prog["distinct_protein_ids"].update(ids)
+
+            elif step.tool_name == "neighborhood_extractor":
+                rows = []
+                if isinstance(step.result, dict) and 'structured_data' in step.result:
+                    rows = step.result.get('structured_data') or []
+                row_count = len(rows) if isinstance(rows, list) else 0
+                if row_count > 0:
+                    prog["loci_built"] = int(prog.get("loci_built", 0)) + 1
+        except Exception as e:
+            logger.debug(f"Progress update skipped: {e}")
+>>>>>>> feat/agent-router-typed

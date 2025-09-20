@@ -64,7 +64,11 @@ def debug_sequence_database():
     # Test specific protein IDs from our transport protein query
     test_protein_ids = [
         'RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_rifcsphigho2_01_scaffold_3030_5',
+<<<<<<< HEAD
         'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_2623_17'
+=======
+        'EXAMPLE_CONTIG_ID_2623_17'
+>>>>>>> feat/agent-router-typed
     ]
     
     print(f"\n🧪 Testing specific protein ID lookups:")
@@ -118,4 +122,8 @@ def debug_sequence_database():
         print(f"  Error getting sample IDs: {e}")
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     debug_sequence_database()
+=======
+    debug_sequence_database()
+>>>>>>> feat/agent-router-typed

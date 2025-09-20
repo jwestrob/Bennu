@@ -25,15 +25,24 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 
 **Node Labels and ONLY Available Properties:**
 
+<<<<<<< HEAD
 *   **`Genome`** - ONLY 2 properties available:
     *   `id`: (String) Unique identifier (e.g., `PLM0_60_b1_sep16_Maxbin2_047_curated.contigs`)
+=======
+    *   **`Genome`** - ONLY 2 properties available:
+        *   `id`: (String) Unique identifier (e.g., `EXAMPLE_GENOME_ID.contigs`)
+>>>>>>> feat/agent-router-typed
     *   `genomeId`: (String) Internal genome identifier
     *   **QUALITY METRICS**: Available via QualityMetrics node through HASQUALITYMETRICS relationship
 
 *   **`Protein`**
     *   Represents a protein sequence translated from a gene.
     *   **Properties:**
+<<<<<<< HEAD
         *   `id`: (String) Unique identifier for the protein (e.g., `protein:PLM0_60_b1_sep16_scaffold_10001_curated_1`).
+=======
+        *   `id`: (String) Unique identifier for the protein (e.g., `protein:EXAMPLE_CONTIG_00001_1`).
+>>>>>>> feat/agent-router-typed
         *   `length`: (String) The length of the amino acid sequence.
         *   `proteinId`: (String) The protein identifier without prefix.
     *   **Note**: Gene coordinates (start, end, strand) are on Gene nodes, accessible via ENCODEDBY relationship.
@@ -41,7 +50,11 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
 *   **`Gene`**
     *   Represents a protein-coding gene predicted from a genome.
     *   **Properties:**
+<<<<<<< HEAD
         *   `id`: (String) Unique identifier for the gene (e.g., `gene:PLM0_60_b1_sep16_scaffold_10001_curated_1`).
+=======
+        *   `id`: (String) Unique identifier for the gene (e.g., `gene:EXAMPLE_CONTIG_00001_1`).
+>>>>>>> feat/agent-router-typed
         *   `geneId`: (String) The gene identifier without prefix.
         *   `startCoordinate`: (String) Start position of the gene on the contig.
         *   `endCoordinate`: (String) End position of the gene on the contig.
@@ -52,10 +65,19 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
         *   `hasLocation`: (String) Location string format.
 
 *   **`Domain`**
+<<<<<<< HEAD
     *   Represents a protein domain from the PFAM database.
     *   **Properties:**
         *   `id`: (String) The PFAM accession ID (e.g., `PF00005.28`).
         *   `description`: (String) A description of the PFAM domain.
+=======
+    *   Represents a protein domain family (PFAM).
+    *   **Properties:**
+        *   `id`: (String) Family identifier used in URIs. Typically the canonical PF accession without version (e.g., `PF00005`). In legacy graphs this may be versioned (e.g., `PF00005.28`).
+        *   `pfamAccession`: (String) Canonical unversioned PFAM accession `PFxxxxx` (indexed). Use this for accession matching.
+        *   `name`: (String, optional) Short name (e.g., `ATP_synt_ab`).
+        *   `description`: (String, optional) Family description.
+>>>>>>> feat/agent-router-typed
 
 *   **`DomainAnnotation`**
     *   Represents domain annotation hits on proteins.
@@ -93,7 +115,11 @@ PATTERN RULE: (p:Protein)-[:REL]->() NOT ()<-[:REL]-(p:Protein)
     *   Represents a CAZyme (Carbohydrate-Active enZyme) annotation on a protein.
     *   IMPORTANT: To be used when users search for 'CAZymes' or similar, rather than searching by PFAM. Find entries where 'Cazymeannotation' has been populated.
     *   **Properties:**
+<<<<<<< HEAD
         *   `id`: (String) Unique annotation identifier (e.g., `cazyme:PLM0_60_b1_sep16_scaffold_12180_curated_2_GH176_401`).
+=======
+        *   `id`: (String) Unique annotation identifier (e.g., `cazyme:EXAMPLE_CONTIG_01234_2_GH176_401`).
+>>>>>>> feat/agent-router-typed
         *   `cazymeType`: (String) CAZyme family type (e.g., `GH`, `GT`, `PL`, `CE`, `AA`, `CBM`).
         *   `familyId`: (String) Specific CAZyme family ID (e.g., `GH3`, `GT2`, `CBM50`).
         *   `substrateSpecificity`: (String) Substrate prediction (e.g., `peptidoglycan (peptidoglycan)`, `xyloglucan`).
@@ -157,14 +183,23 @@ RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
 
 **Pattern 2 - PFAM Domain Search:**
 ```cypher
+<<<<<<< HEAD
 MATCH (dom:Domain) 
 WHERE toLower(dom.description) CONTAINS 'transport'
+=======
+MATCH (dom:Domain)
+WHERE toLower(coalesce(dom.description, '')) CONTAINS 'transport'
+>>>>>>> feat/agent-router-typed
 MATCH (p:Protein)-[:HASDOMAIN]->(da:DomainAnnotation)-[:DOMAINFAMILY]->(dom)
 OPTIONAL MATCH (p)-[:ENCODEDBY]->(g:Gene)
 OPTIONAL MATCH (p)-[:HASFUNCTION]->(ko:KEGGOrtholog)
 RETURN p.id AS protein_id, ko.id AS ko_id, ko.description AS ko_description,
        g.startCoordinate AS start_coordinate, g.endCoordinate AS end_coordinate, g.strand,
+<<<<<<< HEAD
        collect(DISTINCT dom.id) AS pfam_accessions
+=======
+       collect(DISTINCT coalesce(dom.pfamAccession, dom.id)) AS pfam_accessions
+>>>>>>> feat/agent-router-typed
 ```
 
 **Pattern 3 - BGC Search (GECCO-detected clusters):**
@@ -301,6 +336,21 @@ class PlannerAgent(dspy.Signature):
     reasoning = dspy.OutputField(desc="Explanation of why agentic planning is or isn't needed")
     task_plan = dspy.OutputField(desc="If agentic: high-level task breakdown. If traditional: 'N/A'")
 
+<<<<<<< HEAD
+=======
+class AnnotationAnchorPlanner(dspy.Signature):
+    """Return a compact JSON array of short anchors.
+
+    - Input: concept phrase and optional JSON hints
+    - Output: ONLY a JSON array (4–8 items), each a short anchor string
+    - No commentary, no keys, no trailing text
+    """
+
+    concept = dspy.InputField(desc="Concept phrase (e.g., 'metal transport')")
+    hints = dspy.InputField(desc="JSON string with prior anchors/constraints; may be empty")
+    anchors = dspy.OutputField(desc="Return ONLY a JSON array of 4–8 short anchor phrases")
+
+>>>>>>> feat/agent-router-typed
 class QueryClassifier(dspy.Signature):
     """
     Classify genomic queries into categories for appropriate retrieval strategy.
@@ -331,6 +381,13 @@ class ContextRetriever(dspy.Signature):
     - Semicolons separating queries
 
     REQUIRED: Start directly with MATCH, WITH, or OPTIONAL MATCH.
+<<<<<<< HEAD
+=======
+    
+    PFAM matching rules:
+    - The graph exposes Domain.pfamAccession (PFxxxxx). Prefer pfamAccession for accession-based matching; avoid strict equality on versioned Domain.id.
+    - Use accession-aware templates/operators; if writing Cypher, match on `dom.pfamAccession = 'PFxxxxx'` and use description/name terms only for keyword discovery.
+>>>>>>> feat/agent-router-typed
 
     CAZYME QUERY DETECTION - MANDATORY:
     When user mentions CAZyme, carbohydrate, glycoside, carbohydrate-active, dbCAN:
@@ -422,7 +479,11 @@ class GenomicAnswerer(dspy.Signature):
     question = dspy.InputField(desc="Original user question")
     context = dspy.InputField(desc="Retrieved genomic data and annotations")
     analysis_type = dspy.InputField(desc="Analysis type: spatial_genomic, functional_annotation, or comprehensive_discovery")
+<<<<<<< HEAD
     answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT abbreviated forms like 'scaffold_1705').")
+=======
+    answer = dspy.OutputField(desc="Comprehensive answer with biological insights, or statement that relevant data was not found. **CRITICAL VERIFICATION REQUIREMENT**: When mentioning ANY genomic loci, regions, or features, you MUST include the complete scaffold/contig identifier exactly as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID'; no abbreviations), and when the context supplies protein-level identifiers, name the exact protein ID alongside the contig. When referencing KEGG KO identifiers, include the functional description supplied in context so the reader is not left with bare codes.")
+>>>>>>> feat/agent-router-typed
     confidence = dspy.OutputField(desc="Confidence level: high, medium, or low")
     citations = dspy.OutputField(desc="Data sources and references used")
 
@@ -447,6 +508,131 @@ class GenomicSummarizer(dspy.Signature):
     key_findings = dspy.OutputField(desc="Most important biological insights from the data")
     data_statistics = dspy.OutputField(desc="Quantitative summary of the dataset")
 
+<<<<<<< HEAD
+=======
+
+class MacroPlannerSignature(dspy.Signature):
+    """
+    Plan a deterministic macro execution graph using only allowed operators.
+
+    Strictly output a JSON object with shape:
+    {
+      "steps": [
+        {
+          "op": <operator name>,
+          "inputs": {<input_name>: <binding_name>, ...},  # optional if op has no inputs
+          "params": {<param>: <value>, ...},              # optional
+          "bind": <binding_name>                          # optional; stores full result under this name
+        },
+        ...
+      ]
+    }
+    Allowed operators are listed in operator_catalog (JSON). Do not invent operators.
+
+    DatasetContext & Scoping (keep queries in-bounds):
+    - dataset_context.genome_ids_sample lists up to 500 genomes for this session.
+    - When an operator/template accepts genome_ids and none are provided, DEFAULT to dataset_context.genome_ids_sample.
+    - Do not run unscoped/global queries unless explicitly intended by the user.
+
+    DB Template Slot‑Chaining Rules (avoid placeholder errors):
+    - Before emitting DBTemplateCall, consult db_templates_catalog for required slots and types; do not invent placeholders.
+    - If a slot expects a list (e.g., kos, pfams), pass a JSON array of canonical IDs (['Kxxxxx'], ['PFxxxxx']). A scalar like 'ko_tonb' is invalid.
+    - To chain IDs from a prior DBTemplateCall, bind the previous rows and map slots:
+      inputs: {"rows":"<binding_from_previous_step>"}
+      slots:  {"kos": {"from":"rows","field":"ko_id"}} (or {"pfams": {"from":"rows","field":"pfam_id"}})
+    - If the upstream result set is empty, do NOT call downstream count/templates with placeholders; propose a follow‑up instead.
+
+    Pathway completeness scope:
+    - Do NOT call ComputePathwayCompleteness with pathways=[]. Derive a focused list from KO keywords in the question (SearchKoCatalogFuzzy → MapKOsToPathways) or ask for user‑provided pathway IDs. Only compute ALL pathways when the plan explicitly sets allow_all_pathways=true.
+
+    Planner rubric (breadth-first reminder):
+    - Entity-first policy: Choose the minimal operator that directly answers the question for the target entity type (arrays, contigs, genes, pathways, counts). Avoid protein discovery when the question does not require proteins.
+    - Use named DB templates or exact ID retrieval when the question refers to non-protein entities (arrays, contigs, coordinate windows). If identifiers are already available, use them directly; avoid catalog search unless necessary to resolve missing IDs.
+    - Cross-genome comparisons: When the prompt includes language like "compare ... across genomes" or asks for per‑genome incidence, prefer the FeatureProfile composite to compute per‑genome PFAM+KO counts from a keyword. You may include PathwayProfile in parallel when KO→pathway mapping is available.
+    - Canonical FeatureProfile snippet (do this): SearchPfamCatalogFuzzy → SearchKoCatalogFuzzy → CountByIdsPerGenome → MaterializeFeatureProfile.
+    - ID wiring rule: For FeatureProfile, pass `pfam_ids` and `ko_ids` directly from the outputs of the catalog searches into CountByIdsPerGenome. Do NOT insert ExtractIdsFromCatalogHits in this flow.
+    - Quantity discipline for comparison tasks: PFAM top_n ≈ 10–15; KO top_n ≈ 20–30. Larger PFAM sets increase iron‑related but non‑acquisition families.
+    - Counting requirement: Catalog hit counts are not gene counts. Always follow Search* with CountByIdsPerGenome to obtain per‑genome counts.
+    - Partial lists are fine: Run CountByIdsPerGenome even if one of pfam_ids/ko_ids is empty; do not abort the plan.
+    - Pathway gating: Only schedule PathwayProfile when MapKOsToPathways yields non‑empty pathways or the user explicitly requests pathway completeness.
+    - Only use protein FeatureDiscovery when the plan explicitly provides a `feature_selector` with a non-empty keyword or explicit ID lists; do NOT infer protein keywords from the question text.
+    - Anchor-first discipline: Prefer explicit identifier lists (e.g., accessions or canonical IDs) passed via `inputs` for rowset retrieval. If identifiers are unavailable, concise name tokens may be used — avoid long descriptions or overly broad generic terms.
+    - Result formatting (facet-first): Prefer compact facet summaries over raw rows. Use AnnotationDiscovery with `output_profile='facet_summary'` and set quantity explicitly via `return_mode` and `top_k` per group. Only request rowsets when you truly need per-protein details.
+    - Include a lightweight evidence assessment step (e.g., row counts) and, when evidence is insufficient, add a compact follow-up proposal step requesting minimal additional inputs (e.g., scope hints, aliases) rather than large data dumps.
+    - Domain/ortholog identifiers and descriptions can be richer than other sources in metagenomes; consider domain- and ortholog-level catalog searches early. Prefer accession-like tokens (e.g., PFxxxxx) and canonical IDs (e.g., Kxxxxx) when available.
+    - When searching for hallmark enzymes, include both long-form names and common gene symbols/abbreviations in your probe terms, and treat matches as case-insensitive.
+    - CAZyme routing: When the question mentions CAZyme/CAZy or families GH/GT/PL/CE/AA/CBM, prefer dedicated CAZyme operators (e.g., QueryCazymesByGenome, CountCazymeFamilies) rather than generic PFAM keyword discovery.
+    - When choosing KEGG completeness, use canonical map IDs (mapxxxxx) or compute unfiltered and filter downstream; completeness is optional.
+    - Avoid repeating the same operator+term; diversify probes and include a corroboration step (e.g., neighborhood/contig window) if any hits are found.
+    
+    Facet-first planning policy (static, explicit controls):
+    - Separate KO and PFAM summary steps (do NOT use `group_by='both'`). For each biological theme (e.g., CBB, WL, rTCA, methanogenesis, methanotrophy, nitrogenase), schedule:
+      * KO facet summary: `output_profile='facet_summary'`, `group_by='ko'`, explicit `return_mode`, and `fields=['id','name','count']`.
+      * PFAM facet summary: `output_profile='facet_summary'`, `group_by='pfam'`, explicit `return_mode`, and `fields=['id','name','count']`.
+    - Use FetchPresentKOs early and leverage its aggregated `present_summary` (per-KO present counts) to bias KO summaries or to select filtered KO id sets. Avoid per-genome expansions.
+    - When per-entity protein lists are needed, add a dedicated detail step (e.g., QueryProteinsByIds or AnnotationDiscovery with `output_profile='rowset'`) for selected anchors, and pass those anchors via `inputs` (e.g., from prior catalog search or facet summary), rather than inflating summary `top_k`.
+
+    Identifier matching policy (CRITICAL to avoid misses due to versioned accessions):
+    - Avoid strict equality on versioned accessions. Prefer version-tolerant patterns (e.g., accession STARTS WITH base token) and include concise name/description tokens when helpful.
+    - Use flexible operators/templates for retrieval (avoid generating exact-equality queries unless explicitly required).
+    - Include both accession and concise short-name tokens from the catalog to maximize recall when appropriate.
+
+    Keyword discipline (to reduce generic noise without hard-coding):
+    - Avoid broad/generic enzyme classes in PFAM/KO probes (e.g., aldolase, epimerase, dehydrogenase, carboxylase) unless you are explicitly probing those classes.
+    - Prefer hallmark terms and accessions (PFxxxxx/Kxxxxx) with a small number of concise synonyms per theme.
+    - Keep per-theme probes tight and separate; don’t mix themes in a single probe.
+
+    Agent-controlled quantity/candidate parameters (no hidden caps):
+    - Always set explicit caps in plans for facet work (avoid unbounded expansions). Defaults (adjust to context):
+      * PFAM catalog probes for gene/subunit context: limits.top_k ≈ 3–8 (default 5). Prefer smaller probes to avoid analog families (e.g., Metallophos).
+      * ko_tokens_top_n = 30 (when doing KO catalog breadth)
+      * pfam_candidate_cap = 200 (cap candidate families per token in count queries)
+      * pfam_top_k = 20, ko_top_k = 20 (facet display size)
+    - Rowset sizing: For targeted detail steps, use a small row budget when feasible (e.g., limit ≈ 50–200) to control latency; for broad retrievals, rely on operator defaults and filter downstream.
+    - Standardize facet fields to ['id','name','count'].
+
+    Neighborhood planning policy (seeds must be explicit):
+    - Do not schedule NeighborhoodContext without providing seeds. Provide one of:
+      * A targeted AnnotationDiscovery rowset with explicit anchors, passed via `inputs` (e.g., bind outputs from a catalog step and reference them via `inputs`), and bind its output; then pass its binding via `inputs:{"discovered_proteins":"<binding>"}`.
+      * Explicit `protein_ids` in NeighborhoodContext params.
+      * Explicit `seed_pfam_ids`/`seed_ko_ids` in NeighborhoodContext params (the operator will self-seed using DB templates), with an explicit seed budget when needed.
+    - Prefer narrow, explicit anchors over large catalog token sets for rowsets. Set rowset and seed budgets conservatively based on context size, and diversify seeds by contig when possible (avoid arbitrary prefixes).
+    - Seed budget (defaults; adjust as needed):
+      * NeighborhoodContext.seeds_limit defaults to 10; when the bound rowset is small (≤ 30), prefer using all available seeds.
+      * Common adjacency breadths (when explicitly requested): k ∈ {1, 5, 10}. Otherwise omit k to use flanking if supported.
+    - Visibility modes:
+      * `output_profile="summary"`: returns macro summaries and seed lists; raw neighbor rows may be omitted. An empty neighborhoods list may reflect either fragmented assemblies or summary mode behavior.
+      * `output_profile="rowset"`: returns per-seed neighbor rows; use when seed sets are small to aid verification.
+    - MANDATORY: NeighborhoodContext must receive seeds via `inputs.discovered_proteins` (from a bound rowset) or via params (`protein_ids` or `seed_pfam_ids`). Otherwise, do not schedule it.
+    - Adjacency/flanking: Set `k` only when adjacency semantics are explicitly requested. Otherwise, omit `k` to use default flanking if supported.
+
+    Example (composites; placeholders only):
+    {
+      "steps": [
+        {"op":"FeatureDiscovery",
+         "params":{"feature_selector":{"keyword":"<KEYWORD>"},
+                   "feature_types":["pfam","ko"],
+                   "output_profile":"rowset",
+                   "limits":{"row_cap":200}}},
+        {"op":"GeneContext",
+         "params":{"context":{"seeds_limit":10,"limit":200},
+                   "output_profile":"rowset"}}
+      ]
+    }
+    """
+
+    question = dspy.InputField(desc="User question to answer with a macro plan")
+    operator_catalog = dspy.InputField(desc="JSON catalog of allowed operators: names, inputs, outputs, params")
+    db_templates_catalog = dspy.InputField(desc="JSON catalog of available DB templates and their required/optional slots")
+    dataset_context = dspy.InputField(desc="JSON dataset overview: genome_count, genome_ids_sample (≤500), file_count, file_examples (≤20)")
+    db_template_rules = dspy.InputField(desc="Compact rules for scoping and slot-chaining between DB templates")
+    dataset_context = dspy.InputField(desc="JSON dataset overview: genome_count, genome_ids_sample (≤500), file_count, file_examples (≤20)")
+    constraints = dspy.InputField(desc="Constraints: max_steps, prefer native totals, include SM evidence if relevant")
+    ko_reference = dspy.InputField(desc="Optional compact KO reference: one line per KO as 'Kxxxxx: definition' to assist keyword/operator selection")
+    pfam_reference = dspy.InputField(desc="Optional compact PFAM reference: one line per PFAM as 'PFxxxxx: short_name; description' to assist keyword/operator selection")
+    plan_json = dspy.OutputField(desc="Return ONLY the strict JSON plan (no commentary). The JSON MUST include a top-level boolean field `run_code_interpreter` indicating whether downstream visualization (code interpreter) should run for this question. Set it to true only when the user explicitly requests plotting/visualization (e.g., 'plot', 'visualize', 'heatmap', 'cluster', 'figure') or when figures are essential to answer the question. Otherwise set it to false.")
+
+>>>>>>> feat/agent-router-typed
 class GenomicSynthesizer(dspy.Signature):
     """
     Synthesize genomic analysis results into comprehensive biological interpretations.
@@ -464,10 +650,58 @@ class GenomicSynthesizer(dspy.Signature):
 
     question = dspy.InputField(desc="Original user question being addressed")
     context = dspy.InputField(desc="Integrated context from multiple analysis tasks")
+<<<<<<< HEAD
     synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
     summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' NOT 'scaffold_1705'). This is essential for independent verification.")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
     key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data - no abbreviations or partial names allowed.")
+=======
+    task_graph = dspy.InputField(desc="JSON or pretty-printed task graph with ordered steps (if provided, include a 'TASK GRAPH' section at the top of the summary)")
+    synthesis_mode = dspy.InputField(desc="Synthesis approach: discovery_summary, comparative_analysis, functional_interpretation, or comprehensive_report")
+
+    # Optional, neighborhood-aware inputs (advisory; kept minimal to avoid unused-field warnings)
+    neighborhoods_json = dspy.InputField(desc="Optional JSON payload from NeighborhoodContext (macro_result or full neighborhoods)")
+
+    # Primary narrative output
+    summary = dspy.OutputField(desc="Comprehensive biological synthesis addressing the original question. If a task_graph is provided, begin with a 'TASK GRAPH' section that lists each step with op, params, and bindings. If your analysis mentions both the number of database records AND the total number of individual biological entities (proteins/genes), clarify this distinction in the opening paragraph to prevent reader confusion. When GlobalCounts (or other aggregated counts) are present in context, state exact totals and enumerate the top N groups with their exact counts (no inference). Keep ordering deterministic (by count desc, then ID). If neighborhoods_json is present, include seed-level adjacency and conserved motif summaries when they add value. **CRITICAL VERIFICATION REQUIREMENT**: For ALL genomic loci, regions, or clusters mentioned, include the complete, unabbreviated scaffold/contig identifier as it appears in the data (e.g., 'EXAMPLE_CONTIG_ID', not 'scaffold_XXXX'), and when protein-level identifiers are available in context, cite the exact protein ID alongside the contig. Whenever you cite a KEGG KO identifier, append its functional description from the provided data. When reporting similarity or distance values, keep the raw numeric range supplied (e.g., cosine similarity 0.98) and do not convert to percentages unless explicitly requested.")
+    confidence_assessment = dspy.OutputField(desc="Assessment of confidence in the synthesis based on available data")
+
+    # Optional structured outputs (emitted when helpful)
+    adjacency_map = dspy.OutputField(desc="Optional structured per-seed adjacency summary (± adjacency_hop) with contig/gene/protein/strand and PFAM/KO labels")
+    conserved_motifs = dspy.OutputField(desc="Optional list of recurrent synteny patterns across seeds with counts and supporting seed IDs")
+    loci_table = dspy.OutputField(desc="Optional compact per-seed table listing contig and coordinates for reproducibility")
+    verification_citations = dspy.OutputField(desc="Optional explicit contig:coordinate spans cited for verification")
+    limitations = dspy.OutputField(desc="Optional concise caveats relevant to interpretation (e.g., assembly fragmentation)")
+
+
+ 
+
+
+# === IRB Editor/Repair Signatures ===
+class PatchProposalSignature(dspy.Signature):
+    """Propose RFC6902 patches restricted to the provided anchor section."""
+    anchor_snippet = dspy.InputField(desc="JSON of the target section only (compact).")
+    batch_summary = dspy.InputField(desc="IDs, totals, up to N examples; DO NOT list raw rows; reference cache IDs.")
+    open_obligations = dspy.InputField(desc="Obligations this batch can close.")
+    schema_reminder = dspy.InputField(desc="Patch envelope JSON schema; MUST include at least one 'test' op.")
+    editor_instructions = dspy.InputField(desc="Strict editorial constraints (how to structure the patch and what to avoid)")
+    patch_envelope = dspy.OutputField(desc="JSON {anchor, obligations, patch, evidence, rationale, risk}")
+
+
+class MultiPatchProposalSignature(dspy.Signature):
+    """Propose RFC6902 patches for MULTIPLE anchors in one call.
+
+    Input anchors_json is a JSON array of objects:
+    [{"anchor": str, "anchor_snippet": json, "batch_summary": json}, ...]
+
+    Output patch_envelopes is a JSON array of PatchEnvelope objects matching the schema reminder.
+    """
+    anchors_json = dspy.InputField(desc="JSON array of {anchor, anchor_snippet, batch_summary}")
+    schema_reminder = dspy.InputField(desc="Patch envelope JSON schema; include 'test' ops per anchor")
+    editor_instructions = dspy.InputField(desc="Strict editorial constraints (how to structure each patch and what to avoid)")
+    patch_envelopes = dspy.OutputField(desc="JSON array of envelopes [{anchor, obligations, patch, evidence, rationale, risk}, ...]")
+    key_biological_insights = dspy.OutputField(desc="Most significant biological insights and discoveries. **CRITICAL**: For ANY genomic features mentioned, you MUST include the complete scaffold/contig identifier exactly as it appears in the source data (no abbreviations or partial names), and when protein identifiers are provided, cite the specific protein ID together with the contig. If you mention any KEGG KO identifier, also include the associated functional description given in context.")
+>>>>>>> feat/agent-router-typed
 
 class GenomicDataExtractor(dspy.Signature):
     """
@@ -481,7 +715,11 @@ class GenomicDataExtractor(dspy.Signature):
     genomic_data = dspy.InputField(desc="Genomic dataset chunk to extract key information from")
     focus_areas = dspy.InputField(desc="Specific biological aspects to emphasize")
     
+<<<<<<< HEAD
     key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705') for all reported loci to enable verification.")
+=======
+    key_loci = dspy.OutputField(desc="List of specific loci (|locus|>=1) with preserved identifiers and biological features. CRITICAL: Always include the complete scaffold/contig identifier (e.g., 'EXAMPLE_CONTIG_ID') for all reported loci to enable verification, and when protein IDs are present, pair each locus with its protein identifier. When KEGG KO IDs appear, follow them with the contextual functional description.")
+>>>>>>> feat/agent-router-typed
     biological_context = dspy.OutputField(desc="Essential biological context and methodology used")
     quantitative_metrics = dspy.OutputField(desc="Counts, sizes, and numerical measurements")
 
@@ -507,7 +745,11 @@ class GenomicSelector(dspy.Signature):
     question = dspy.InputField(desc="Original user question that should guide selection and prioritization")
     chunk_extractions = dspy.InputField(desc="Key findings extracted from each data chunk")
     
+<<<<<<< HEAD
     final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data. VERIFICATION REQUIREMENT: For any genomic loci mentioned, always include the complete scaffold/contig identifier (not abbreviated) to enable independent verification of findings.")
+=======
+    final_report = dspy.OutputField(desc="Comprehensive report with intelligently selected and prioritized findings using ONLY provided data. VERIFICATION REQUIREMENT: For any genomic loci mentioned, always include the complete scaffold/contig identifier (not abbreviated) to enable independent verification, and include the protein identifier whenever one is available in context. Whenever KEGG KO identifiers are cited, provide the corresponding functional name/description from the supplied data.")
+>>>>>>> feat/agent-router-typed
     selection_reasoning = dspy.OutputField(desc="Explanation of why specific loci were chosen based on biological significance and question relevance")
     biological_significance = dspy.OutputField(desc="Biological interpretation using only the data available in chunk_extractions")
     data_sources = dspy.OutputField(desc="Explicit list of data sources and tools actually used (must match what appears in chunk_extractions)")
@@ -631,7 +873,11 @@ class ReportSynthesisGenerator(dspy.Signature):
     cross_cutting_themes = dspy.InputField(desc="Themes that emerge across multiple parts")
     quantitative_integration = dspy.InputField(desc="Integrated quantitative analysis")
 
+<<<<<<< HEAD
     synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705'). NO abbreviations like 'scaffold_1705' are permitted.")
+=======
+    synthesis_content = dspy.OutputField(desc="Comprehensive synthesis of all findings. **MANDATORY VERIFICATION REQUIREMENT**: For EVERY genomic locus or region mentioned, you MUST include the complete, unabbreviated scaffold/contig identifier exactly as provided in the source data (e.g., 'EXAMPLE_CONTIG_ID'). NO abbreviations like 'scaffold_XXXX' are permitted, and when protein identifiers exist in context, cite the matching protein ID alongside the contig. Any KEGG KO identifier mentioned must be accompanied by its functional description drawn from context.")
+>>>>>>> feat/agent-router-typed
     biological_implications = dspy.OutputField(desc="Broader biological and evolutionary implications")
     recommendations = dspy.OutputField(desc="Recommendations for future research or applications")
     confidence_assessment = dspy.OutputField(desc="Assessment of confidence in conclusions")
@@ -728,4 +974,8 @@ class GenomeSelectionSignature(dspy.Signature):
     intent = dspy.OutputField(desc="Intent classification: 'specific', 'comparative', 'global', or 'ambiguous'")
     target_genomes = dspy.OutputField(desc="Comma-separated exact genome IDs if intent='specific', otherwise empty")
     reasoning = dspy.OutputField(desc="1-2 sentence explanation of the classification decision")
+<<<<<<< HEAD
     confidence = dspy.OutputField(desc="Confidence score from 0.0 to 1.0 for the analysis")
+=======
+    confidence = dspy.OutputField(desc="Confidence score from 0.0 to 1.0 for the analysis")
+>>>>>>> feat/agent-router-typed

@@ -46,12 +46,21 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             current_model = config.get_current_model()
             model_string = f"openai/{current_model}"
             
+<<<<<<< HEAD
             # Special handling for OpenAI reasoning models (o1, o3)
             if current_model.startswith(('o1', 'o3')):
                 lm = dspy.LM(model=model_string, temperature=1.0, max_tokens=20000)
                 logger.info(f"🎯 DSPy reconfigured with reasoning model: {model_string}")
             else:
                 lm = dspy.LM(model=model_string, temperature=0.0, max_tokens=2000)
+=======
+            # Special handling for OpenAI reasoning models (gpt-5, o1)
+            if current_model.startswith(('gpt-5', 'o1')):
+                lm = dspy.LM(model=model_string, temperature=1.0)
+                logger.info(f"🎯 DSPy reconfigured with reasoning model: {model_string}")
+            else:
+                lm = dspy.LM(model=model_string, temperature=0.0)
+>>>>>>> feat/agent-router-typed
                 logger.info(f"🎯 DSPy reconfigured with standard model: {model_string}")
             
             dspy.settings.configure(lm=lm)
@@ -62,13 +71,21 @@ def reconfigure_dspy(config: LLMConfig) -> None:
             
             current_model = config.get_current_model()
             # Map to Anthropic models if needed
+<<<<<<< HEAD
             if current_model.startswith(('gpt', 'o1', 'o3')):
+=======
+            if current_model.startswith(('gpt', 'o1')):
+>>>>>>> feat/agent-router-typed
                 anthropic_model = "claude-3-haiku-20240307" if config.model_mode == "cost_effective" else "claude-3-opus-20240229"
             else:
                 anthropic_model = current_model
             
             model_string = f"anthropic/{anthropic_model}"
+<<<<<<< HEAD
             lm = dspy.LM(model=model_string, max_tokens=1000)
+=======
+            lm = dspy.LM(model=model_string)
+>>>>>>> feat/agent-router-typed
             dspy.settings.configure(lm=lm)
             logger.info(f"🎯 DSPy reconfigured with Anthropic model: {model_string}")
             
@@ -98,7 +115,11 @@ def switch_to_premium() -> None:
     """
     Switch to premium model globally.
     
+<<<<<<< HEAD
     Uses o3 (or configured premium model) for all tasks.
+=======
+    Uses gpt-5 (or configured premium model) for all tasks.
+>>>>>>> feat/agent-router-typed
     Best for final results, complex analysis, and publication-quality output.
     """
     config = get_config()
@@ -167,4 +188,8 @@ def configure_models(cost_effective_model: str = None, premium_model: str = None
 # Convenience aliases
 cost_effective = switch_to_cost_effective
 premium = switch_to_premium
+<<<<<<< HEAD
 status = print_model_status
+=======
+status = print_model_status
+>>>>>>> feat/agent-router-typed

@@ -6,7 +6,7 @@ dependencies:
   # --- Core Specification ---
   - python=3.11
   # Use numpy 2.x for better compatibility with modern ML stack
-  - numpy
+  - numpy<2  # keep ABI stable with compiled deps like fisher; conda solves matching builds
 
   # --- Machine Learning & AI ---
   - pytorch
@@ -29,6 +29,10 @@ dependencies:
   - pyhmmer
   - biopython
   - ete3
+  - mash
+  - skani
+  - minced  # CRISPR array detector (Bioconda)
+  - dbcan  # provides 'run_dbcan' CLI (Bioconda, noarch)
 
   # --- Plotting & Visualization ---
   - matplotlib
@@ -36,6 +40,7 @@ dependencies:
 
   # --- CLI & Utilities ---
   - typer
+  - lark
   - pydantic
   - click
   - rich
@@ -59,3 +64,6 @@ dependencies:
   - black
   - isort
   - mypy
+  - pip
+  - pip:
+      - fisher

@@ -115,7 +115,11 @@ async def enrich_proteins_with_context(
 async def comprehensive_protein_discovery(
     functional_category: str = "central_metabolism",
     max_proteins: int = 100,
+<<<<<<< HEAD
     include_enrichment: bool = True,
+=======
+    include_enrichment: bool = False,
+>>>>>>> feat/agent-router-typed
     batch_size: int = 25
 ) -> Dict[str, Any]:
     """
@@ -220,7 +224,11 @@ async def comprehensive_protein_discovery(
         
         logger.info(f"🎯 Discovered {len(discovered_proteins)} proteins for {functional_category}")
         
+<<<<<<< HEAD
         # Step 4: Enrich with comprehensive context (if requested)
+=======
+        # Step 4: Enrich with comprehensive context (optional; disabled by default)
+>>>>>>> feat/agent-router-typed
         enriched_proteins = discovered_proteins
         if include_enrichment and protein_ids:
             logger.info("🧬 Step 4: Enriching proteins with comprehensive genomic context")
@@ -927,4 +935,8 @@ async def pathway_based_annotation_selector(
             "error": str(e),
             "selected_proteins": [],
             "pathways_used": []
+<<<<<<< HEAD
         }
+=======
+        }
+>>>>>>> feat/agent-router-typed

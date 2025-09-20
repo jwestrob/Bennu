@@ -8,6 +8,10 @@ with token-based decision making for optimal model utilization.
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+<<<<<<< HEAD
+=======
+import os
+>>>>>>> feat/agent-router-typed
 import tiktoken
 import concurrent.futures
 
@@ -50,8 +54,15 @@ class ProgressiveSynthesizer:
         
         # Map-Reduce configuration - Model-aware limits
         # We'll set final limits after model allocator is available
+<<<<<<< HEAD
         self.direct_synthesis_limit = 20000  # Will be updated based on actual model limits
         self.map_chunk_limit = 15000  # Will be updated based on actual model limits
+=======
+        # Aim for large, near-limit chunks by default
+        self.chunk_utilization = 0.93  # target fraction of model context per chunk
+        self.direct_synthesis_limit = 28000  # placeholder until updated
+        self.map_chunk_limit = 26000  # placeholder until updated
+>>>>>>> feat/agent-router-typed
         
         # Initialize tokenizer for accurate token counting
         try:
@@ -78,12 +89,36 @@ class ProgressiveSynthesizer:
         self._update_model_aware_limits()
         
         logger.info("🏗️ ProgressiveSynthesizer initialized with Map-Reduce architecture and caching")
+<<<<<<< HEAD
+=======
+
+        # Guardrails to prevent unverifiable claims in synthesis
+        self._guardrails_text = (
+            "CRITICAL GUARDRAILS:\n"
+            "- Only mention coverage/read depth, genomic coordinates, contig/scaffold IDs, or 'representative contigs' if they appear explicitly in the provided data. Do not infer or invent.\n"
+            "- Whenever you mention any locus or cluster, include the full, unabbreviated contig/scaffold identifier exactly as it appears in the data. If such an identifier is not present, do not mention a locus.\n"
+            "- If locus/coverage information is missing, say 'not provided' and avoid locus/coverage claims.\n"
+        )
+
+        # Example display cap for compact mode (env override via SUMMARY_EXAMPLE_CAP)
+        try:
+            self.example_cap = max(1, int(os.getenv("SUMMARY_EXAMPLE_CAP", "10")))
+        except Exception:
+            self.example_cap = 10
+
+    def _with_guardrails(self, context: str) -> str:
+        try:
+            return f"{self._guardrails_text}\n\n{context}" if context else self._guardrails_text
+        except Exception:
+            return context
+>>>>>>> feat/agent-router-typed
     
     def _update_model_aware_limits(self):
         """Update chunk limits based on actual model capabilities."""
         try:
             # Get limits for the models we'll be using
             _, final_synthesis_model = self.model_allocator.get_model_for_task("final_synthesis", "")
+<<<<<<< HEAD
             _, map_step_model = self.model_allocator.get_model_for_task("genomic_summarization", "")
             
             # Set direct synthesis limit to respect OpenAI's 30K TPM rate limit for o3
@@ -91,6 +126,13 @@ class ProgressiveSynthesizer:
             
             # Set map chunk limit to respect 30K TPM limit (not model context)
             self.map_chunk_limit = min(25000, int(map_step_model.max_context * 0.4))
+=======
+            # Tune limits close to model context to reduce number of chunks
+            max_ctx = int(getattr(final_synthesis_model, 'max_context', 30000) or 30000)
+            util = float(getattr(self, 'chunk_utilization', 0.93) or 0.93)
+            self.direct_synthesis_limit = max(1000, int(max_ctx * util))
+            self.map_chunk_limit = max(1000, int(max_ctx * util))
+>>>>>>> feat/agent-router-typed
             
             logger.info(f"📊 Model-aware limits updated: direct={self.direct_synthesis_limit:,}, chunk={self.map_chunk_limit:,}")
             logger.info(f"📊 Models: final_synthesis={final_synthesis_model.model_name}, map_step={map_step_model.model_name}")
@@ -112,18 +154,30 @@ class ProgressiveSynthesizer:
             task_notes: List of TaskNote objects
             question: Original user question
             synthesis_mode: "guidance" for lightweight agent guidance or "report" for comprehensive final analysis
+<<<<<<< HEAD
             dspy_synthesizer: DEPRECATED - uses model allocation (kept for compatibility)
             raw_data: Raw data from task execution (prioritized over task_notes)
             rag_system: DEPRECATED - not used in Map-Reduce architecture
+=======
+            dspy_synthesizer: Legacy parameter (kept for compatibility; ignored)
+            raw_data: Raw data from task execution (prioritized over task_notes)
+            rag_system: Legacy parameter (not used in Map-Reduce architecture)
+>>>>>>> feat/agent-router-typed
             
         Returns:
             Final comprehensive synthesis or brief guidance summary
         """
         # Warn about deprecated parameters
         if dspy_synthesizer is not None:
+<<<<<<< HEAD
             logger.warning("⚠️ dspy_synthesizer parameter is deprecated and will be ignored")
         if rag_system is not None:
             logger.warning("⚠️ rag_system parameter is deprecated and will be ignored")
+=======
+            logger.info("ℹ️ dspy_synthesizer legacy parameter provided; it is ignored")
+        if rag_system is not None:
+            logger.info("ℹ️ rag_system legacy parameter provided; it is ignored")
+>>>>>>> feat/agent-router-typed
         
         # HYBRID MODEL: Branch based on synthesis mode
         if synthesis_mode == "guidance":
@@ -486,7 +540,11 @@ class ProgressiveSynthesizer:
         Returns:
             Token threshold above which tool results should be compressed
         """
+<<<<<<< HEAD
         # Respect OpenAI's 30K tokens per minute rate limit for o3
+=======
+        # Respect OpenAI's ~30K token budget for premium (gpt-5)
+>>>>>>> feat/agent-router-typed
         # Use conservative limit to avoid rate limiting errors
         return 20000
     
@@ -526,7 +584,11 @@ class ProgressiveSynthesizer:
                 with open(debug_file, 'w') as f:
                     json.dump(debug_payload, f, indent=2, default=str)
                 
+<<<<<<< HEAD
                 logger.info(f"🐛 DEBUG: Saved {stage_name} to {debug_file.name} ({debug_payload['data_size_chars']} chars)")
+=======
+                logger.debug(f"🐛 DEBUG: Saved {stage_name} to {debug_file.name} ({debug_payload['data_size_chars']} chars)")
+>>>>>>> feat/agent-router-typed
                 
         except Exception as e:
             logger.warning(f"⚠️ Failed to save debug data for {stage_name}: {e}")
@@ -574,14 +636,32 @@ class ProgressiveSynthesizer:
         
         # Format data for synthesis
         formatted_data = self._format_data_for_synthesis(data)
+<<<<<<< HEAD
+=======
+        # Extract task graph if present in raw items (e.g., MacroPlanner plan)
+        task_graph_text = self._extract_task_graph(data)
+>>>>>>> feat/agent-router-typed
         
         # DEBUG: Save formatted synthesis input
         self._save_debug_data("formatted_synthesis_input", formatted_data, "Formatted data sent to LLM")
         
+<<<<<<< HEAD
         return self._call_synthesis_model(
             context=formatted_data,
             question=question,
             task_name="final_synthesis",  # Use o3 for complex biological reasoning
+=======
+        prefix = f"QUESTION: {question}\n\n"
+        tg = ("TASK GRAPH:\n" + task_graph_text + "\n\n") if task_graph_text else ""
+        body = f"DATA:\n{formatted_data}"
+        synthesis_context = self._with_guardrails(prefix + tg + body)
+        # Save exact final synthesis context for auditing
+        self._save_debug_data("final_synthesis_context_direct", synthesis_context, "Exact input to final LLM (direct mode)")
+        return self._call_synthesis_model(
+            context=synthesis_context,
+            question=question,
+            task_name="final_synthesis",  # Use gpt-5 for complex biological reasoning
+>>>>>>> feat/agent-router-typed
             focus="comprehensive biological analysis with full context"
         )
     
@@ -614,12 +694,28 @@ class ProgressiveSynthesizer:
             logger.info("🎯 Single chunk detected - bypassing Map-Reduce and proceeding directly to final synthesis")
             single_chunk_data = chunks[0]
             formatted_context = self._format_data_for_synthesis(single_chunk_data)
+<<<<<<< HEAD
             
             # Use high-capability model for direct synthesis
             final_result = self._call_synthesis_model(
                 context=formatted_context,
                 question=question,
                 task_name="final_synthesis",  # Use o3 for complex synthesis
+=======
+            task_graph_text = self._extract_task_graph(data)
+            prefix = f"QUESTION: {question}\n\n"
+            tg = ("TASK GRAPH:\n" + task_graph_text + "\n\n") if task_graph_text else ""
+            body = f"DATA:\n{formatted_context}"
+            synthesis_context = self._with_guardrails(prefix + tg + body)
+            # Save exact final synthesis context for auditing
+            self._save_debug_data("final_synthesis_context_single_chunk", synthesis_context, "Exact input to final LLM (single-chunk bypass)")
+            
+            # Use high-capability model for direct synthesis
+            final_result = self._call_synthesis_model(
+                context=synthesis_context,
+                question=question,
+                task_name="final_synthesis",  # Use gpt-5 for complex synthesis
+>>>>>>> feat/agent-router-typed
                 focus="comprehensive biological analysis with full data context",
                 synthesis_type="summarization"  # Use regular synthesis, not Map-Reduce
             )
@@ -690,6 +786,28 @@ class ProgressiveSynthesizer:
         processed_data = []
         
         for i, item in enumerate(data):
+<<<<<<< HEAD
+=======
+            # Pre-compact large macro_result items before token counting
+            try:
+                if isinstance(item, dict) and item.get('type') == 'macro_result' and item.get('format') != 'full':
+                    name = item.get('name', 'result')
+                    rows = item.get('rows') or []
+                    total = len(rows)
+                    # Keep only up to N examples to cap size
+                    examples = rows[: self.example_cap]
+                    item = {
+                        'type': 'macro_result',
+                        'name': name,
+                        'rows': examples,
+                        'total_rows': total,
+                        'format': 'compact',
+                        'note': 'pre-compacted for context control (set return_full_rows=true for full JSON on small targets)'
+                    }
+            except Exception:
+                pass
+
+>>>>>>> feat/agent-router-typed
             item_tokens = self._count_data_tokens([item])
             
             if item_tokens > self.map_chunk_limit:
@@ -706,6 +824,7 @@ class ProgressiveSynthesizer:
         
         logger.info(f"✅ Pre-processing complete: {len(processed_data)} items ready for chunking")
         
+<<<<<<< HEAD
         # Step 2: Main chunking logic (now guaranteed that no item exceeds chunk limit)
         chunks = []
         current_chunk = []
@@ -724,6 +843,27 @@ class ProgressiveSynthesizer:
             current_tokens += item_tokens
         
         # Add final chunk if not empty
+=======
+        # Step 2: Size-aware packing to produce fewer, larger chunks (Next-Fit Decreasing)
+        sized_items = []
+        for item in processed_data:
+            sized_items.append((item, self._count_data_tokens([item])))
+        # Sort by descending size
+        sized_items.sort(key=lambda x: x[1], reverse=True)
+
+        chunks: List[List[Dict[str, Any]]] = []
+        current_chunk: List[Dict[str, Any]] = []
+        current_tokens = 0
+
+        for item, sz in sized_items:
+            if current_chunk and current_tokens + sz > self.map_chunk_limit:
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_tokens = 0
+            current_chunk.append(item)
+            current_tokens += sz
+
+>>>>>>> feat/agent-router-typed
         if current_chunk:
             chunks.append(current_chunk)
         
@@ -928,11 +1068,22 @@ class ProgressiveSynthesizer:
             formatted_chunk = self._format_data_for_synthesis(chunk)
             
             # Use cheaper model for Map step (data extraction task)
+<<<<<<< HEAD
+=======
+            focus = (
+                f"preserve specific loci details and identifiers from chunk {chunk_id}; "
+                "do not mention loci/coverage unless present; always include full contig IDs when present"
+            )
+>>>>>>> feat/agent-router-typed
             summary = self._call_synthesis_model(
                 context=formatted_chunk,
                 question=question,
                 task_name="genomic_summarization",  # Use cheaper model for chunk summarization
+<<<<<<< HEAD
                 focus=f"preserve specific loci details and identifiers from chunk {chunk_id}",
+=======
+                focus=focus,
+>>>>>>> feat/agent-router-typed
                 synthesis_type="map_extraction"
             )
             
@@ -966,6 +1117,7 @@ class ProgressiveSynthesizer:
         ])
         
         # Add synthesis metadata
+<<<<<<< HEAD
         synthesis_context = f"""
 QUESTION: {question}
 
@@ -974,6 +1126,16 @@ CHUNK SUMMARIES ({len(chunk_summaries)} chunks):
 
 SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.
 """
+=======
+        # Include task graph if available from previously unified data (may not be present in reduce step)
+        task_graph_text = getattr(self, '_last_task_graph', '') if hasattr(self, '_last_task_graph') else ''
+        header = f"QUESTION: {question}\n\nCHUNK SUMMARIES ({len(chunk_summaries)} chunks):\n{combined_context}\n\n"
+        tg = ("TASK GRAPH:\n" + task_graph_text + "\n") if task_graph_text else ""
+        footer = "SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, coherent analysis that addresses the original question.\n"
+        synthesis_context = self._with_guardrails(header + tg + footer)
+        # Save exact final synthesis context for auditing
+        self._save_debug_data("final_synthesis_context_reduce", synthesis_context, "Exact input to final LLM (reduce phase)")
+>>>>>>> feat/agent-router-typed
         
         # Use original question directly for intelligent selection
         
@@ -981,7 +1143,11 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         final_synthesis = self._call_synthesis_model(
             context=synthesis_context,
             question=question,
+<<<<<<< HEAD
             task_name="final_synthesis",  # Use o3 for complex integration
+=======
+            task_name="final_synthesis",  # Use gpt-5 for complex integration
+>>>>>>> feat/agent-router-typed
             focus="intelligent biological prioritization",
             synthesis_type="reduce_selection"
         )
@@ -990,6 +1156,48 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
         self._save_debug_data("reduce_step_final_output", final_synthesis, f"Final synthesis from {len(chunk_summaries)} chunk summaries")
         
         return final_synthesis
+<<<<<<< HEAD
+=======
+
+    def _extract_task_graph(self, data: List[Dict[str, Any]]) -> str:
+        """Extract and pretty-print a task graph (operator plan) if present in raw items.
+
+        Recognizes a task_note with quantitative_data.plan from MacroPlanner execution.
+        """
+        try:
+            plan = None
+            for item in data:
+                if isinstance(item, dict) and item.get('type') == 'task_note':
+                    qd = item.get('quantitative_data') or {}
+                    if isinstance(qd, dict) and qd.get('plan'):
+                        plan = qd.get('plan')
+                        break
+            if not plan:
+                return ''
+            steps = plan.get('steps', []) if isinstance(plan, dict) else []
+            lines = []
+            for idx, st in enumerate(steps, 1):
+                if not isinstance(st, dict):
+                    continue
+                op = st.get('op')
+                bind = st.get('bind')
+                params = st.get('params') or {}
+                inputs = st.get('inputs') or {}
+                line = f"{idx}. op={op}"
+                if bind:
+                    line += f" -> {bind}"
+                if inputs:
+                    line += f" inputs={inputs}"
+                if params:
+                    line += f" params={params}"
+                lines.append(line)
+            text = "\n".join(lines)
+            # store for reduce step
+            self._last_task_graph = text
+            return text
+        except Exception:
+            return ''
+>>>>>>> feat/agent-router-typed
     
     
     def _format_data_for_synthesis(self, data: List[Dict[str, Any]]) -> str:
@@ -1018,6 +1226,53 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                     connections = [f"{conn['connected_task']} ({conn['connection_type']})" 
                                  for conn in item['cross_task_connections']]
                     formatted_item += f"Connections: {'; '.join(connections)}\n"
+<<<<<<< HEAD
+=======
+            elif item.get('type') == 'macro_result':
+                # Compact by default; allow full JSON when explicitly requested and reasonably small
+                name = item.get('name', 'result')
+                rows = item.get('rows') or []
+                # Prefer true total if provided by pre-compaction
+                try:
+                    total = int(item.get('total_rows')) if item.get('total_rows') is not None else len(rows)
+                except Exception:
+                    total = len(rows)
+                want_full = (item.get('format') == 'full')
+                FULL_MAX_ROWS = 2000  # guardrail to avoid blow-ups
+                formatted_item = f"Result: {name} (rows={total})\n"
+                if want_full and total <= FULL_MAX_ROWS:
+                    try:
+                        import json
+                        formatted_item += "Full rows (JSONL):\n"
+                        for ex in rows:
+                            try:
+                                formatted_item += json.dumps(ex, default=str)[:2000] + "\n"
+                            except Exception:
+                                formatted_item += str(ex)[:2000] + "\n"
+                    except Exception:
+                        want_full = False
+                if not want_full or total > FULL_MAX_ROWS:
+                    # Show up to N compact examples
+                    try:
+                        examples = rows[: self.example_cap]
+                        if examples:
+                            formatted_item += f"Examples (up to {self.example_cap}):\n"
+                            for ex in examples:
+                                if isinstance(ex, dict):
+                                    gid = ex.get('genome_id', '')
+                                    pid = ex.get('protein_id', '')
+                                    pf = ex.get('pfams', [])
+                                    ko = ex.get('kos', [])
+                                    pf_show = ",".join(pf[:2]) if isinstance(pf, list) else ""
+                                    ko_show = ",".join(ko[:2]) if isinstance(ko, list) else ""
+                                    formatted_item += f"  - genome={gid} protein={pid} pfams=[{pf_show}] kos=[{ko_show}]\n"
+                                else:
+                                    formatted_item += f"  - {str(ex)[:200]}\n"
+                        formatted_item += ("Note: For small, targeted queries you may request full JSON rows by setting return_full_rows=true on AnnotationDiscovery. "
+                                           "For larger datasets, compact summaries are used to avoid excessive context.")
+                    except Exception:
+                        pass
+>>>>>>> feat/agent-router-typed
             elif item.get('type') == 'task_metadata':
                 formatted_item = f"Task Metadata ({item['task_count']} tasks):\n"
                 formatted_item += f"Key Insights: {'; '.join(item['key_insights'][:5])}\n"
@@ -1025,6 +1280,137 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                     connections = [f"{conn['from_task']} → {conn['to_task']}" 
                                  for conn in item['cross_connections'][:3]]
                     formatted_item += f"Cross-connections: {'; '.join(connections)}\n"
+<<<<<<< HEAD
+=======
+            elif item.get('type') == 'followup_request':
+                formatted_item = "NEXT PASS PROPOSAL:\n"
+                try:
+                    reason = item.get('reason', '')
+                    if reason:
+                        formatted_item += f"Reason: {reason}\n"
+                    steps = item.get('next_task', {}).get('steps', [])
+                    if steps:
+                        formatted_item += "Suggested Steps:\n"
+                        for idx, st in enumerate(steps, 1):
+                            op = st.get('op')
+                            params = st.get('params', {})
+                            bind = st.get('bind', '')
+                            formatted_item += f"  {idx}. {op} params={params} bind={bind}\n"
+                    inputs = item.get('inputs_needed', [])
+                    if inputs:
+                        formatted_item += "Inputs Needed:\n"
+                        for inp in inputs:
+                            nm = inp.get('name', '?')
+                            desc = inp.get('desc', '')
+                            ex = inp.get('examples', [])
+                            exs = ", ".join(ex[:3]) if isinstance(ex, list) else ""
+                            formatted_item += f"  - {nm}: {desc}"
+                            if exs:
+                                formatted_item += f" (e.g., {exs})"
+                            formatted_item += "\n"
+                except Exception:
+                    formatted_item += str(item) + "\n"
+            elif isinstance(item, dict) and 'cards' in item:
+                # Structured locus cards from fast path; include PFAM/KO when present
+                cards = item.get('cards') or []
+                formatted_lines = [f"LocusDiscovery: {len(cards)} loci contextualized"]
+                # Scope & provenance: be explicit about ±k windows and seed selection
+                try:
+                    meta = item.get('meta') if isinstance(item.get('meta'), dict) else {}
+                    scope = meta.get('analysis_scope') or {}
+                    seedsel = meta.get('seed_selection') or {}
+                    window_k = scope.get('window_k')
+                    sel_method = seedsel.get('method')
+                    if isinstance(window_k, int) or isinstance(sel_method, str):
+                        scope_bits = []
+                        if isinstance(window_k, int):
+                            scope_bits.append(f"±{window_k} genes around seed")
+                        if isinstance(sel_method, str):
+                            if sel_method == 'id_resolution':
+                                scope_bits.append("seeded by PFAM/KO IDs")
+                            elif sel_method == 'concept_anchors':
+                                scope_bits.append("seeded via concept anchors → PFAM/KO IDs")
+                            elif sel_method == 'substring_fallback':
+                                scope_bits.append("seeded by substring fallback")
+                        if scope_bits:
+                            formatted_lines.append("Scope: " + "; ".join(scope_bits) + " (locus windows, not complete islands)")
+                except Exception:
+                    pass
+                # Show marker context if available
+                try:
+                    marker = item.get('meta', {}).get('marker') if isinstance(item.get('meta'), dict) else None
+                    if marker:
+                        formatted_lines.append(f"Marker: {marker}")
+                except Exception:
+                    pass
+                for idx, card in enumerate(cards, 1):
+                    try:
+                        seed = card.get('seed_protein_id') if isinstance(card, dict) else getattr(card, 'seed_protein_id', '?')
+                        contig = card.get('contig_id') if isinstance(card, dict) else getattr(card, 'contig_id', '')
+                        genome = card.get('genome_id') if isinstance(card, dict) else getattr(card, 'genome_id', '')
+                        neighbors = card.get('neighbors') if isinstance(card, dict) else getattr(card, 'neighbors', [])
+                        ncount = len(neighbors or [])
+                        formatted_lines.append(f"{idx}. seed={seed} contig={contig} genome={genome} neighbors={ncount}")
+                        # Seed annotations (PFAM/KO) if present
+                        try:
+                            spf = (card.get('seed_pfam_names') or card.get('seed_pfams') or []) if isinstance(card, dict) else []
+                            sko = card.get('seed_kos', []) if isinstance(card, dict) else []
+                            spf_show = ", ".join(spf[:3]) if spf else "-"
+                            sko_show = ", ".join(sko[:3]) if sko else "-"
+                            formatted_lines.append(f"   seed_ann: pfams=[{spf_show}] kos=[{sko_show}]")
+                        except Exception:
+                            pass
+                        # Show up to 3 neighbors with PFAM/KO details when present
+                        for nb in (neighbors or [])[:3]:
+                            pid = nb.get('protein_id') if isinstance(nb, dict) else nb
+                            pfams = (nb.get('pfam_names') or nb.get('pfams') or []) if isinstance(nb, dict) else []
+                            kos = nb.get('kos', []) if isinstance(nb, dict) else []
+                            # Show up to 2 identifiers for each to keep concise
+                            p_show = ", ".join(pfams[:2]) if pfams else "-"
+                            k_show = ", ".join(kos[:2]) if kos else "-"
+                            formatted_lines.append(f"   • {pid} pfams=[{p_show}] kos=[{k_show}]")
+                    except Exception:
+                        # Be robust to shape drift
+                        continue
+                # Summarize kNN neighbors if present in payload
+                nbrs_full = item.get('neighbors_full') if isinstance(item, dict) else None
+                stats = item.get('knn_stats') if isinstance(item, dict) else None
+                # Always include a LanceDB section if the stage ran (stats present) even if empty
+                if isinstance(stats, dict):
+                    counts = stats.get('neighbors_counts') or {}
+                    topk = stats.get('topk')
+                    ns = stats.get('exclude_namespace')
+                    needle = stats.get('filter_needle')
+                    markers = stats.get('filter_markers') or []
+                    formatted_lines.append(f"LanceDB kNN: topk={topk} seeds={len(counts) if isinstance(counts, dict) else 0}")
+                    # Briefly show filter criteria
+                    try:
+                        m_show = ", ".join(markers[:3]) if isinstance(markers, list) and markers else "-"
+                        n_show = needle if isinstance(needle, str) and needle else "-"
+                        ns_show = ns if isinstance(ns, str) and ns else "-"
+                        formatted_lines.append(f"filter: ns={ns_show} needle='{n_show}' markers=[{m_show}]")
+                        # Include criteria summary (if provided)
+                        ins = stats.get('include_namespace')
+                        ineed = stats.get('include_needle')
+                        imarks = stats.get('include_markers') or []
+                        if ins or ineed or imarks:
+                            ins_show = ins if isinstance(ins, str) and ins else "-"
+                            in_show = ineed if isinstance(ineed, str) and ineed else "-"
+                            im_show = ", ".join(imarks[:3]) if isinstance(imarks, list) and imarks else "-"
+                            formatted_lines.append(f"include: ns={ins_show} needle='{in_show}' markers=[{im_show}]")
+                    except Exception:
+                        pass
+                    # Summarize counts (even if detailed neighbors are present)
+                    if isinstance(counts, dict) and counts:
+                        formatted_lines.append("kNN counts:")
+                        shown = 0
+                        for sid, cnt in counts.items():
+                            if shown >= 5:
+                                break
+                            formatted_lines.append(f"  - {sid}: {cnt}")
+                            shown += 1
+                formatted_item = "\n".join(formatted_lines) + "\n"
+>>>>>>> feat/agent-router-typed
             else:
                 # Raw data item
                 formatted_item = f"Data Item {i+1}: {str(item)}\n"
@@ -1301,6 +1687,16 @@ SYNTHESIS TASK: Integrate the above chunk summaries into a comprehensive, cohere
                 self.synthesis_cache[cache_key] = fallback_result
                 return fallback_result
             
+<<<<<<< HEAD
+=======
+            # If a task graph was extracted earlier, prepend it to ensure visibility in final output
+            try:
+                tg = getattr(self, '_last_task_graph', '') if hasattr(self, '_last_task_graph') else ''
+                if tg:
+                    synthesis_result = f"TASK GRAPH:\n{tg}\n\n" + synthesis_result
+            except Exception:
+                pass
+>>>>>>> feat/agent-router-typed
             # Cache and return the result
             self.synthesis_cache[cache_key] = synthesis_result
             return synthesis_result
@@ -1500,4 +1896,8 @@ ANALYSIS COMPLETE - {len(all_findings)} key discoveries identified
             "cache_misses": self.cache_misses,
             "cache_hit_rate_percent": cache_hit_rate,
             "api_call_reduction": f"{cache_hit_rate:.1f}% fewer API calls"
+<<<<<<< HEAD
         }
+=======
+        }
+>>>>>>> feat/agent-router-typed

@@ -13,11 +13,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import shutil
 
 import typer
 from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
+import os
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -94,7 +96,8 @@ def run_dfast(
     """
     start_time = time.time()
     
-    # Create output directory
+    # Ensure output directory exists for logging; DFAST_QC is invoked with --force
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     
     # Initialize result dictionary
@@ -111,13 +114,52 @@ def run_dfast(
     }
     
     try:
+        # Prepare environment and PATH for external tools (dfast_qc, mash)
+        run_env_base = os.environ.copy()
+        # Prefer explicit MASH_BIN or active CONDA env bin
+        path_parts = [run_env_base.get("PATH", "")]
+        mash_bin = run_env_base.get("MASH_BIN")
+        if mash_bin and os.path.isdir(mash_bin):
+            path_parts.insert(0, mash_bin)
+        conda_prefix = run_env_base.get("CONDA_PREFIX")
+        if conda_prefix:
+            conda_bin = os.path.join(conda_prefix, "bin")
+            if os.path.isdir(conda_bin):
+                path_parts.insert(0, conda_bin)
+        # Construct updated PATH (prepend candidates)
+        updated_path = ":".join([p for p in path_parts if p])
+        run_env_base["PATH"] = updated_path
+
+        mash_available = shutil.which("mash", path=updated_path) is not None
+        # If mash is unavailable and completeness disabled, skip DFAST_QC gracefully
+        if (not mash_available) and (not enable_cc):
+            logger.warning("mash not found; skipping DFAST_QC (taxonomy disabled, completeness disabled)")
+            result["execution_status"] = "success"
+            result["taxonomy"] = {
+                "rank": "unknown",
+                "name": "unknown",
+                "ani": 0.0,
+                "status": "skipped",
+                "completeness": 0.0,
+                "contamination": 0.0,
+                "tool": "dfast_qc",
+                "version": "n/a",
+                "confidence": 0.0,
+            }
+            return result
+
         # Build DFAST_QC command
         cmd = [
             "dfast_qc",
             "-i", str(fasta),
             "-o", str(out),
-            "--num_threads", str(threads)
+            "--num_threads", str(threads),
+            "--force",
         ]
+        # If mash is missing, disable taxonomy to allow completeness-only runs
+        if not mash_available:
+            logger.warning("mash not found; running DFAST_QC with --disable_tc")
+            cmd.append("--disable_tc")
         
         # Add completeness/contamination flag
         if not enable_cc:
@@ -130,17 +172,37 @@ def run_dfast(
         with tempfile.TemporaryDirectory() as temp_dir:
             # Run DFAST_QC
             with open(log_file, 'w') as log_f:
+                # Preserve PATH and other env; add TMPDIR and our PATH tweaks
+                run_env = run_env_base.copy()
+                run_env["TMPDIR"] = temp_dir
+                # Log command and key env for debugging
+                try:
+                    logger.info(f"Running DFAST_QC: {' '.join(cmd)}")
+                    logger.info(f"PATH={run_env.get('PATH','')}")
+                except Exception:
+                    pass
                 process_result = subprocess.run(
                     cmd,
                     stdout=log_f,
                     stderr=subprocess.STDOUT,
                     text=True,
                     timeout=1800,  # 30 minute timeout per genome
-                    env={"TMPDIR": temp_dir}
+                    env=run_env,
                 )
             
             if process_result.returncode != 0:
-                result["error_message"] = f"DFAST_QC failed with return code {process_result.returncode}"
+                # Surface a helpful error summary from the log
+                summary = f"DFAST_QC failed with return code {process_result.returncode}"
+                try:
+                    if log_file.exists():
+                        with open(log_file, 'r') as lf:
+                            lines = lf.readlines()
+                        tail = ''.join(lines[-50:]) if lines else ''
+                        if tail:
+                            summary += f"\nLast log lines:\n{tail}"
+                except Exception:
+                    pass
+                result["error_message"] = summary
                 return result
         
         # Get DFAST_QC version
@@ -179,9 +241,9 @@ def run_dfast(
         }
         
         # Check if execution was successful
-        if (dqc_result_file.exists() and 
-            tax_summary_file.exists() and
-            taxonomy_summary.get("rank") != "unknown"):
+        if dqc_result_file.exists() and tax_summary_file.exists():
+            if taxonomy_summary.get("rank") == "unknown":
+                logger.warning("DFAST_QC taxonomy unknown; proceeding with success and placeholder taxonomy.")
             result["execution_status"] = "success"
         else:
             result["execution_status"] = "failed"
@@ -409,13 +471,18 @@ def call(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "genomes").mkdir(exist_ok=True)
     
-    # Determine number of workers
+    # Determine number of workers; cap by requested threads
     if max_workers is None:
         import multiprocessing
-        max_workers = max(1, multiprocessing.cpu_count() - 1)
-    
+        cpu_workers = max(1, multiprocessing.cpu_count() - 1)
+        requested = max(1, int(threads)) if threads is not None else cpu_workers
+        max_workers = max(1, min(cpu_workers, requested))
+
+    # One thread per worker to avoid oversubscription
+    threads_per_genome = 1
+
     console.print(f"Using {max_workers} parallel workers")
-    console.print(f"Threads per genome: {threads}")
+    console.print(f"Threads per genome: {threads_per_genome}")
     console.print(f"Completeness/contamination analysis: {'enabled' if enable_cc else 'disabled'}")
     
     # Process genomes in parallel
@@ -426,7 +493,7 @@ def call(
         valid_genomes,
         output_dir,
         max_workers,
-        threads=threads,
+        threads=threads_per_genome,
         enable_cc=enable_cc
     )
     total_time = time.time() - start_time

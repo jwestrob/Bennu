@@ -72,6 +72,33 @@ class WholeGenomeReader:
         """Initialize with Neo4j connection for data retrieval."""
         self.neo4j_processor = neo4j_processor
         self.genomes_read_this_session = set()  # Prevent duplicate reads
+<<<<<<< HEAD
+=======
+        # Per-genome size threshold in MB (files/genomes larger than this are skipped)
+        try:
+            import os
+            self.max_genome_mb = int(os.getenv("AGENT_WGR_MAX_GENOME_MB", "20"))
+        except Exception:
+            self.max_genome_mb = 20
+
+    async def _get_genome_size_mb(self, genome_id: str) -> Optional[float]:
+        """Return approximate genome size in MB using QUAST totalLength if available."""
+        try:
+            # Note: process_query does not support params; embed literal safely
+            q = (
+                f"MATCH (gen:Genome {{genomeId: '{genome_id}'}})-[:HASQUALITYMETRICS]->(qm:QualityMetrics) "
+                f"RETURN toInteger(qm.quast_totalLength) AS L LIMIT 1"
+            )
+            res = await self.neo4j_processor.process_query(q, query_type="cypher")
+            L = 0
+            if res and res.results:
+                L = int((res.results[0] or {}).get("L") or 0)
+            if L > 0:
+                return float(L) / (1024.0 * 1024.0)
+        except Exception:
+            pass
+        return None
+>>>>>>> feat/agent-router-typed
         
     async def read_complete_genome(self, genome_id: str, max_genes_per_contig: int = 1000) -> Dict[str, Any]:
         """
@@ -96,6 +123,23 @@ class WholeGenomeReader:
             }
         
         try:
+<<<<<<< HEAD
+=======
+            # Size gate: skip overly large genomes (per-file/per-genome surrogate via QUAST totalLength)
+            try:
+                size_mb = await self._get_genome_size_mb(genome_id)
+                if size_mb is not None and size_mb > self.max_genome_mb:
+                    logger.warning(
+                        f"⛔ Skipping genome {genome_id}: size≈{size_mb:.1f}MB exceeds {self.max_genome_mb}MB threshold"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Genome {genome_id} exceeds size threshold ({size_mb:.1f}MB > {self.max_genome_mb}MB)",
+                        "genome_context": None,
+                    }
+            except Exception:
+                pass
+>>>>>>> feat/agent-router-typed
             # Step 1: Get all genes in spatial order
             spatial_query = f"""
             MATCH (g:Gene)-[:BELONGSTOGENOME]->(genome:Genome {{genomeId: '{genome_id}'}})
@@ -360,8 +404,17 @@ async def read_all_genomes_spatial(neo4j_processor, **kwargs):
     try:
         logger.info("🌐 Starting global spatial genome reading across all genomes")
         
+<<<<<<< HEAD
         # Get all available genomes
         genome_query = "MATCH (g:Genome) RETURN g.genomeId as genome_id ORDER BY g.genomeId"
+=======
+        # Get all available genomes with approximate sizes (via QUAST totalLength)
+        genome_query = (
+            "MATCH (g:Genome) "
+            "OPTIONAL MATCH (g)-[:HASQUALITYMETRICS]->(qm:QualityMetrics) "
+            "RETURN g.genomeId as genome_id, toInteger(qm.quast_totalLength) AS L ORDER BY genome_id"
+        )
+>>>>>>> feat/agent-router-typed
         genome_result = await neo4j_processor.process_query(genome_query, query_type="cypher")
         
         if not genome_result or not genome_result.results:
@@ -371,8 +424,36 @@ async def read_all_genomes_spatial(neo4j_processor, **kwargs):
                 "tool_output": "No genomes available for global analysis"
             }
         
+<<<<<<< HEAD
         genome_ids = [row['genome_id'] for row in genome_result.results]
         logger.info(f"🔍 Found {len(genome_ids)} genomes for global spatial reading: {genome_ids}")
+=======
+        # Size gate per genome (default 20MB)
+        try:
+            import os
+            max_mb = int(os.getenv("AGENT_WGR_MAX_GENOME_MB", "20"))
+        except Exception:
+            max_mb = 20
+        all_rows = genome_result.results
+        small_genomes = []
+        large_genomes = []
+        for row in all_rows:
+            gid = row.get('genome_id')
+            L = int((row.get('L') or 0))
+            mb = L / (1024.0 * 1024.0) if L else None
+            if mb is not None and mb > max_mb:
+                large_genomes.append((gid, mb))
+            else:
+                small_genomes.append(gid)
+        if large_genomes:
+            logger.warning(
+                f"⛔ Skipping {len(large_genomes)} large genome(s) > {max_mb}MB: "
+                + ", ".join([f"{gid}≈{mb:.1f}MB" for gid, mb in large_genomes[:5]])
+                + (" ..." if len(large_genomes) > 5 else "")
+            )
+        genome_ids = small_genomes
+        logger.info(f"🔍 Eligible genomes for global spatial reading: {len(genome_ids)}")
+>>>>>>> feat/agent-router-typed
         
         # Read each genome spatially
         reader = WholeGenomeReader(neo4j_processor)
@@ -454,4 +535,8 @@ async def read_all_genomes_spatial(neo4j_processor, **kwargs):
             "success": False,
             "error": str(e),
             "tool_output": f"Global genome reading failed: {str(e)}"
+<<<<<<< HEAD
         }
+=======
+        }
+>>>>>>> feat/agent-router-typed

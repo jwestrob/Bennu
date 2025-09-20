@@ -1,0 +1,28 @@
+<style>
+        .bg { fill:#0b1020; }
+        .layer { fill:#111a33; stroke:#3a4a7a; stroke-width:1.5; opacity:0.9; }
+        .store { fill:#0f1b2d; stroke:#4a6fb3; stroke-width:1.5; }
+        .node { fill:#1b2b4d; stroke:#7aa2ff; stroke-width:1.5; rx:10; ry:10; }
+        .nodeAlt { fill:#203357; stroke:#87d7ff; stroke-width:1.4; rx:10; ry:10; }
+        .nodeStore { fill:#1a2742; stroke:#9ad0ff; stroke-width:1.4; rx:10; ry:10; }
+        .title { fill:#e8f0ff; font:600 18px/1.2 "Inter", system-ui, Arial; }
+        .label { fill:#dbe7ff; font:600 14px/1.3 "Inter", system-ui, Arial; }
+        .sublabel { fill:#a9c1ff; font:12px/1.2 "Inter", system-ui, Arial; }
+        .small { fill:#c6d7ff; font:11px/1.2 "Inter", system-ui, Arial; }
+        .legend { fill:#bcd3ff; font:12px/1.2 "Inter", system-ui, Arial; }
+        .edge { stroke:#a3c5ff; stroke-width:2; marker-end:url(#arrow); }
+        .edgeAlt { stroke:#7fd6ff; stroke-width:2; marker-end:url(#arrow); stroke-dasharray:6 4; }
+        .edgeStore { stroke:#79b7ff; stroke-width:2; marker-end:url(#arrow); }
+        .edgeSoft { stroke:#7d8fb2; stroke-width:1.5; marker-end:url(#arrow); stroke-dasharray:5 5; opacity:0.9; }
+        .banner { fill:#0e1a33; stroke:#365a9a; stroke-width:1.2; rx:8; ry:8; }
+      </style>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#a3c5ff"/>
+      </marker>
+
+      <rect class="banner" x="0" y="0" width="340" height="120"/>
+      <text class="label" x="14" y="26">Legend</text>
+      <rect class="node" x="14" y="40" width="20" height="12"/><text class="legend" x="42" y="50">API call (primary)</text>
+      <line class="edge" x1="16" y1="70" x2="36" y2="70"/><text class="legend" x="42" y="74">Primary data flow</text>
+      <rect class="nodeAlt" x="14" y="84" width="20" height="12"/><text class="legend" x="42" y="94">Alt backend / optional</text>
+      <line class="edgeAlt" x1="16" y1="110" x2="36" y2="110"/><text class="legend" x="42" y="114">Optional route</text>

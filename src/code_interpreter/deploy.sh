@@ -74,7 +74,12 @@ build_image() {
 
 deploy_standard() {
     echo "Deploying with standard Docker security..."
+<<<<<<< HEAD
     $DOCKER_COMPOSE_CMD up -d $SERVICE_NAME
+=======
+    # Force rebuild and recreation so new routes/endpoints are active
+    $DOCKER_COMPOSE_CMD up -d --build --force-recreate $SERVICE_NAME
+>>>>>>> feat/agent-router-typed
     print_success "Service deployed on port $PORT"
     print_warning "Running with standard Docker security (not maximum security)"
 }
@@ -196,6 +201,10 @@ main() {
         "restart")
             stop_services
             sleep 2
+<<<<<<< HEAD
+=======
+            build_image
+>>>>>>> feat/agent-router-typed
             deploy_standard
             check_health
             ;;
@@ -216,4 +225,8 @@ main() {
     esac
 }
 
+<<<<<<< HEAD
 main "$@"
+=======
+main "$@"
+>>>>>>> feat/agent-router-typed

@@ -64,16 +64,76 @@ class PfamProcessor(AnnotationProcessor):
     
     def __init__(self):
         super().__init__("PFAM", keep_multiple=True)
+        # Lazy-initialized mapping of short name -> accession from reference TSV
+        self._pfam_name_to_acc = None
+
+    def _load_pfam_reference(self) -> None:
+        if self._pfam_name_to_acc is not None:
+            return
+        from pathlib import Path
+        pfam_map = {}
+        ref_path = Path("data/reference/pfam_id_desc.tsv")
+        if ref_path.exists():
+            try:
+                with ref_path.open("r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        parts = line.rstrip("\n").split("\t")
+                        if not parts or len(parts) < 2:
+                            continue
+                        acc = parts[0].strip()
+                        short = parts[1].strip()
+                        if acc and short and short not in pfam_map:
+                            pfam_map[short] = acc
+            except Exception:
+                pfam_map = {}
+        self._pfam_name_to_acc = pfam_map
+
+    @staticmethod
+    def _parse_accession(acc_raw: str) -> (str, int | None):
+        """Return (PFxxxxx, version?) from a raw accession like 'PF00016.26' or 'PF00016'."""
+        import re
+        if not acc_raw:
+            return "", None
+        m = re.match(r"^(PF\d{5})(?:\.(\d+))?$", str(acc_raw).strip())
+        if m:
+            base = m.group(1)
+            ver = int(m.group(2)) if m.group(2) else None
+            return base, ver
+        # Try to find embedded PFxxxxx
+        m2 = re.search(r"(PF\d{5})", str(acc_raw))
+        if m2:
+            return m2.group(1), None
+        return "", None
     
     def create_domain_entities(self, hits_df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Create protein domain entities from PFAM hits."""
         domains = []
-        
+        # Load mapping once if needed
+        self._load_pfam_reference()
+
         for _, hit in hits_df.iterrows():
+            short_name = str(hit.get('hmm_name', '')).strip()
+            acc_raw = str(hit.get('hmm_acc', '')).strip() if 'hmm_acc' in hit else ''
+            base_acc, version = self._parse_accession(acc_raw)
+
+            # Fallback mapping from short name → accession if hmm_acc was absent
+            if not base_acc and short_name and isinstance(self._pfam_name_to_acc, dict):
+                mapped = self._pfam_name_to_acc.get(short_name)
+                if mapped:
+                    base_acc, _ = self._parse_accession(mapped)
+
+            # As a last resort, if short_name already looks like PFxxxxx, use it
+            if not base_acc:
+                base_guess, _ = self._parse_accession(short_name)
+                if base_guess:
+                    base_acc = base_guess
+
             domain = {
-                "domain_id": f"{hit['sequence_id']}/domain/{hit['hmm_name']}/{hit['env_from']}-{hit['env_to']}",
+                "domain_id": f"{hit['sequence_id']}/domain/{short_name}/{hit['env_from']}-{hit['env_to']}",
                 "protein_id": hit['sequence_id'],
-                "pfam_id": hit['hmm_name'],
+                # Use canonical unversioned PF accession for family ID if available; otherwise fall back to short name
+                "pfam_id": base_acc or short_name,
+                "pfam_name": short_name,
                 "start_pos": int(hit['env_from']),
                 "end_pos": int(hit['env_to']),
                 "bitscore": float(hit['bitscore']),

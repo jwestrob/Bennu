@@ -1,0 +1,5 @@
+🧬 Genomic Question Answering
+Question: Summarize antibiotic resistance genes (resistome) in this metagenome. Show the TASK GRAPH.
+📝 Session ID: de05a405-a400-41b6-92b0-4931b0179392
+Notes folder: data/session_notes/de05a405-a400-41b6-92b0-4931b0179392
+🧬 Processing question: Summarize antibiotic resistance genes (resistome) in this metagenome. Show the TASK GRAPH.

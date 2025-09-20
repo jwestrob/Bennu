@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Union
 from abc import ABC, abstractmethod
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 import numpy as np
 
 from neo4j import GraphDatabase
@@ -19,6 +20,11 @@ from rich.console import Console
 from .config import LLMConfig
 from .task_repair_agent import TaskRepairAgent
 from .repair_types import RepairResult
+<<<<<<< HEAD
+=======
+from .kg.cypher_templates.registry import compile_query
+from .embedding.runtime_embedder import ESM2RuntimeEmbedder, RuntimeEmbedderConfig, find_embedding_manifest
+>>>>>>> feat/agent-router-typed
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -101,8 +107,9 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             elif query_type == "functional_annotation":
                 results = await self._get_functional_annotations(query)
             else:
-                # Auto-detect query type and generate appropriate Cypher
-                results = await self._auto_query(query)
+                # Auto-detect path is disabled to eliminate free-form Cypher.
+                # Use named templates via execute_named_template instead.
+                raise NotImplementedError("auto-query disabled: use named templates via execute_named_template")
             
             execution_time = time.time() - start_time
             
@@ -200,6 +207,37 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
             logger.error(f"❌ Query failed with error: {e}")
             logger.error(f"📝 Full failing query: {repr(cypher)}")
             raise
+<<<<<<< HEAD
+=======
+
+    async def execute_named_template(self, name: str, slots: Dict[str, Any]) -> QueryResult:
+        """Compile a named query template and execute with parameters safely."""
+        import time
+        start_time = time.time()
+        cypher, params = compile_query(name, slots or {})
+        try:
+            with self.driver.session() as session:
+                result = session.run(cypher, params)
+                rows = [dict(record) for record in result]
+        except Exception as e:
+            logger.error(f"❌ Template '{name}' execution failed: {e}")
+            raise
+
+        execution_time = time.time() - start_time
+        return QueryResult(
+            source="neo4j",
+            query_type=f"template:{name}",
+            results=rows,
+            metadata={"template": name, "slots": slots, "cypher": cypher, "result_count": len(rows)},
+            execution_time=execution_time,
+        )
+
+    def gds_k_step_neighborhood(self, start_label: str, start_id_key: str, start_id: str, k: int = 1) -> Dict[str, Any]:
+        """Curated GDS-like wrapper (no CALL), behind backend flag."""
+        from .rag_system.gds_wrappers import k_step_neighborhood  # type: ignore
+        with self.driver.session() as session:
+            return session.execute_write(lambda tx: k_step_neighborhood(tx, start_label, start_id_key, start_id, k))
+>>>>>>> feat/agent-router-typed
     
     def _extract_first_query(self, cypher: str) -> str:
         """Extract the first valid Cypher query from potentially multiple queries."""
@@ -350,6 +388,7 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         return cypher
     
     def _normalize_genome_ids(self, cypher: str) -> str:
+<<<<<<< HEAD
         """Normalize genome IDs to match the actual database format."""
         # Fix PLM0 genome ID format: .contigs -> _contigs
         if "PLM0_60_b1_sep16_Maxbin2_047_curated.contigs" in cypher:
@@ -361,6 +400,27 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
         
         # Could add other genome ID normalizations here if needed
         return cypher
+=======
+        """Normalize common genome ID literal formats in Cypher strings.
+
+        Generic rule: convert any string literal ending with `.contigs` to `_contigs`.
+        This avoids dataset-specific fixes (e.g., PLM0_...); it applies uniformly.
+        """
+        import re
+        def _fix_dq(m):
+            inner = m.group(1)
+            return '"' + inner.replace('.contigs', '_contigs') + '"'
+        def _fix_sq(m):
+            inner = m.group(1)
+            return "'" + inner.replace('.contigs', '_contigs') + "'"
+        # Double-quoted literals
+        cypher_new = re.sub(r'"([^"\\]*?\.contigs)"', _fix_dq, cypher)
+        # Single-quoted literals
+        cypher_new = re.sub(r"'([^'\\]*?\.contigs)'", _fix_sq, cypher_new)
+        if cypher_new != cypher:
+            logger.info("Normalizing genome ID literals: .contigs -> _contigs")
+        return cypher_new
+>>>>>>> feat/agent-router-typed
     
     async def _get_genome_overview(self, genome_id: str) -> List[Dict[str, Any]]:
         """Get comprehensive genome information."""
@@ -412,30 +472,31 @@ class Neo4jQueryProcessor(BaseQueryProcessor):
                gene.strand as gene_strand,
                gene.lengthAA as gene_length_aa,
                gene.gcContent as gene_gc_content,
-               collect(DISTINCT d.id) as protein_families,
+               collect(DISTINCT coalesce(d.name, d.id)) as protein_families,
                collect(DISTINCT d.description) as domain_descriptions,
-               collect(DISTINCT d.pfamAccession) as pfam_accessions,
+               collect(DISTINCT coalesce(d.pfamAccession, d.id)) as pfam_accessions,
                collect(DISTINCT ko.id) as kegg_functions,
                collect(DISTINCT ko.description) as kegg_descriptions,
                collect(DISTINCT da.id) as domain_ids,
                collect(DISTINCT da.bitscore) as domain_scores,
                collect(DISTINCT (da.domainStart + '-' + da.domainEnd)) as domain_positions,
                count(DISTINCT da) as domain_count,
-               collect(DISTINCT {
-                   neighbor_id: neighbor_protein.id,
-                   neighbor_start: neighbor_gene.startCoordinate,
-                   neighbor_end: neighbor_gene.endCoordinate,
-                   neighbor_strand: neighbor_gene.strand,
-                   distance: abs(toInteger(neighbor_gene.startCoordinate) - toInteger(gene.startCoordinate)),
-                   direction: CASE WHEN toInteger(neighbor_gene.startCoordinate) > toInteger(gene.startCoordinate) THEN 'downstream' ELSE 'upstream' END,
-                   function: neighbor_ko.description
-               }) as neighbor_details,
+                collect(DISTINCT {
+                    neighbor_id: neighbor_protein.id,
+                    neighbor_start: neighbor_gene.startCoordinate,
+                    neighbor_end: neighbor_gene.endCoordinate,
+                    neighbor_strand: neighbor_gene.strand,
+                    distance: abs(toInteger(neighbor_gene.startCoordinate) - toInteger(gene.startCoordinate)),
+                    direction: CASE WHEN toInteger(neighbor_gene.startCoordinate) > toInteger(gene.startCoordinate) THEN 'downstream' ELSE 'upstream' END,
+                    function: neighbor_ko.description
+                }) as neighbor_details,
                collect(DISTINCT {
                    protein_id: neighbor_protein.id,
                    gene_id: neighbor_gene.id,
                    position: toInteger(neighbor_gene.startCoordinate),
                    strand: neighbor_gene.strand,
                    pfam_ids: neighbor_d.id,
+                   pfam_name: coalesce(neighbor_d.name, neighbor_d.id),
                    pfam_desc: neighbor_d.description,
                    kegg_id: neighbor_ko.id,
                    kegg_desc: neighbor_ko.description
@@ -541,6 +602,7 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
         self.db = None
         self.table = None
         self.embeddings_file = None
+        self._embedder: Optional[ESM2RuntimeEmbedder] = None
         self._connect()
     
     def _connect(self):
@@ -555,6 +617,18 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
             self.embeddings_file = embeddings_h5
             
             logger.info(f"Connected to LanceDB: {db_path}")
+            # Optional dimension assertion via manifest (if present)
+            try:
+                from .embedding.runtime_embedder import find_embedding_manifest
+                import json
+                mf = find_embedding_manifest(db_path)
+                if mf:
+                    manifest = json.loads(Path(mf).read_text())
+                    expected = int(manifest.get("embedding_dim", 0))
+                    if expected:
+                        logger.info(f"Embedding dimension (manifest) = {expected}")
+            except Exception as _e:
+                logger.debug(f"Manifest check skipped: {_e}")
         except Exception as e:
             logger.error(f"Failed to connect to LanceDB: {e}")
             raise
@@ -639,16 +713,114 @@ class LanceDBQueryProcessor(BaseQueryProcessor):
         # Convert cosine distance to cosine similarity
         # Cosine distance = 1 - cosine similarity, so similarity = 1 - distance
         # This gives proper values in range [-1, 1] where 1 = identical
-        return [
-            {
+        items = []
+        for _, row in results.iterrows():
+            items.append({
                 "protein_id": row['protein_id'],
                 "genome_id": row['genome_id'],
                 "sequence_length": row['sequence_length'],
                 "distance": row['_distance'],
-                "similarity": float(1.0 - row['_distance'])  # Cosine distance to cosine similarity
-            }
-            for _, row in results.iterrows()
-        ]
+                "similarity": float(1.0 - row['_distance']),
+            })
+        return self._deterministic_sort(items)
+
+    def _deterministic_sort(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Deterministic ordering: similarity desc, length asc, id asc."""
+        return sorted(items, key=lambda r: (-r.get("similarity", 0.0), r.get("sequence_length", 0), r.get("protein_id", "")))
+
+    def _apply_filters(self, items: List[Dict[str, Any]], filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not filters:
+            return items
+        out: List[Dict[str, Any]] = []
+        genome_filter = filters.get("genome_id")
+        if isinstance(genome_filter, str):
+            genome_allowed = {genome_filter}
+        elif isinstance(genome_filter, list):
+            genome_allowed = set([str(x) for x in genome_filter])
+        else:
+            genome_allowed = None
+        min_len = filters.get("min_length")
+        max_len = filters.get("max_length")
+        for r in items:
+            if genome_allowed is not None and r.get("genome_id") not in genome_allowed:
+                continue
+            ln = r.get("sequence_length")
+            if min_len is not None and isinstance(ln, (int, float)) and ln < min_len:
+                continue
+            if max_len is not None and isinstance(ln, (int, float)) and ln > max_len:
+                continue
+            out.append(r)
+        return out
+
+    async def execute_similarity(self, mode: str, k: int, *, protein_id: Optional[str] = None, sequence: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> QueryResult:
+        """Execute similarity search with deterministic ordering and optional filters."""
+        import time
+        import json
+        from pathlib import Path
+        start = time.time()
+        if mode == "by_id":
+            base = await self._find_similar_by_id(protein_id or "", limit=max(1, int(k)))
+        elif mode == "by_sequence":
+            # Embed at runtime using pipeline manifest settings
+            if not sequence:
+                raise ValueError("Missing 'sequence' for similarity_search by_sequence")
+            if self._embedder is None:
+                manifest = find_embedding_manifest(self.config.database.lancedb_path)
+                if not manifest:
+                    raise RuntimeError("Embedding manifest not found near LanceDB path; cannot embed sequence")
+                cfg = ESM2RuntimeEmbedder.load_manifest(manifest)
+                self._embedder = ESM2RuntimeEmbedder(cfg)
+                # Dimension assertion vs manifest
+                manifest_dim = json.loads(Path(manifest).read_text()).get("embedding_dim")
+                if isinstance(manifest_dim, int) and manifest_dim != self._embedder.embedding_dim:
+                    raise RuntimeError(f"Embedder dim {self._embedder.embedding_dim} != manifest {manifest_dim}")
+            vec = self._embedder.embed_sequence(sequence)
+            # Search and convert as embedding path
+            results_df = self.table.search(vec).metric("cosine").limit(max(1, int(k))).to_pandas()
+            items = []
+            for _, row in results_df.iterrows():
+                items.append({
+                    "protein_id": row['protein_id'],
+                    "genome_id": row['genome_id'],
+                    "sequence_length": row['sequence_length'],
+                    "distance": row['_distance'],
+                    "similarity": float(1.0 - row['_distance']),
+                })
+            base = items
+        else:
+            raise ValueError(f"Unknown similarity mode: {mode}")
+
+        filtered = self._apply_filters(base, filters)
+        ordered = self._deterministic_sort(filtered)
+        topk = ordered[: max(1, int(k))]
+        elapsed = time.time() - start
+        return QueryResult(
+            source="lancedb",
+            query_type=f"similarity:{mode}",
+            results=topk,
+            metadata={"k": k, "filters": filters or {}, "result_count": len(topk)},
+            execution_time=elapsed,
+        )
+
+    async def execute_similarity_batch(self, ids: List[str], k: int, *, filters: Optional[Dict[str, Any]] = None) -> QueryResult:
+        """Batch kNN: for each protein id, return top-k similar proteins.
+
+        Deterministic ordering applied per-query; results keyed by query id.
+        """
+        import time
+        start = time.time()
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for pid in ids:
+            res = await self.execute_similarity("by_id", k, protein_id=pid, filters=filters)
+            out[pid] = res.results
+        elapsed = time.time() - start
+        return QueryResult(
+            source="lancedb",
+            query_type=f"similarity:batch:{len(ids)}",
+            results=[out],
+            metadata={"k": k, "batch": len(ids)},
+            execution_time=elapsed,
+        )
     
     async def _lookup_protein(self, protein_id: str) -> List[Dict[str, Any]]:
         """Look up a specific protein by ID."""

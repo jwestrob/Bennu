@@ -1,0 +1,65 @@
+name: PROPHAGE
+window_default: 5
+motifs:
+  INTEGRATION:
+    all_any: [{ domain_set: phage.integration }]
+  STRUCTURAL_CLUSTER:
+    any_at_least:
+      - { domain_set: phage.structural_capsid }
+      - { domain_set: phage.structural_portal }
+      - { domain_set: phage.terminase }
+    count: 2
+  PACKAGING_ASSEMBLY:
+    all_any:
+      - { domain_set: phage.terminase }
+      - { domain_set: phage.structural_capsid }
+  LYSIS_MODULE:
+    all_any:
+      - { domain_set: phage.lysis_holin }
+      - { domain_set: phage.lysis_endolysin }
+  LYSOGENY_REGULATOR:
+    any_any:
+      - { domain_set: phage.lysogeny_regulators }
+  TAIL_COMPLEX:
+    any_at_least:
+      - { domain_set: phage.tail }
+    count: 2
+
+clauses:
+  - all_of: [INTEGRATION]
+    any_of: [STRUCTURAL_CLUSTER, LYSOGENY_REGULATOR]
+  - all_of: [STRUCTURAL_CLUSTER]
+    any_of: [PACKAGING_ASSEMBLY, TAIL_COMPLEX]
+  - all_of: [LYSIS_MODULE]
+    any_of: [STRUCTURAL_CLUSTER]
+exclusions:
+  tags_soft:
+    - BGC_STRONG
+    - HOUSEKEEPING_DENSE
+
+domain_sets:
+  phage:
+    integration:
+      pfam_query: ["integrase", "recombinase", "tyrosine recombinase"]
+      kegg_query: []
+    structural_capsid:
+      pfam_query: ["capsid"]
+      kegg_query: []
+    structural_portal:
+      pfam_query: ["portal"]
+      kegg_query: []
+    terminase:
+      pfam_query: ["terminase"]
+      kegg_query: ["K06966", "terminase"]
+    tail:
+      pfam_query: ["tail", "baseplate", "sheath", "fiber"]
+      kegg_query: []
+    lysis_holin:
+      pfam_query: ["holin"]
+      kegg_query: []
+    lysis_endolysin:
+      pfam_query: ["endolysin", "lysozyme"]
+      kegg_query: []
+    lysogeny_regulators:
+      pfam_query: ["HTH", "cro", "CI repressor", "lambda repressor"]
+      kegg_query: []

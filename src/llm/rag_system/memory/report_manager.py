@@ -73,7 +73,11 @@ class ReportPlanner:
         Initialize report planner.
         
         Args:
+<<<<<<< HEAD
             max_tokens_per_part: Maximum tokens per report part (leaving buffer for o3)
+=======
+            max_tokens_per_part: Maximum tokens per report part (leaving buffer for gpt-5)
+>>>>>>> feat/agent-router-typed
         """
         self.max_tokens_per_part = max_tokens_per_part
         self.base_tokens = 2000  # Introduction, conclusions, formatting
@@ -428,4 +432,8 @@ class ReportPlanner:
                 pass
         
         # Fallback to simple estimation
+<<<<<<< HEAD
         return chunk.estimated_tokens
+=======
+        return chunk.estimated_tokens
+>>>>>>> feat/agent-router-typed

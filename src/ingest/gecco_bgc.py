@@ -29,6 +29,7 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
+<<<<<<< HEAD
 def run_gecco(fasta: Path, out_dir: Path, threads: int = 0, is_metagenome: bool = False) -> bool:
     """
     Run GECCO BGC detection on a genome assembly using Python API.
@@ -114,6 +115,58 @@ def run_gecco(fasta: Path, out_dir: Path, threads: int = 0, is_metagenome: bool 
         logger.error(f"Error running GECCO on {fasta.name}: {e}")
         create_empty_gecco_output(out_dir, fasta)
         return True  # Return True to continue pipeline
+=======
+def run_gecco(fasta: Path, out_dir: Path, threads: int = 0, is_metagenome: bool = False, force: bool = False) -> bool:
+    """Run GECCO via its CLI (always), with optional cleanup and retry.
+
+    Returns True on success; on failure, writes empty outputs and returns True to keep pipeline moving.
+    """
+    # Build CLI
+    cmd = [
+        "gecco", "run",
+        "--genome", str(fasta),
+        "-o", str(out_dir),
+        "--jobs", str(threads if threads > 0 else os.cpu_count())
+    ]
+    if is_metagenome:
+        cmd.append("--prodigal-meta")
+
+    logger.info(f"Running GECCO via command line: {' '.join(cmd)}")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        if result.returncode != 0:
+            logger.error(f"GECCO failed with return code {result.returncode}")
+            logger.error(f"STDERR: {result.stderr}")
+            # If output dir not empty and force requested, clean and retry once
+            if force and "Output folder contains files" in (result.stderr or ""):
+                try:
+                    logger.warning("GECCO reports non-empty output dir; cleaning and retrying once (force=true)")
+                    if out_dir.exists():
+                        shutil.rmtree(out_dir)
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    result2 = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                    if result2.returncode == 0:
+                        logger.info("GECCO succeeded after cleaning output directory")
+                        return True
+                    else:
+                        logger.error(f"Retry failed. STDERR: {result2.stderr}")
+                except Exception as e:
+                    logger.error(f"Failed to clean/retry GECCO output dir: {e}")
+            # Create empty output for compatibility
+            create_empty_gecco_output(out_dir, fasta)
+            return True
+        logger.info(f"GECCO completed successfully for {fasta.name}")
+        return True
+    except subprocess.TimeoutExpired:
+        logger.error(f"GECCO timed out after 30 minutes for {fasta.name}")
+        create_empty_gecco_output(out_dir, fasta)
+        return True
+    except Exception as e:
+        logger.error(f"Error running GECCO on {fasta.name}: {e}")
+        create_empty_gecco_output(out_dir, fasta)
+        return True
+>>>>>>> feat/agent-router-typed
 
 
 def create_empty_gecco_output(out_dir: Path, fasta: Path) -> None:
@@ -218,8 +271,13 @@ def convert_gecco_to_genbank(clusters_file: Path, output_dir: Path) -> List[Path
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0:
+<<<<<<< HEAD
             # Find generated GenBank files
             for gbk_file in output_dir.glob(f"{sample_name}_cluster_*.gbk"):
+=======
+            # Find generated GenBank files; GECCO may not prefix with sample name
+            for gbk_file in output_dir.glob("*.gbk"):
+>>>>>>> feat/agent-router-typed
                 gbk_files.append(gbk_file)
                 
         logger.info(f"Converted GECCO output to {len(gbk_files)} GenBank files")
@@ -304,7 +362,11 @@ def parse_gecco_genbank(gbk_file: Path) -> Dict[str, Any]:
     return bgc_data
 
 
+<<<<<<< HEAD
 def process_genome_gecco(genome_file: Path, output_dir: Path, threads: int = 1) -> Dict[str, Any]:
+=======
+def process_genome_gecco(genome_file: Path, output_dir: Path, threads: int = 1, force: bool = False) -> Dict[str, Any]:
+>>>>>>> feat/agent-router-typed
     """
     Process a single genome file with GECCO BGC detection.
     
@@ -318,6 +380,15 @@ def process_genome_gecco(genome_file: Path, output_dir: Path, threads: int = 1) 
     """
     genome_name = genome_file.stem
     genome_output_dir = output_dir / genome_name
+<<<<<<< HEAD
+=======
+    # Honor force: ensure a clean output directory
+    if genome_output_dir.exists() and force:
+        try:
+            shutil.rmtree(genome_output_dir)
+        except Exception as e:
+            logger.warning(f"Could not remove existing GECCO output dir {genome_output_dir}: {e}")
+>>>>>>> feat/agent-router-typed
     genome_output_dir.mkdir(parents=True, exist_ok=True)
     
     result = {
@@ -336,7 +407,11 @@ def process_genome_gecco(genome_file: Path, output_dir: Path, threads: int = 1) 
         logger.info(f"Processing {genome_name} with GECCO")
         
         # Run GECCO
+<<<<<<< HEAD
         success = run_gecco(genome_file, genome_output_dir, threads)
+=======
+        success = run_gecco(genome_file, genome_output_dir, threads, force=force)
+>>>>>>> feat/agent-router-typed
         
         if not success:
             result["status"] = "failed"
@@ -359,8 +434,26 @@ def process_genome_gecco(genome_file: Path, output_dir: Path, threads: int = 1) 
                 if bgc_data["parsing_errors"]:
                     result["errors"].extend(bgc_data["parsing_errors"])
         
+<<<<<<< HEAD
         result["status"] = "completed"
         logger.info(f"GECCO processing completed for {genome_name}: {len(result['clusters'])} clusters, {len(result['genes'])} genes")
+=======
+        # If no GenBank genes parsed, synthesize minimal gene entries from cluster protein lists for downstream linkage
+        if not result["genes"] and result["clusters"]:
+            synth = []
+            for c in result["clusters"]:
+                for pid in (c.get("protein_list") or []):
+                    synth.append({
+                        "protein_id": pid,
+                        "cluster_id": c.get("cluster_id"),
+                        "contig": c.get("contig"),
+                    })
+            result["genes"] = synth
+
+        result["status"] = "completed"
+        gene_count = len(result["genes"]) if isinstance(result.get("genes"), list) else 0
+        logger.info(f"GECCO processing completed for {genome_name}: {len(result['clusters'])} clusters, {gene_count} genes")
+>>>>>>> feat/agent-router-typed
         
     except Exception as e:
         error_msg = f"Error processing {genome_name}: {e}"
@@ -421,10 +514,17 @@ def gecco_bgc_detection(
         
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             # Submit jobs
+<<<<<<< HEAD
             future_to_genome = {
                 executor.submit(process_genome_gecco, genome_file, output_dir, threads): genome_file
                 for genome_file in genome_files
             }
+=======
+            future_to_genome = {}
+            for genome_file in genome_files:
+                future = executor.submit(process_genome_gecco, genome_file, output_dir, threads, force)
+                future_to_genome[future] = genome_file
+>>>>>>> feat/agent-router-typed
             
             # Collect results
             for future in as_completed(future_to_genome):
@@ -545,4 +645,8 @@ def main(
 
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     typer.run(main)
+=======
+    typer.run(main)
+>>>>>>> feat/agent-router-typed

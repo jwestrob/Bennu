@@ -1,7 +1,13 @@
+<<<<<<< HEAD
+=======
+## Minimal, CI-friendly stack for finalizer analytics (Python 3.11 compatible)
+
+>>>>>>> feat/agent-router-typed
 # Core web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
+<<<<<<< HEAD
 # HTTP client for code interpreter communication (CRITICAL - was missing!)
 httpx==0.25.0
 
@@ -77,6 +83,15 @@ jupyterlab==4.0.6
 h5py==3.9.0
 openpyxl==3.1.2
 xlsxwriter==3.1.9
+=======
+# HTTP client for health checks (caller side uses this, service doesn't strictly need it, but keep for future use)
+httpx==0.25.0
+
+# Data analysis and visualization (used by build_ci_code)
+numpy==1.24.3
+pandas==2.0.3
+matplotlib==3.7.2
+>>>>>>> feat/agent-router-typed
 
 # Utilities
 pydantic==2.4.2
@@ -85,6 +100,7 @@ requests==2.31.0
 click==8.1.7
 tqdm==4.66.1
 python-dateutil==2.8.2
+<<<<<<< HEAD
 
 # Configuration and environment
 python-dotenv==1.0.0
@@ -118,6 +134,8 @@ beautifulsoup4==4.12.2
 scrapy==2.11.0
 
 # Crypto and security (for secure data handling)
+=======
+>>>>>>> feat/agent-router-typed
 cryptography==41.0.7
 passlib==1.7.4
 
@@ -131,4 +149,8 @@ reportlab==4.0.6
 
 # Audio and signal processing (for genomic signal analysis)
 librosa==0.10.1
+<<<<<<< HEAD
 pydub==0.25.1
+=======
+pydub==0.25.1
+>>>>>>> feat/agent-router-typed

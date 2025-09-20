@@ -1,7 +1,11 @@
 """
 LLM-First Tool Selection for Genomic Analysis Tasks.
 
+<<<<<<< HEAD
 Uses sophisticated biological reasoning (o3) to select appropriate tools based on:
+=======
+Uses sophisticated biological reasoning (gpt-5) to select appropriate tools based on:
+>>>>>>> feat/agent-router-typed
 - Analysis type (spatial vs functional vs comparative)
 - Query scope (global vs targeted vs lookup)
 - Scientific intent (discovery vs annotation vs quantification)
@@ -14,6 +18,10 @@ import logging
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 import json
+<<<<<<< HEAD
+=======
+import os
+>>>>>>> feat/agent-router-typed
 
 try:
     import dspy
@@ -27,6 +35,18 @@ from .task_management import Task, TaskType
 
 logger = logging.getLogger(__name__)
 
+<<<<<<< HEAD
+=======
+# Quarantine gate: legacy selectors are DISABLED by default.
+# Re-enable by setting AGENT_ENABLE_LEGACY_SELECTORS=1 for rollback.
+if os.getenv("AGENT_ENABLE_LEGACY_SELECTORS", "0") != "1":
+    raise ImportError(
+        "Legacy tool selectors are quarantined by default. Set "
+        "AGENT_ENABLE_LEGACY_SELECTORS=1 to re-enable, or migrate to "
+        "src/llm/rag_system/router."
+    )
+
+>>>>>>> feat/agent-router-typed
 
 @dataclass
 class ToolSelectionResult:
@@ -110,7 +130,11 @@ class IntelligentToolSelector:
         self.tool_capabilities = TOOL_CAPABILITIES
         
         if DSPY_AVAILABLE:
+<<<<<<< HEAD
             logger.info("🧠 LLM-first tool selector initialized - o3 has full authority over tool selection")
+=======
+            logger.info("🧠 LLM-first tool selector initialized - gpt-5 has full authority over tool selection")
+>>>>>>> feat/agent-router-typed
         else:
             logger.error("❌ DSPy not available - tool selection requires LLM capabilities")
             raise RuntimeError("LLM-first tool selector requires DSPy for biological reasoning")
@@ -160,7 +184,11 @@ class IntelligentToolSelector:
         # Prepare enhanced tool capabilities with decision criteria
         available_tools_json = json.dumps(self.tool_capabilities, indent=2)
         
+<<<<<<< HEAD
         # Use model allocation for intelligent tool selection (complex biological reasoning = o3)
+=======
+        # Use model allocation for intelligent tool selection (complex biological reasoning = gpt-5)
+>>>>>>> feat/agent-router-typed
         def selection_call(module):
             return module(
                 user_query=original_user_query,
@@ -169,10 +197,17 @@ class IntelligentToolSelector:
                 analysis_context=previous_task_context
             )
         
+<<<<<<< HEAD
         # Use o3 for sophisticated biological tool selection
         logger.debug(f"🧠 o3_biological_reasoning: task='{task_description[:50]}...', query='{original_user_query[:50]}...'")
         result = self.model_allocator.create_context_managed_call(
             task_name="tool_selection",  # Maps to COMPLEX = o3
+=======
+        # Use gpt-5 for sophisticated biological tool selection
+        logger.debug(f"🧠 o3_biological_reasoning: task='{task_description[:50]}...', query='{original_user_query[:50]}...'")
+        result = self.model_allocator.create_context_managed_call(
+            task_name="tool_selection",  # Maps to COMPLEX = gpt-5
+>>>>>>> feat/agent-router-typed
             signature_class=BiologicalToolSelector,
             module_call_func=selection_call,
             query=original_user_query,
@@ -489,4 +524,8 @@ def get_cached_tool_selector() -> CachedToolSelector:
     if _cached_selector is None:
         base_selector = get_tool_selector()
         _cached_selector = CachedToolSelector(base_selector)
+<<<<<<< HEAD
     return _cached_selector
+=======
+    return _cached_selector
+>>>>>>> feat/agent-router-typed

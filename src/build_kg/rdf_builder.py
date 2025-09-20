@@ -14,7 +14,6 @@ from rdflib import Graph, Namespace, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, XSD
 
 from src.build_kg.annotation_processors import process_astra_results
-from src.build_kg.functional_enrichment import add_functional_enrichment_to_pipeline
 from src.build_kg.pathway_integration import integrate_pathways
 from src.build_kg.quast_parser import collect_all_quast_metrics, format_quality_metrics_for_rdf
 
@@ -74,7 +73,12 @@ def parse_prodigal_header(header_line: str) -> Dict[str, Any]:
 
 
 def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef], 
+<<<<<<< HEAD
                                    genome_uris: Dict[str, URIRef]) -> Dict[str, str]:
+=======
+                                   genome_uris: Dict[str, URIRef],
+                                   contig_to_genome: Optional[Dict[str, URIRef]] = None) -> Dict[str, str]:
+>>>>>>> feat/agent-router-typed
     """
     Build mapping from protein header IDs to correct filename-based genome IDs.
     
@@ -85,6 +89,7 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
     Args:
         protein_uris: Map of protein_id -> protein_uri from RDF building
         genome_uris: Map of genome_id -> genome_uri from RDF building
+<<<<<<< HEAD
         
     Returns:
         Dict mapping protein_id -> correct_genome_id
@@ -92,6 +97,20 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
     protein_to_genome = {}
     
     # Extract common identifiers from genome IDs for matching
+=======
+        contig_to_genome: Optional mapping contig_id -> genome_uri. When provided,
+            this is used as the primary mapping path by extracting the contig from
+            the protein header (all '_' parts except the last counter) and looking
+            up the genome URI directly. This reliably maps generic Prodigal headers
+            like 'NODE_1_length_..._7' to the correct genome.
+        
+    Returns:
+        Dict mapping protein_id -> correct_genome_id (string)
+    """
+    protein_to_genome = {}
+    
+    # Extract common identifiers from genome IDs for heuristic matching fallback
+>>>>>>> feat/agent-router-typed
     genome_patterns = {}
     for genome_id in genome_uris.keys():
         # Special handling for PLM0 genomes: use "PLM0_60" pattern
@@ -127,10 +146,40 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
                         logger.debug(f"Genome pattern mapping: {pattern} -> {genome_id}")
                         break
     
+<<<<<<< HEAD
     # Map each protein ID to correct genome ID using pattern matching
     for protein_id in protein_uris.keys():
         # Extract pattern from protein ID like "RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_..." or "PLM0_60_b1_sep16_..."
         
+=======
+    # Map each protein ID to correct genome ID
+    for protein_id in protein_uris.keys():
+        # 1) Preferred path: contig-based mapping when available
+        if contig_to_genome:
+            try:
+                parts = protein_id.split('_')
+                if len(parts) >= 2:
+                    contig_id = '_'.join(parts[:-1])  # drop trailing counter
+                    if contig_id in contig_to_genome:
+                        genome_uri = contig_to_genome[contig_id]
+                        # Extract genome_id string from URIRef
+                        genome_id = str(genome_uri)
+                        prefix = str(GENOME)
+                        if genome_id.startswith(prefix):
+                            genome_id = genome_id.replace(prefix, '')
+                        else:
+                            # Fallback: last path segment
+                            genome_id = genome_id.rsplit('/', 1)[-1]
+                        protein_to_genome[protein_id] = genome_id
+                        logger.debug(f"Contig-based protein mapping: {protein_id} -> {genome_id}")
+                        continue
+            except Exception:
+                # Fall back silently to pattern-based matching
+                pass
+
+        # 2) Heuristic fallback: pattern-based matching
+        # Extract pattern from protein ID like "RIFCSPHIGHO2_01_FULL_Acidovorax_64_960_..." or "PLM0_60_b1_sep16_..."
+>>>>>>> feat/agent-router-typed
         # Handle PLM0 proteins first
         if protein_id.startswith('PLM0_'):
             plm_parts = protein_id.split('_')
@@ -156,7 +205,11 @@ def build_protein_to_genome_mapping(protein_uris: Dict[str, URIRef],
                             logger.debug(f"RIFCS protein mapping: {protein_id} -> {correct_genome_id}")
                             break
         
+<<<<<<< HEAD
         # Fallback: Handle other protein patterns with consecutive digit sequences
+=======
+        # Final fallback: Handle other protein patterns with consecutive digit sequences
+>>>>>>> feat/agent-router-typed
         if protein_id not in protein_to_genome:
             parts = protein_id.split('_')
             for i in range(len(parts) - 1):
@@ -259,6 +312,10 @@ class GenomeKGBuilder:
     
     def __init__(self):
         self.graph = Graph()
+        # Lightweight index to avoid SPARQL scans at large scale
+        self._contig_to_genome: Dict[str, URIRef] = {}
+        # Track genes per contig to compute NEXT adjacency and degrees
+        self._contig_genes: Dict[str, List[Dict[str, Any]]] = {}
         self._bind_namespaces()
         self._add_ontology_definitions()
     
@@ -300,7 +357,15 @@ class GenomeKGBuilder:
             (KG.hasBGC, "genome has biosynthetic gene cluster"),
             (KG.produces, "BGC produces metabolite"),
             (KG.hasCAZyme, "protein has CAZyme annotation"),
+<<<<<<< HEAD
             (KG.cazymeFamily, "CAZyme annotation belongs to family")
+=======
+            (KG.cazymeFamily, "CAZyme annotation belongs to family"),
+            # Genomic adjacency and per-gene degree properties
+            (KG.NEXT, "next gene neighbor on contig"),
+            (KG.nextDegree, "undirected adjacency degree on contig"),
+            (KG.genesOnContig, "total number of genes on contig")
+>>>>>>> feat/agent-router-typed
         ]
         
         for class_uri, label in classes:
@@ -356,6 +421,15 @@ class GenomeKGBuilder:
             # Add contig identifier
             if 'contig' in gene:
                 self.graph.add((gene_uri, KG.contig, Literal(gene['contig'])))
+<<<<<<< HEAD
+=======
+                # Index contig→genome for fast lookups later (avoid SPARQL)
+                contig_id = str(gene['contig'])
+                if contig_id and contig_id not in self._contig_to_genome:
+                    self._contig_to_genome[contig_id] = genome_uri
+            else:
+                contig_id = None
+>>>>>>> feat/agent-router-typed
             
             # Add genomic coordinates from prodigal
             if 'start' in gene and 'end' in gene:
@@ -365,9 +439,15 @@ class GenomeKGBuilder:
                 # Legacy location format for compatibility
                 location = f":{gene['start']}-{gene['end']}"
                 self.graph.add((gene_uri, KG.hasLocation, Literal(location)))
+            else:
+                # Missing coordinates → cannot participate in adjacency
+                pass
             
             if 'strand' in gene:
                 self.graph.add((gene_uri, KG.strand, Literal(gene['strand'], datatype=XSD.integer)))
+                strand_val = gene['strand']
+            else:
+                strand_val = None
             
             if 'length_nt' in gene:
                 self.graph.add((gene_uri, KG.lengthNt, Literal(gene['length_nt'], datatype=XSD.integer)))
@@ -394,9 +474,56 @@ class GenomeKGBuilder:
                 self.graph.add((protein_uri, KG.length, Literal(len(seq), datatype=XSD.integer)))
             
             protein_uris[gene_id] = protein_uri
+
+            # Collect for adjacency if we have the needed fields
+            if contig_id and ('start' in gene) and ('end' in gene):
+                lst = self._contig_genes.setdefault(contig_id, [])
+                lst.append({
+                    'start': int(gene['start']),
+                    'end': int(gene['end']),
+                    'strand': strand_val,
+                    'uri': gene_uri,
+                })
         
         logger.info(f"Added {len(gene_data)} gene-protein pairs with genomic coordinates")
         return protein_uris
+
+    def add_next_edges_and_degrees(self) -> Dict[str, Any]:
+        """Compute per-contig adjacency and set per-gene degrees and contig gene counts.
+
+        Adds:
+        - (gene)-[:NEXT]->(next_gene) edges per contig ordered by startCoordinate.
+        - gene.nextDegree in {0,1,2}
+        - gene.genesOnContig = number of genes on that contig
+        Returns small summary with counts.
+        """
+        total_edges = 0
+        total_genes = 0
+        for contig, items in self._contig_genes.items():
+            items.sort(key=lambda d: d['start'])
+            n = len(items)
+            for i, rec in enumerate(items):
+                gene_uri = rec['uri']
+                # Degree
+                if n <= 1:
+                    deg = 0
+                elif i == 0 or i == n - 1:
+                    deg = 1
+                else:
+                    deg = 2
+                self.graph.add((gene_uri, KG.nextDegree, Literal(deg, datatype=XSD.integer)))
+                self.graph.add((gene_uri, KG.genesOnContig, Literal(n, datatype=XSD.integer)))
+                total_genes += 1
+                # NEXT edge
+                if i < n - 1:
+                    self.graph.add((gene_uri, KG.NEXT, items[i + 1]['uri']))
+                    total_edges += 1
+        logger.info(f"Computed genomic adjacency: NEXT edges={total_edges:,}, genes updated={total_genes:,}")
+        return {"next_edges": total_edges, "genes_updated": total_genes}
+
+    def get_contig_to_genome_index(self) -> Dict[str, URIRef]:
+        """Return the internal contig→genome index built during gene loading."""
+        return self._contig_to_genome
     
     def add_pfam_domains(self, domains: List[Dict[str, Any]], 
                         protein_uris: Dict[str, URIRef]):
@@ -411,7 +538,9 @@ class GenomeKGBuilder:
             
             protein_uri = protein_uris[protein_id]
             domain_uri = PROTEIN[domain['domain_id']]
-            pfam_uri = PFAM[domain['pfam_id']]
+            # Use canonical unversioned PF accession for the PFAM family URI when available
+            pfam_key = str(domain.get('pfam_id') or '').strip()
+            pfam_uri = PFAM[pfam_key if pfam_key else str(domain.get('pfam_name') or 'unknown')]
             
             # Domain annotation instance
             self.graph.add((domain_uri, RDF.type, KG.DomainAnnotation))
@@ -424,7 +553,12 @@ class GenomeKGBuilder:
             
             # PFAM domain family reference
             self.graph.add((pfam_uri, RDF.type, KG.Domain))
-            self.graph.add((pfam_uri, KG.pfamAccession, Literal(domain['pfam_id'])))
+            # pfamAccession (canonical PFxxxxx)
+            if domain.get('pfam_id'):
+                self.graph.add((pfam_uri, KG.pfamAccession, Literal(domain['pfam_id'])))
+            # Optional short name for the family
+            if domain.get('pfam_name'):
+                self.graph.add((pfam_uri, KG.name, Literal(domain['pfam_name'])))
             
             # Link protein to domain
             self.graph.add((protein_uri, KG.hasDomain, domain_uri))
@@ -718,8 +852,20 @@ class GenomeKGBuilder:
     def add_cazyme_annotations_with_correct_genomes(self, cazyme_data: Dict[str, Any], 
                                                    genome_uris: Dict[str, URIRef],
                                                    protein_uris: Dict[str, URIRef],
+<<<<<<< HEAD
                                                    protein_to_genome: Dict[str, str]):
         """Add CAZyme family annotations with correct protein-to-genome mapping."""
+=======
+                                                   protein_to_genome: Optional[Dict[str, str]] = None):
+        """Add CAZyme family annotations, linking directly to proteins.
+
+        Notes:
+        - Genome membership can be derived via Protein→Gene→Genome; an explicit
+          protein→genome map is not required for creating CAZy annotations.
+        - Uses O(1) lookups against protein_uris to avoid O(N×M) scans.
+        - Optional protein_to_genome is accepted for logging/debugging only.
+        """
+>>>>>>> feat/agent-router-typed
         annotation_count = 0
         family_count = 0
         families_added = set()
@@ -730,6 +876,7 @@ class GenomeKGBuilder:
         
         # Process CAZyme annotations
         for annotation in cazyme_data.get("annotations", []):
+<<<<<<< HEAD
             protein_id = annotation.get("protein_id")
             cazyme_family = annotation.get("cazyme_family")
             
@@ -757,6 +904,22 @@ class GenomeKGBuilder:
                 else:
                     mapping_stats['unmapped'] += 1
                     logger.warning(f"Could not map CAZyme protein {protein_id} to any genome")
+=======
+            protein_id = (annotation.get("protein_id") or "").strip()
+            cazyme_family = annotation.get("cazyme_family")
+            if not protein_id or not cazyme_family:
+                continue
+
+            # O(1) exact match; CAZy JSON uses the Prodigal header as ID
+            matching_protein_uri = protein_uris.get(protein_id)
+            if matching_protein_uri:
+                # Optional: track mapping coverage if provided
+                if protein_to_genome is not None:
+                    if protein_id in protein_to_genome:
+                        mapping_stats['mapped'] += 1
+                    else:
+                        mapping_stats['unmapped'] += 1
+>>>>>>> feat/agent-router-typed
                 
                 # Create CAZyme annotation instance
                 annotation_id = f"{protein_id}_{cazyme_family}_{annotation_count}"
@@ -837,17 +1000,17 @@ class GenomeKGBuilder:
     def save_graph(self, output_file: Path, format: str = 'turtle'):
         """Save the knowledge graph to file."""
         try:
-            # Serialize to string first, then write to file
-            serialized = self.graph.serialize(format=format)
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(serialized)
+            # Default to N-Triples for faster, streaming-friendly serialization
+            fmt = 'nt'
+            # Serialize directly to destination to avoid building large in-memory strings
+            self.graph.serialize(destination=str(output_file), format=fmt)
             
             triple_count = len(self.graph)
-            logger.info(f"Saved knowledge graph with {triple_count:,} triples to {output_file}")
+            logger.info(f"Saved knowledge graph with {triple_count:,} triples to {output_file} (format={fmt})")
             
             return {
                 "output_file": str(output_file),
-                "format": format,
+                "format": fmt,
                 "triple_count": triple_count,
                 "timestamp": datetime.now().isoformat()
             }
@@ -916,6 +1079,12 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         genome_protein_uris = builder.add_gene_protein_entities(gene_data, genome_uri)
         protein_uris.update(genome_protein_uris)
     
+    # Compute genomic adjacency and per-gene degrees before downstream enrichments
+    try:
+        builder.add_next_edges_and_degrees()
+    except Exception as e:
+        logger.warning(f"Genomic adjacency computation skipped: {e}")
+
     # Add PFAM domain annotations
     builder.add_pfam_domains(annotation_results['pfam_domains'], protein_uris)
     
@@ -927,10 +1096,6 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         'version': '0.1.0',
         'astra_databases': ['PFAM', 'KOFAM']
     })
-    
-    # Enrich with functional annotations from reference databases
-    enriched_graph, enrichment_stats = add_functional_enrichment_to_pipeline(builder.graph)
-    builder.graph = enriched_graph
     
     # Integrate KEGG pathways
     logger.info("Integrating KEGG pathways...")
@@ -945,31 +1110,36 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
     logger.info(f"Found {len(found_ko_ids)} unique KO IDs in protein annotations")
     
     pathway_stats = {'pathways_integrated': 0, 'ko_pathway_relationships': 0}
-    if ko_pathway_file.exists():
-        # Create pathway integration in temporary directory  
-        pathway_temp_dir = output_dir / "temp_pathways"
-        pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, found_ko_ids)
-        
-        # Load and merge pathway graph into main graph
-        pathway_graph = Graph()
-        pathway_graph.parse(str(pathway_rdf_file), format='turtle')
-        
-        # Merge pathway graph into main graph
-        for triple in pathway_graph:
-            builder.graph.add(triple)
-        
-        # Get pathway statistics
-        pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
-                                                   if 'pathway/' in str(s)])
-        pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
-        
-        logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
-        
-        # Clean up temporary directory
-        import shutil
-        shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+    # Short-circuit: skip pathway integration when no KO IDs present
+    if len(found_ko_ids) == 0:
+        logger.info("No KO IDs found in protein annotations; skipping pathway integration")
     else:
-        logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
+        if ko_pathway_file.exists():
+            # Create pathway integration in temporary directory  
+            pathway_temp_dir = output_dir / "temp_pathways"
+            # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
+            pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
+            
+            # Load and merge pathway graph into main graph
+            pathway_graph = Graph()
+            pathway_graph.parse(str(pathway_rdf_file), format='turtle')
+            
+            # Merge pathway graph into main graph
+            for triple in pathway_graph:
+                builder.graph.add(triple)
+            
+            # Get pathway statistics
+            pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
+                                                       if 'pathway/' in str(s)])
+            pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
+            
+            logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
+            
+            # Clean up temporary directory
+            import shutil
+            shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+        else:
+            logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
     
     # Save knowledge graph
     kg_file = output_dir / "knowledge_graph.ttl"
@@ -983,7 +1153,7 @@ def build_knowledge_graph_from_pipeline(stage03_dir: Path, stage04_dir: Path,
         'proteins_annotated': len(protein_uris),
         'pfam_domains': len(annotation_results['pfam_domains']),
         'kofam_functions': len(annotation_results['kofam_functions']),
-        'functional_enrichment': enrichment_stats,
+        # 'functional_enrichment' removed (enrichment step disabled),
         'pathway_integration': pathway_stats,
         'output_files': {
             'knowledge_graph': str(kg_file)
@@ -1131,6 +1301,15 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         genome_protein_uris = builder.add_gene_protein_entities(gene_data, genome_uri)
         protein_uris.update(genome_protein_uris)
     
+<<<<<<< HEAD
+=======
+    # Compute genomic adjacency and per-gene degrees before downstream enrichments
+    try:
+        builder.add_next_edges_and_degrees()
+    except Exception as e:
+        logger.warning(f"Genomic adjacency computation skipped: {e}")
+
+>>>>>>> feat/agent-router-typed
     # Add PFAM domain annotations
     builder.add_pfam_domains(annotation_results['pfam_domains'], protein_uris)
     
@@ -1141,9 +1320,15 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     bgc_stats = {'clusters': 0, 'genes': 0}
     if bgc_results:
         if genome_uris:
+<<<<<<< HEAD
             # Build efficient contig-to-genome mapping from existing graph relationships
             logger.info("Building contig-to-genome index from existing protein-genome relationships...")
             contig_to_genome = build_contig_to_genome_index_from_proteins(builder.graph, protein_uris)
+=======
+            # Use internal index built during gene loading (avoids expensive SPARQL over large graphs)
+            logger.info("Using internal contig-to-genome index from gene loading phase...")
+            contig_to_genome = builder.get_contig_to_genome_index()
+>>>>>>> feat/agent-router-typed
             
             # Assign each BGC to its correct genome
             bgc_genome_assignments = assign_bgc_to_correct_genome(bgc_results, contig_to_genome)
@@ -1152,7 +1337,15 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
             if bgc_genome_assignments:
                 builder.add_bgc_annotations_with_assignments(bgc_results, bgc_genome_assignments, protein_uris)
                 bgc_stats['clusters'] = len(bgc_results.get('clusters', []))
+<<<<<<< HEAD
                 bgc_stats['genes'] = len(bgc_results.get('genes', []))
+=======
+                # Prefer explicit genes list when present; otherwise, count linked proteins per cluster
+                if bgc_results.get('genes'):
+                    bgc_stats['genes'] = len(bgc_results.get('genes', []))
+                else:
+                    bgc_stats['genes'] = sum(len(c.get('protein_list', []) or []) for c in bgc_results.get('clusters', []))
+>>>>>>> feat/agent-router-typed
             else:
                 logger.warning("No BGC genome assignments could be made - BGCs will be skipped")
         else:
@@ -1162,6 +1355,7 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     cazyme_stats = {'annotations': 0, 'families': 0}
     if cazyme_results:
         if genome_uris:
+<<<<<<< HEAD
             # Build protein-to-genome mapping to correctly assign CAZyme annotations
             logger.info("Building protein-to-genome mapping for CAZyme annotations...")
             protein_to_genome = build_protein_to_genome_mapping(protein_uris, genome_uris)
@@ -1170,6 +1364,11 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
             builder.add_cazyme_annotations_with_correct_genomes(cazyme_results, genome_uris, protein_uris, protein_to_genome)
             cazyme_stats['annotations'] = len(cazyme_results.get('annotations', []))
             # Count unique families
+=======
+            # Directly link CAZy annotations to proteins (Genome derives via Protein→Gene)
+            builder.add_cazyme_annotations_with_correct_genomes(cazyme_results, genome_uris, protein_uris, None)
+            cazyme_stats['annotations'] = len(cazyme_results.get('annotations', []))
+>>>>>>> feat/agent-router-typed
             families = set(ann.get('cazyme_family') for ann in cazyme_results.get('annotations', []))
             cazyme_stats['families'] = len(families)
     
@@ -1185,10 +1384,13 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         'astra_databases': databases_used
     })
     
+<<<<<<< HEAD
     # Enrich with functional annotations from reference databases
     enriched_graph, enrichment_stats = add_functional_enrichment_to_pipeline(builder.graph)
     builder.graph = enriched_graph
     
+=======
+>>>>>>> feat/agent-router-typed
     # Integrate KEGG pathways
     logger.info("Integrating KEGG pathways...")
     repo_root = Path(__file__).parent.parent.parent
@@ -1202,6 +1404,7 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
     logger.info(f"Found {len(found_ko_ids)} unique KO IDs in protein annotations")
     
     pathway_stats = {'pathways_integrated': 0, 'ko_pathway_relationships': 0}
+<<<<<<< HEAD
     if ko_pathway_file.exists():
         # Create pathway integration in temporary directory  
         pathway_temp_dir = output_dir / "temp_pathways"
@@ -1227,6 +1430,38 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         shutil.rmtree(pathway_temp_dir, ignore_errors=True)
     else:
         logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
+=======
+    # Short-circuit: skip pathway integration when no KO IDs present
+    if len(found_ko_ids) == 0:
+        logger.info("No KO IDs found in protein annotations; skipping pathway integration")
+    else:
+        if ko_pathway_file.exists():
+            # Create pathway integration in temporary directory  
+            pathway_temp_dir = output_dir / "temp_pathways"
+            # Integrate full KO→Pathway mapping (do not filter by present KOs) to enable completeness calculations
+            pathway_rdf_file = integrate_pathways(ko_pathway_file, pathway_temp_dir, None)
+            
+            # Load and merge pathway graph into main graph
+            pathway_graph = Graph()
+            pathway_graph.parse(str(pathway_rdf_file), format='turtle')
+            
+            # Merge pathway graph into main graph
+            for triple in pathway_graph:
+                builder.graph.add(triple)
+            
+            # Get pathway statistics
+            pathway_stats['pathways_integrated'] = len([s for s in pathway_graph.subjects(RDF.type, None) 
+                                                       if 'pathway/' in str(s)])
+            pathway_stats['ko_pathway_relationships'] = len(list(pathway_graph.triples((None, URIRef("http://genomics.ai/kg/participatesIn"), None))))
+            
+            logger.info(f"Integrated {pathway_stats['pathways_integrated']} pathways with {pathway_stats['ko_pathway_relationships']} relationships")
+            
+            # Clean up temporary directory
+            import shutil
+            shutil.rmtree(pathway_temp_dir, ignore_errors=True)
+        else:
+            logger.warning(f"ko_pathway.list not found at {ko_pathway_file}, skipping pathway integration")
+>>>>>>> feat/agent-router-typed
     
     # Save knowledge graph
     kg_file = output_dir / "knowledge_graph.ttl"
@@ -1244,7 +1479,11 @@ def build_knowledge_graph_with_extended_annotations(stage03_dir: Path, stage04_d
         'bgc_genes': bgc_stats['genes'],
         'cazyme_annotations': cazyme_stats['annotations'],
         'cazyme_families': cazyme_stats['families'],
+<<<<<<< HEAD
         'functional_enrichment': enrichment_stats,
+=======
+        # 'functional_enrichment' removed (enrichment step disabled),
+>>>>>>> feat/agent-router-typed
         'pathway_integration': pathway_stats,
         'output_files': {
             'knowledge_graph': str(kg_file)

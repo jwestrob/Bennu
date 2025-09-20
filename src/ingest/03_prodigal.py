@@ -5,6 +5,7 @@ Predict protein-coding sequences and extract genomic features.
 """
 
 import logging
+import os
 import json
 import subprocess
 import time
@@ -19,7 +20,7 @@ import shutil
 import typer
 from rich.console import Console
 from rich.table import Table
-from rich.progress import Progress, TaskID
+from rich.progress import Progress
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -176,6 +177,12 @@ def run_prodigal_single(genome_info: Dict[str, Any],
     # Extract genome information
     genome_id = genome_info["genome_id"]
     input_file = Path(genome_info["output_path"])  # From stage00 manifest
+    file_size = genome_info.get("file_size")
+    if not isinstance(file_size, int):
+        try:
+            file_size = input_file.stat().st_size
+        except Exception:
+            file_size = None
     
     # Create output directory for this genome
     genome_output_dir = output_base_dir / "genomes" / genome_id
@@ -201,15 +208,26 @@ def run_prodigal_single(genome_info: Dict[str, Any],
     }
     
     try:
+        # Determine mode: auto-switch to 'meta' for large inputs
+        threshold_mb = int(os.getenv("PRODIGAL_META_THRESHOLD_MB", "20"))
+        threshold_bytes = threshold_mb * 1024 * 1024
+        chosen_mode = mode
+        if isinstance(file_size, int) and file_size > threshold_bytes:
+            chosen_mode = "meta"
+
         # Build prodigal command
         cmd = [
             "prodigal",
             "-i", str(input_file),
             "-a", str(protein_file),  # protein output
-            "-p", mode,               # procedure (single/meta/train)
+            "-p", chosen_mode,        # procedure (single/meta/train), may be auto-switched
             "-g", str(genetic_code),  # genetic code
             "-m"                      # output metadata to stderr
         ]
+        try:
+            logger.info(f"Prodigal mode for {genome_id}: {chosen_mode} (size={file_size} bytes, threshold={threshold_bytes})")
+        except Exception:
+            pass
         
         # Add nucleotide output if requested
         if include_nucleotides:
@@ -219,14 +237,38 @@ def run_prodigal_single(genome_info: Dict[str, Any],
         if min_gene_length != 90:
             cmd.extend(["-t", str(min_gene_length)])
             
+        # Decide timeout dynamically based on mode and input size
+        try:
+            timeout_env = os.getenv("PRODIGAL_TIMEOUT_SECONDS")
+            if timeout_env:
+                timeout_seconds = int(timeout_env)
+            else:
+                # Heuristics: larger inputs and meta mode get more time
+                mb = (file_size or 0) / (1024 * 1024)
+                if chosen_mode == "meta":
+                    if mb >= 200:
+                        timeout_seconds = 3600
+                    elif mb >= 50:
+                        timeout_seconds = 1800
+                    else:
+                        timeout_seconds = 900
+                else:
+                    timeout_seconds = 600
+        except Exception:
+            timeout_seconds = 600
+
         # Execute prodigal
         with open(log_file, 'w') as log_f:
+            try:
+                logger.info(f"Running Prodigal: {' '.join(cmd)} (timeout={timeout_seconds}s)")
+            except Exception:
+                pass
             process_result = subprocess.run(
                 cmd,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=300  # 5 minute timeout per genome
+                timeout=timeout_seconds
             )
             
         if process_result.returncode != 0:
@@ -253,6 +295,10 @@ def run_prodigal_single(genome_info: Dict[str, Any],
             
         # Parse statistics from log
         result["statistics"] = parse_prodigal_stats(log_file)
+        result["statistics"]["prodigal_mode"] = chosen_mode
+        if isinstance(file_size, int):
+            result["statistics"]["input_size_bytes"] = file_size
+        result["statistics"]["timeout_seconds"] = timeout_seconds
         
         # Validate outputs
         result["validation"] = validate_prodigal_outputs(genome_output_dir, genome_id)
@@ -274,7 +320,7 @@ def run_prodigal_single(genome_info: Dict[str, Any],
             result["error_message"] = "Output validation failed"
             
     except subprocess.TimeoutExpired:
-        result["error_message"] = "Prodigal execution timed out (>5 minutes)"
+        result["error_message"] = f"Prodigal execution timed out (>{timeout_seconds} seconds)"
     except Exception as e:
         result["error_message"] = f"Unexpected error: {str(e)}"
         
@@ -521,7 +567,25 @@ def run_prodigal(
         max_workers = max(1, multiprocessing.cpu_count() - 1)
     
     console.print(f"Using {max_workers} parallel workers")
-    console.print(f"Mode: {mode}")
+    # Show auto meta plan before execution
+    try:
+        threshold_mb = int(os.getenv("PRODIGAL_META_THRESHOLD_MB", "20"))
+    except Exception:
+        threshold_mb = 20
+    threshold_bytes = threshold_mb * 1024 * 1024
+    meta_genomes = []
+    for g in valid_genomes:
+        try:
+            sz = int(g.get("file_size", 0))
+            if sz > threshold_bytes:
+                meta_genomes.append(g.get("genome_id", "unknown"))
+        except Exception:
+            pass
+    console.print(f"Mode: {mode} (auto-switch to 'meta' if > {threshold_mb}MB)")
+    if meta_genomes:
+        show = ", ".join(meta_genomes[:5])
+        suffix = " ..." if len(meta_genomes) > 5 else ""
+        console.print(f"Auto meta for {len(meta_genomes)}/{len(valid_genomes)} genomes: {show}{suffix}")
     console.print(f"Genetic code: {genetic_code}")
     console.print(f"Include nucleotides: {include_nucleotides}")
     

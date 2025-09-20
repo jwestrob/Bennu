@@ -77,7 +77,11 @@ class GenomicRegionIdentifier(dspy.Signature):
     genomic_chunk_data = dspy.InputField(desc="Structured genomic data for a chunk of genes with coordinates, annotations, and hypothetical status")
     analysis_criteria = dspy.InputField(desc="User question and criteria for identifying interesting regions")
     
+<<<<<<< HEAD
     interesting_regions = dspy.OutputField(desc="JSON list of interesting loci, each with: contig_id (COMPLETE scaffold/contig identifier as it appears in the data), start_coordinate, end_coordinate, gene_ids (array of individual gene_id strings from input data), locus_type, biological_significance_reasoning. VERIFICATION CRITICAL: Use the complete, unabbreviated contig_id for traceability (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' not 'scaffold_1705'). Gene_ids must contain ONLY values that appear EXACTLY in the genomic_chunk_data input - DO NOT fabricate or assume any gene IDs not explicitly provided. HALLUCINATED GENE IDS WILL BE REJECTED.")
+=======
+    interesting_regions = dspy.OutputField(desc="JSON list of interesting loci, each with: contig_id (COMPLETE scaffold/contig identifier as it appears in the data), start_coordinate, end_coordinate, gene_ids (array of individual gene_id strings from input data), locus_type, biological_significance_reasoning. VERIFICATION CRITICAL: Use the complete, unabbreviated contig_id for traceability (e.g., 'EXAMPLE_CONTIG_ID' not 'scaffold_XXXX'). Gene_ids must contain ONLY values that appear EXACTLY in the genomic_chunk_data input - DO NOT fabricate or assume any gene IDs not explicitly provided. HALLUCINATED GENE IDS WILL BE REJECTED.")
+>>>>>>> feat/agent-router-typed
 
 
 class GenomicChunkAnalyzer:
@@ -178,7 +182,11 @@ class GenomicChunkAnalyzer:
             CRITICAL: You can ONLY reference gene IDs that appear in the genomic_chunk_data. DO NOT create or assume additional gene IDs.
             
             Please identify genomically interesting regions. For each region, provide:
+<<<<<<< HEAD
             - contig_id: COMPLETE scaffold/contig identifier as it appears in the input data (e.g., 'RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705' - DO NOT abbreviate to just 'scaffold_1705')
+=======
+            - contig_id: COMPLETE scaffold/contig identifier as it appears in the input data (e.g., 'EXAMPLE_CONTIG_ID' - DO NOT abbreviate to just 'scaffold_XXXX')
+>>>>>>> feat/agent-router-typed
             - start_coordinate: genomic nucleotide position where the region begins (use the START coordinate of the first gene in your selection)
             - end_coordinate: genomic nucleotide position where the region ends (use the END coordinate of the last gene in your selection)
             - gene_ids: array of individual gene_id strings from the input data
@@ -198,10 +206,17 @@ class GenomicChunkAnalyzer:
             4. Do NOT create synthetic identifiers by combining gene IDs with coordinate ranges
             5. If a region contains 3 genes, list all 3 individual gene_id values separately
             
+<<<<<<< HEAD
             EXAMPLE of CORRECT output format:
             [
               {{
                 "contig_id": "RIFCSPLOWO2_01_FULL_OD1_41_220_rifcsplowo2_01_scaffold_1705",
+=======
+            EXAMPLE of CORRECT output format (with placeholders):
+            [
+              {{
+                "contig_id": "EXAMPLE_CONTIG_ID",
+>>>>>>> feat/agent-router-typed
                 "start_coordinate": 15234,
                 "end_coordinate": 29123,
                 "gene_ids": ["gene:scaffold_1_001", "gene:scaffold_1_002", "gene:scaffold_1_003"],

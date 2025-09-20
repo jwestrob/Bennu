@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Genomic Questions Gallery
 
 A comprehensive collection of tested queries with expected outputs and biological insights.
@@ -595,3 +596,11 @@ python -m src.cli ask "How do these genomes compare to their reference strains?"
 - **[Complex Analysis Tutorial](../tutorials/complex-analysis.md)**: Multi-step workflows
 - **[API Reference](../api-reference/python-api.md)**: Programmatic access
 - **[Architecture Overview](../architecture/overview.md)**: System design details
+=======
+# Question Gallery
+
+- “Find neighborhoods around seed proteins with PFAM PF00005; show degrees and flanking genes.”
+- “Which KEGG pathways are implicated by KOs K00001 and K00128 in top genomes?”
+- “List BGCs co-located with CAZymes of family GH13; provide loci examples.”
+
+>>>>>>> feat/agent-router-typed

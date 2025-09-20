@@ -16,6 +16,13 @@ conda env create -f env/environment.yml
 conda activate genome-kg
 ```
 
+If your global conda config does not prioritize conda-forge, set it once to avoid ABI issues with compiled packages like `fisher`:
+
+```bash
+conda config --add channels conda-forge
+conda config --set channel_priority strict
+```
+
 ### 2. Install Bioinformatics Tools
 
 The following tools need to be installed separately:
@@ -23,6 +30,12 @@ The following tools need to be installed separately:
 - **quast**: `brew install quast` or install from source
 - **prodigal**: `brew install prodigal` or install from source  
 - **dfast_qc**: Install from source (already done in your setup)
+- **mash**: `conda install -c bioconda mash` (recommended in the same conda env)
+- **skani**: `conda install -c bioconda skani` (optional taxonomy tool; included in env)
+- **minced**: CRISPR array detector (included in env)
+- **dbcan**: Bioconda package that provides the `run_dbcan` CLI (included in env)
+  
+Note on compiled Python packages (fisher): this environment pins `numpy<2` and installs `fisher` from conda-forge to keep the NumPy C-API ABI stable. Avoid `pip install fisher` inside this env; prefer `conda install -c conda-forge fisher`.
 
 ### 3. Verify Installation
 
@@ -37,6 +50,10 @@ python -c "import pandas, numpy, rdflib, pyhmmer, Bio; print('Python packages OK
 which quast.py
 which prodigal
 which dfast_qc
+which mash
+which skani
+which minced
+which run_dbcan
 ```
 
 ## Docker Deployment

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python API Reference
 
 Comprehensive reference for programmatic access to the genomic AI platform.
@@ -807,3 +808,30 @@ async def shutdown_event():
 - **[CLI Commands](cli-commands.md)**: Command-line interface reference
 - **[Basic Queries Tutorial](../tutorials/basic-queries.md)**: Learn query patterns
 - **[Architecture Overview](../architecture/overview.md)**: System design details
+=======
+# Python API
+
+Recommended import path:
+
+```
+from src.llm.rag_system.core import GenomicRAG
+```
+
+The legacy shim `src.llm.rag_system` remains for backward compatibility but emits a deprecation warning on import.
+
+## Quick Example
+
+```
+from src.llm.rag_system.core import GenomicRAG
+
+rag = GenomicRAG()
+answer = rag.answer(
+    question="List genes flanking proteins with PFAM PF00005 in top 3 genomes",
+    options={"output_profile": "summary"}
+)
+print(answer.text)
+```
+
+See Agents → Planner Guidance for how operators are scheduled and validated.
+
+>>>>>>> feat/agent-router-typed

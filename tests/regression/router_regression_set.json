@@ -1,0 +1,81 @@
+[
+  {
+    "prompt": "find operon boundaries on contig A",
+    "expect": {
+      "stage": "A",
+      "tool": "whole_genome_reader"
+    }
+  },
+  {
+    "prompt": "show protein:ABC123",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "protein_by_id"
+    }
+  },
+  {
+    "prompt": "list K20469 proteins",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "proteins_with_ko"
+    }
+  },
+  {
+    "prompt": "genes on contig:contig_42",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "genes_on_contig"
+    }
+  },
+  {
+    "prompt": "proteins in map00500",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "pathway_membership"
+    }
+  },
+  {
+    "prompt": "list proteins from genome:PLM0_123",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "proteins_by_genome"
+    }
+  },
+  {
+    "prompt": "find GH13 family members",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "cazy_family"
+    }
+  },
+  {
+    "prompt": "genes on contig:ctg1",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "genes_on_contig"
+    }
+  },
+  {
+    "prompt": "proteins with PF00001",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "proteins_with_pfam"
+    }
+  },
+  {
+    "prompt": "list proteins in map00010",
+    "expect": {
+      "stage": "B",
+      "tool": "database_query",
+      "template": "pathway_membership"
+    }
+  }
+]

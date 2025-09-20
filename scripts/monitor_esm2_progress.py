@@ -9,7 +9,7 @@ import json
 import h5py
 from datetime import datetime, timedelta
 
-def monitor_progress(output_dir: Path = Path("data/stage06_esm2")):
+def monitor_progress(output_dir: Path = Path("data/stage08_esm2")):
     """Monitor ESM2 embedding generation progress."""
     
     print("🔍 ESM2 Embedding Progress Monitor")
@@ -103,7 +103,7 @@ def monitor_progress(output_dir: Path = Path("data/stage06_esm2")):
 if __name__ == "__main__":
     import sys
     
-    output_dir = Path("data/stage06_esm2")
+    output_dir = Path("data/stage08_esm2")
     if len(sys.argv) > 1:
         output_dir = Path(sys.argv[1])
     

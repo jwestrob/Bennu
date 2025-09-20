@@ -5,8 +5,15 @@ Restored from backup with modular organization.
 """
 
 import logging
+<<<<<<< HEAD
 from typing import List, Dict, Any, Optional
 import asyncio
+=======
+import re
+from typing import List, Dict, Any, Optional, Set
+import os
+import json
+>>>>>>> feat/agent-router-typed
 
 try:
     import dspy
@@ -23,6 +30,7 @@ except ImportError:
     logging.warning("DSPy not available - install dsp-ml package")
 
 from ..config import LLMConfig
+<<<<<<< HEAD
 from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
 from .dspy_signatures import NEO4J_SCHEMA
 from .utils import setup_debug_logging, GenomicContext
@@ -38,6 +46,42 @@ from .policy_engine import get_policy_engine
 from .genome_context_extractor import GenomeContextExtractor
 from .query_validator import QueryValidator
 # Old genome_selector.py replaced by unified genome_selection.py
+=======
+from ..lm_factory import make_lm
+from ..query_processor import Neo4jQueryProcessor, LanceDBQueryProcessor, HybridQueryProcessor
+from .dspy_signatures import NEO4J_SCHEMA
+from ..options.router import parse_macro_intent
+from .utils import setup_debug_logging, GenomicContext
+from .log_formatter import setup_enhanced_logging
+from .dspy_signatures import PlannerAgent, QueryClassifier, ContextRetriever, GenomicAnswerer
+# Legacy TaskGraph types gated behind flag to enable quarantine without breakage
+if os.getenv("AGENT_ENABLE_LEGACY_TASKGRAPH", "0") == "1":
+    try:
+        from .task_management import TaskGraph, Task, TaskType, TaskStatus  # type: ignore
+    except Exception:  # pragma: no cover
+        TaskGraph = Task = TaskType = TaskStatus = None  # type: ignore
+else:
+    TaskGraph = Task = TaskType = TaskStatus = None  # type: ignore
+from .external_tools import AVAILABLE_TOOLS
+from .intelligent_routing import IntelligentRouter
+from .genome_selection import UnifiedGenomeSelector
+from ..context_compression import ContextCompressor
+from .memory import NoteKeeper
+from .policy_engine import get_policy_engine
+from .genome_context_extractor import GenomeContextExtractor
+from ..mfp.operators import builtin as _mfp_builtin  # noqa: F401  # register builtins
+from ..mfp.operators import catalog_search as _mfp_catalog_search  # noqa: F401  # register catalog search ops
+from ..mfp.operators import planning_utils as _mfp_planning_utils  # noqa: F401  # register planning utility ops
+from ..mfp.planning.composites import COMPOSITE_EXPANDERS, planner_catalog_overlay
+from ..mfp.operators.base import operator_catalog, OperatorContext
+from ..mfp.executor import execute_plan
+from .query_validator import QueryValidator
+# Old genome_selector.py replaced by unified genome_selection.py
+from .router import get_router
+from .agent.tools.validate import validate_toolcall
+from .tracing import get_tracer
+from .context.scope import GenomeScope
+>>>>>>> feat/agent-router-typed
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +109,11 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         
         # Initialize new intelligent components
         self.intelligent_router = IntelligentRouter()
+<<<<<<< HEAD
+=======
+        self.router = get_router()
+        self.tracer = get_tracer()
+>>>>>>> feat/agent-router-typed
         self.genome_selector = UnifiedGenomeSelector(self.neo4j_processor)
         self.context_compressor = ContextCompressor()
         self.genome_context_extractor = GenomeContextExtractor()
@@ -75,8 +124,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         self.note_keeper = NoteKeeper() if enable_memory else None
         self.progressive_synthesizer = None  # Will be initialized when needed
         
+<<<<<<< HEAD
         # Initialize model allocation system
         self.model_allocator = get_model_allocator()
+=======
+        # Manual per-step model selection; legacy allocator removed
+>>>>>>> feat/agent-router-typed
         
         # Initialize policy engine
         self.policy_engine = get_policy_engine()
@@ -112,11 +165,16 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         logger.info(f"🔥 Model: {config.llm_model} ({config.model_mode} mode)")
     
     def _configure_dspy(self):
+<<<<<<< HEAD
         """Configure DSPy with model allocation system."""
+=======
+        """Minimal DSPy env setup. No global LM, no allocation, no max_tokens."""
+>>>>>>> feat/agent-router-typed
         if not DSPY_AVAILABLE:
             return
             
         try:
+<<<<<<< HEAD
             # Configure based on available API keys
             api_key = self.config.get_api_key()
             
@@ -177,11 +235,38 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 dspy.settings.configure(lm=lm)
                 logger.info(f"🎯 DSPy configured with Anthropic model: {model_string}")
                 
+=======
+            # Quiet noisy external loggers around API calls unless explicitly enabled
+            try:
+                import logging as _lg, os as _os
+                # Quieten noisy deps
+                _lg.getLogger("LiteLLM").setLevel(_lg.CRITICAL)
+                _lg.getLogger("litellm").setLevel(_lg.CRITICAL)
+                _lg.getLogger("litellm.proxy").setLevel(_lg.CRITICAL)
+                _lg.getLogger("httpx").setLevel(_lg.WARNING)
+                _lg.getLogger("dspy.adapters.json_adapter").setLevel(_lg.ERROR)
+                # Disable LiteLLM standard/cold storage logging to avoid atexit errors
+                _os.environ.setdefault('LITELLM_LOG', 'CRITICAL')
+                _os.environ.setdefault('LITELLM_LOGGING', 'False')
+                _os.environ.setdefault('LITELLM_PROXY_LOGGING', 'False')
+                _os.environ.setdefault('LITELLM_DISABLE_COLD_STORAGE', '1')
+                _os.environ.setdefault('LITELLM_DISABLE_STANDARD_LOGGING', '1')
+            except Exception:
+                pass
+            # Configure API keys only (no LM setup)
+            api_key = self.config.get_api_key()
+            import os as _os
+            if self.config.llm_provider == "openai" and api_key:
+                _os.environ['OPENAI_API_KEY'] = api_key
+            elif self.config.llm_provider == "anthropic" and api_key:
+                _os.environ['ANTHROPIC_API_KEY'] = api_key
+>>>>>>> feat/agent-router-typed
             else:
                 logger.warning("No LLM API key configured for DSPy")
                 
         except Exception as e:
             logger.error(f"Failed to configure DSPy: {e}")
+<<<<<<< HEAD
             
             # Fallback to original configuration
             try:
@@ -196,6 +281,10 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     logger.info(f"🔄 DSPy configured with fallback model: {model_string}")
             except Exception as fallback_error:
                 logger.error(f"Fallback DSPy configuration also failed: {fallback_error}")
+=======
+            # No global fallback LM
+            pass
+>>>>>>> feat/agent-router-typed
     
     def _run(self, task_name: str, signature_cls, **kwargs):
         """
@@ -205,6 +294,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         def _call(module):
             return module(**kwargs)
         
+<<<<<<< HEAD
         return self.model_allocator.create_context_managed_call(
             task_name=task_name,
             signature_class=signature_cls,
@@ -212,6 +302,17 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             query=kwargs.get("question", "") or kwargs.get("user_query", ""),
             task_context=kwargs.get("task_context", "")
         )
+=======
+        try:
+            import dspy
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(signature_cls)
+            with dspy.context(lm=lm):
+                return _call(module)
+        except Exception as e:
+            logger.error(f"_run failed: {e}")
+            return None
+>>>>>>> feat/agent-router-typed
     
     def health_check(self) -> Dict[str, bool]:
         """Check health of all system components."""
@@ -249,6 +350,13 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
         """
         try:
             console.print(f"🧬 [bold blue]Processing question:[/bold blue] {question}")
+<<<<<<< HEAD
+=======
+            try:
+                self.tracer.emit("pipeline.start", {"question": question})
+            except Exception:
+                pass
+>>>>>>> feat/agent-router-typed
             
             if not DSPY_AVAILABLE:
                 return {
@@ -259,15 +367,1211 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                     "error": "Missing dependencies"
                 }
             
+<<<<<<< HEAD
             # STEP 1: Let the LLM decide execution strategy directly
             console.print("🤖 [bold]Using LLM-based execution planning[/bold]")
             
             # Use model allocation for planning (o3 for complex planning tasks)
+=======
+            # STEP 0A: Agent-designed Macro Plan (operator catalog → plan → MFP executor)
+            try:
+                if getattr(self.config, 'FAST_PATH_ENABLED', True) and getattr(self.config, 'USE_MFP_PLANNER', True):
+                    from .dspy_signatures import MacroPlannerSignature
+                    logger.info("🧭 MacroPlanner: proposing operator plan")
+                    # Light instrumentation: expose operator catalog size and key operators
+                    try:
+                        # Show only composites to the planner and in logs
+                        oc = planner_catalog_overlay()
+                        op_names = [o.get("name") for o in oc.get("operators", [])]
+                        logger.info("🧭 Planner-visible operators: %d (examples: %s)", len(op_names), ", ".join(op_names[:5]))
+                    except Exception:
+                        pass
+                    # Do NOT include large KO/PFAM reference blobs in planner context by default.
+                    # We rely on local catalog search operators instead of stuffing catalogs into prompts.
+                    ko_ref = ""
+                    pf_ref = ""
+                    if os.getenv('INCLUDE_REFERENCE_IN_PLANNER') in ("1", "true", "True"):
+                        # Optional, user-forced inclusion with optional caps
+                        try:
+                            import csv  # noqa: F401
+                            _ko_max = os.getenv('KO_REFERENCE_MAX_LINES')
+                            ko_max_lines = int(_ko_max) if _ko_max not in (None, '', 'none', 'all') else None
+                        except Exception:
+                            ko_max_lines = None
+                        try:
+                            _pf_max = os.getenv('PFAM_REFERENCE_MAX_LINES')
+                            pf_max_lines = int(_pf_max) if _pf_max not in (None, '', 'none', 'all') else None
+                        except Exception:
+                            pf_max_lines = None
+                        try:
+                            # Local small loaders to avoid imports when unused
+                            def _ld_ko(max_lines=None):
+                                import csv
+                                path = os.path.join(os.getcwd(), 'data', 'reference', 'ko_list')
+                                if not os.path.exists(path):
+                                    return ""
+                                lines = []
+                                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    sample = f.read(4096)
+                                    f.seek(0)
+                                    try:
+                                        dialect = csv.Sniffer().sniff(sample)
+                                    except Exception:
+                                        dialect = None
+                                    if dialect:
+                                        reader = csv.DictReader(f, dialect=dialect)
+                                        cols = {k.lower(): k for k in (reader.fieldnames or [])}
+                                        for i, row in enumerate(reader):
+                                            if max_lines is not None and i >= max_lines:
+                                                break
+                                            knum = (row.get(cols.get('knum', ''), '') or row.get(cols.get('ko', ''), '')).strip()
+                                            sdef = (row.get(cols.get('simplified_definition', ''), '') or row.get(cols.get('definition', ''), '')).strip()
+                                            if knum and sdef:
+                                                lines.append(f"{knum}: {sdef}")
+                                    else:
+                                        for i, raw in enumerate(f):
+                                            if max_lines is not None and i >= max_lines:
+                                                break
+                                            raw = raw.strip()
+                                            if not raw:
+                                                continue
+                                            parts = raw.split('\t') if '\t' in raw else raw.split(None, 1)
+                                            knum = parts[0].strip() if parts else ''
+                                            defin = parts[1].strip() if len(parts) > 1 else ''
+                                            if knum and defin and (knum.startswith('K') or knum.lower().startswith('ko:')):
+                                                lines.append(f"{knum}: {defin}")
+                                return "\n".join(lines)
+                            def _ld_pfam(max_lines=None):
+                                import csv
+                                path = os.path.join(os.getcwd(), 'data', 'reference', 'pfam_id_desc.tsv')
+                                if not os.path.exists(path):
+                                    return ""
+                                lines = []
+                                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    reader = csv.reader(f, delimiter='\t')
+                                    for i, row in enumerate(reader):
+                                        if max_lines is not None and i >= max_lines:
+                                            break
+                                        if not row:
+                                            continue
+                                        pfid = (row[0] if len(row) > 0 else '').strip()
+                                        short = (row[1] if len(row) > 1 else '').strip()
+                                        desc = (row[2] if len(row) > 2 else '').strip()
+                                        if pfid and (short or desc):
+                                            if short and desc and short not in desc:
+                                                lines.append(f"{pfid}: {short}; {desc}")
+                                            elif short and not desc:
+                                                lines.append(f"{pfid}: {short}")
+                                            else:
+                                                lines.append(f"{pfid}: {desc}")
+                                return "\n".join(lines)
+                            ko_ref = _ld_ko(ko_max_lines)
+                            pf_ref = _ld_pfam(pf_max_lines)
+                        except Exception:
+                            ko_ref = pf_ref = ""
+                    def _db_templates_catalog() -> dict:
+                        # Expose a minimal catalog of named templates and slots to discourage inventing names
+                        # Hide templates that are redundant/brittle for keyword search on this dataset (e.g., kofam_search relies on KO descriptions not present in the graph)
+                        from ..kg.cypher_templates import registry as _tpl
+                        HIDE = {"kofam_search", "pfam_search"}
+                        out = {"templates": []}
+                        for name, spec in _tpl.SPECS.items():
+                            if name in HIDE:
+                                continue
+                            try:
+                                out["templates"].append({
+                                    "name": name,
+                                    "required": list((spec.required or {}).keys()),
+                                    "optional": list((spec.optional or {}).keys()),
+                                    "category": getattr(spec, 'category', 'general'),
+                                })
+                            except Exception:
+                                continue
+                        return out
+
+                    def _build_dataset_context() -> dict:
+                        ctx: dict = {
+                            'genome_count': 0,
+                            'genome_ids_sample': [],
+                            'file_count': 0,
+                            'file_examples': [],
+                            'dataset_id': '',
+                        }
+                        # Try DB first
+                        try:
+                            if self.neo4j_processor and self.neo4j_processor.driver:
+                                with self.neo4j_processor.driver.session() as s:
+                                    rows = list(s.run("MATCH (g:Genome) RETURN g.id AS id ORDER BY g.id"))
+                                    gids = [str(r['id']) for r in rows if r and r.get('id')]
+                                    ctx['genome_count'] = len(gids)
+                                    ctx['genome_ids_sample'] = gids[:500]
+                        except Exception:
+                            pass
+                        # Fallback to CSV if empty
+                        try:
+                            if ctx['genome_count'] == 0:
+                                import csv
+                                p = os.path.join('data','stage07_kg','csv','genomes.csv')
+                                if os.path.exists(p):
+                                    with open(p, 'r', encoding='utf-8') as f:
+                                        rdr = csv.DictReader(f)
+                                        gids = [row.get('id:ID') or row.get('id') for row in rdr]
+                                        gids = [g for g in gids if g]
+                                        ctx['genome_count'] = len(gids)
+                                        ctx['genome_ids_sample'] = gids[:500]
+                        except Exception:
+                            pass
+                        # File inventory (best effort): stage00_prepared or data/raw
+                        try:
+                            files = []
+                            for root in ('data/stage00_prepared','data/raw'):
+                                if os.path.isdir(root):
+                                    for name in os.listdir(root):
+                                        if name.lower().endswith(('.fna','.fa','.fasta','.fnn','.faa')):
+                                            files.append(os.path.join(root, name))
+                            ctx['file_count'] = len(files)
+                            ctx['file_examples'] = files[:20]
+                        except Exception:
+                            pass
+                        # Dataset id heuristic: from cwd folder name or genomes.csv
+                        try:
+                            ctx['dataset_id'] = os.path.basename(os.getcwd())
+                        except Exception:
+                            ctx['dataset_id'] = ''
+                        # Persist alongside session notes for transparency
+                        try:
+                            if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                sdir = self.note_keeper.synthesis_notes_path
+                                os.makedirs(sdir, exist_ok=True)
+                                with open(os.path.join(sdir, 'dataset_context.json'), 'w', encoding='utf-8') as f_dc:
+                                    json.dump(ctx, f_dc, indent=2)
+                        except Exception:
+                            pass
+                        return ctx
+
+                    def planner_call_inputs():
+                        include_similarity = False
+                        intent_for_planner = None
+                        try:
+                            intent_for_planner = parse_macro_intent(question)
+                            ldb_ob = getattr(getattr(intent_for_planner, 'obligations', None), 'lancedb_knn', None)
+                            include_similarity = bool(ldb_ob and getattr(ldb_ob, 'required', False))
+                        except Exception:
+                            intent_for_planner = None
+                            include_similarity = False
+                        if include_similarity and not getattr(self, 'lancedb_processor', None):
+                            include_similarity = False
+
+                        hard_constraints = (
+                            "HARD CONSTRAINTS:\n"
+                            "- If you include NeighborhoodContext, you MUST provide explicit seeds.\n"
+                            "  Provide EITHER inputs.discovered_proteins referencing a bound rowset,\n"
+                            "  OR params.protein_ids, OR params.seed_pfam_ids/seed_ko_ids.\n"
+                            "- Prefer chaining identifiers via operator inputs, not guessing.\n"
+                            "  Example: SearchPfamCatalogFuzzy → AnnotationDiscovery (rowset) with inputs.pfam_ids=pfam_ids → bind → NeighborhoodContext with inputs.discovered_proteins=<binding>.\n"
+                            "- Use AnnotationDiscovery.inputs.pfam_ids/ko_ids to pass IDs from prior steps; do not hard-code IDs if you have them from catalog search.\n"
+                            "- AnnotationDiscovery MUST set params.keyword (or params.q).\n"
+                            "  You may ALSO bind ID lists via inputs (e.g., inputs:{'pfam_ids':'pfam_ids'} or inputs:{'ko_ids':'ko_ids'}) to focus rowsets, but do not omit keyword.\n"
+                            "  Do NOT call AnnotationDiscovery with only formatting params (output_profile/group_by/fields) — that yields empty results.\n"
+                            "- If a catalog search step is present, bind its ID outputs and, if relevant, pass them via inputs into AnnotationDiscovery; do not assume implicit availability.\n"
+                            "- Keyword hygiene: When the user asks for context around specific genes/subunits/components, prefer direct subunit terms and concise synonyms; avoid broad class tokens and hyphenated 'like' analog terms unless the user explicitly requests exploratory breadth. Limit synonyms to a small number (e.g., ≤2) per theme.\n"
+                            "- Quantity discipline: For gene/subunit context, keep PFAM catalog probes small — set FeatureDiscovery.limits.top_k ≈ 3–8 (default PFAM top_n=5). Use larger values only for broad capability surveys.\n"
+                            "\nINTENT HINTS (operator bias):\n"
+                            "- neighborhood|context|flanking|operon|adjacent → prefer GeneContext\n"
+                            "- pathways|completeness|KEGG → prefer FunctionalProfile (include=['pathways'])\n"
+                            "- CAZy|cazyme|BGC|biosynthetic → prefer FunctionalProfile (include=['cazy','bgc'])\n"
+                            "- For counts/top N/distribution questions within CAZy, set cazy_output='global_counts' and avoid rowset expansion.\n"
+                            "- evidence|follow-up|sufficient → prefer EvidenceAndNext\n"
+                            "- PFAM|KO|search|discover|find → prefer FeatureDiscovery\n"
+                        )
+                        # Restrict planner-visible catalog to composites only
+                        planner_catalog = planner_catalog_overlay(include_similarity=include_similarity)
+                        dbtpl_catalog = _db_templates_catalog()
+                        dataset_ctx = _build_dataset_context()
+                        dbtpl_rules = (
+                            "DatasetContext & Scoping: default genome_ids to dataset_context.genome_ids_sample (≤500) when absent; avoid global queries unless explicitly intended. "
+                            "DB Template Slot‑Chaining: consult db_templates_catalog for required slots and types; list slots require JSON arrays of canonical IDs (['Kxxxxx'], ['PFxxxxx']); "
+                            "to chain from a prior DBTemplateCall, bind rows and map slots (inputs.rows + slots mapping, e.g., {'kos':{'from':'rows','field':'ko_id'}}); if upstream is empty, do not call downstream templates with placeholders."
+                        )
+                        return dict(
+                            question=question,
+                            operator_catalog=json.dumps(planner_catalog),
+                            db_templates_catalog=json.dumps(dbtpl_catalog),
+                            dataset_context=json.dumps(dataset_ctx),
+                            db_template_rules=dbtpl_rules,
+                            constraints=hard_constraints,
+                            ko_reference=ko_ref,
+                            pfam_reference=pf_ref,
+                        )
+
+                    # Backward-compat + macro expansion helpers (planner output → executor input)
+                    PRIMITIVE_TO_COMPOSITE = {
+                        "SearchPfamCatalogFuzzy": "FeatureDiscovery",
+                        "SearchKoCatalogFuzzy": "FeatureDiscovery",
+                        "ExtractIdsFromCatalogHits": "FeatureDiscovery",
+                        "QueryProteinsByIds": "FeatureDiscovery",
+                        "AnnotationDiscovery": "FeatureDiscovery",
+                        "CountByIdsPerGenome": "FeatureProfile",
+                        "NeighborhoodContext": "GeneContext",
+                        "PlanSimilaritySearch": "SimilaritySearch",
+                        "FetchPresentKOs": "PathwayProfile",
+                        "LoadKoPathwayTotals": "PathwayProfile",
+                        "ComputePathwayCompleteness": "PathwayProfile",
+                        "QueryCazymesByGenome": "ModuleProfile",
+                        "CountCazymeFamilies": "ModuleProfile",
+                        "QueryBGCsByGenome": "ModuleProfile",
+                        # EvidenceAndNext removed from planner toolset; keep primitives usable directly
+                    }
+
+                    def _rewrite_to_composites(plan_dict: dict) -> dict:
+                        try:
+                            steps_in = list(plan_dict.get('steps', []) or [])
+                        except Exception:
+                            return plan_dict
+                        rewritten: List[dict] = []
+                        for st in steps_in:
+                            name = (st or {}).get('op')
+                            comp = PRIMITIVE_TO_COMPOSITE.get(name)
+                            if comp:
+                                rewritten.append({"op": comp, "params": st.get("params", {})})
+                            else:
+                                rewritten.append(st)
+                        plan_dict['steps'] = rewritten
+                        return plan_dict
+
+                    def _expand_composites(plan_dict: dict, question_text: str) -> dict:
+                        try:
+                            steps_in = list(plan_dict.get('steps', []) or [])
+                        except Exception:
+                            return plan_dict
+                        expanded: List[dict] = []
+                        for st in steps_in:
+                            name = (st or {}).get('op')
+                            params = (st or {}).get('params') or {}
+                            if name in COMPOSITE_EXPANDERS:
+                                substeps = COMPOSITE_EXPANDERS[name](params, {"question": question_text})
+                                expanded.extend(substeps)
+                            else:
+                                expanded.append(st)
+                        # Note: do not inject hard-coded retrieval steps. If the plan lacks retrieval,
+                        # allow downstream validation/retry to handle it explicitly.
+                        plan_dict['steps'] = expanded
+                        return plan_dict
+
+                    # Planner model (manual allocation): default to gpt-5-high
+                    plan_res = None
+                    try:
+                        import dspy
+                        model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
+                        lm = make_lm(model_id, step="planner")
+                        module = dspy.Predict(MacroPlannerSignature)
+                        # Timing + effort visibility
+                        import time as _t
+                        _t0 = _t.time()
+                        with dspy.context(lm=lm):
+                            _pci = planner_call_inputs()
+                            try:
+                                # Persist full planner call inputs for debug
+                                if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                    sdir = self.note_keeper.synthesis_notes_path
+                                    os.makedirs(sdir, exist_ok=True)
+                                    # Decode operator_catalog if it's a JSON string for readability
+                                    _pci_dump = dict(_pci)
+                                    try:
+                                        if isinstance(_pci_dump.get('operator_catalog'), str) and _pci_dump['operator_catalog'].strip().startswith('{'):
+                                            _pci_dump['operator_catalog'] = json.loads(_pci_dump['operator_catalog'])
+                                    except Exception:
+                                        pass
+                                    # Persist the signature docstring/context used by the planner
+                                    try:
+                                        from .dspy_signatures import MacroPlannerSignature as _MPS
+                                        sig_text = (_MPS.__doc__ or '').strip()
+                                        with open(os.path.join(sdir, 'planner_signature.txt'), 'w', encoding='utf-8') as f_sig:
+                                            f_sig.write(sig_text)
+                                    except Exception as _sig_err:
+                                        logger.info(f"Planner signature save skipped: {_sig_err}")
+                                    with open(os.path.join(sdir, 'planner_call_inputs.json'), 'w', encoding='utf-8') as f_in:
+                                        json.dump(_pci_dump, f_in, indent=2)
+                            except Exception as _pci_err:
+                                logger.info(f"Planner call inputs save skipped: {_pci_err}")
+                            plan_res = module(**_pci)
+                        _ms = int((_t.time() - _t0) * 1000)
+                        try:
+                            # Best-effort effort extraction from alias
+                            from ..lm_factory import _extract_gpt5_effort as _eff
+                            eff = _eff(model_id) or 'n/a'
+                        except Exception:
+                            eff = 'n/a'
+                        logger.info(f"🕒 Planner latency: {_ms} ms (model={model_id}, effort={eff})")
+                    except Exception as _e:
+                        logger.warning(f"Planner call failed: {_e}")
+                    plan_text = getattr(plan_res, 'plan_json', '') if plan_res else ''
+                    # Persist raw planner output for debugging/inspection
+                    try:
+                        if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                            sdir = self.note_keeper.synthesis_notes_path
+                            os.makedirs(sdir, exist_ok=True)
+                            with open(os.path.join(sdir, 'planner_raw.txt'), 'w', encoding='utf-8') as f_pr:
+                                f_pr.write(str(plan_text) if plan_text is not None else '')
+                            # Also persist the planner-visible catalog overlay for full context
+                            try:
+                                cat = planner_catalog_overlay(include_similarity=include_similarity)
+                                with open(os.path.join(sdir, 'planner_catalog_overlay.json'), 'w', encoding='utf-8') as f_cat:
+                                    json.dump(cat, f_cat, indent=2)
+                            except Exception as _cat_err:
+                                logger.info(f"Planner catalog overlay save skipped: {_cat_err}")
+                    except Exception as _pr_err:
+                        logger.info(f"Planner raw save skipped: {_pr_err}")
+                    # Helper: extract first balanced JSON object from text
+                    def _extract_first_json_object(txt: str) -> str | None:
+                        if not isinstance(txt, str) or not txt:
+                            return None
+                        # Find first '{'
+                        try:
+                            start = txt.find('{')
+                            if start == -1:
+                                return None
+                            depth = 0
+                            in_str = False
+                            esc = False
+                            for i in range(start, len(txt)):
+                                ch = txt[i]
+                                if in_str:
+                                    if esc:
+                                        esc = False
+                                    elif ch == '\\':
+                                        esc = True
+                                    elif ch == '"':
+                                        in_str = False
+                                else:
+                                    if ch == '"':
+                                        in_str = True
+                                    elif ch == '{':
+                                        depth += 1
+                                    elif ch == '}':
+                                        depth -= 1
+                                        if depth == 0:
+                                            return txt[start:i+1]
+                            return None
+                        except Exception:
+                            return None
+
+                    plan = None
+                    if isinstance(plan_text, str) and plan_text.strip():
+                        candidate = plan_text.strip()
+                        # If it doesn't end cleanly, try to repair by extracting first JSON object
+                        if not candidate.startswith('{') or not candidate.endswith('}'):
+                            repaired = _extract_first_json_object(candidate)
+                        else:
+                            repaired = candidate
+                        try:
+                            if repaired:
+                                p = json.loads(repaired)
+                                try:
+                                    raw_ops = [st.get('op') for st in (p.get('steps') or [])]
+                                    logger.info("🧭 MacroPlanner proposed composites/primitives: %s", ", ".join([str(x) for x in raw_ops]))
+                                except Exception:
+                                    pass
+                                # Rewrite legacy primitives → composites, then expand composites → primitives
+                                p = _rewrite_to_composites(p)
+                                plan = _expand_composites(p, question)
+                                if repaired != candidate:
+                                    logger.info("🔧 Planner JSON repaired (trailing/preamble text ignored)")
+                        except Exception as _perr:
+                            logger.info(f"Planner JSON parse failed: {_perr}")
+                    if plan is not None:
+                        def _env_has_results(env_dict: Dict[str, Any]) -> bool:
+                            try:
+                                for k, v in (env_dict or {}).items():
+                                    if isinstance(v, list) and len(v) > 0:
+                                        return True
+                                    # Also consider bound dicts that wrap rows
+                                    if isinstance(v, dict):
+                                        for vv in v.values():
+                                            if isinstance(vv, list) and len(vv) > 0:
+                                                return True
+                                return False
+                            except Exception:
+                                return False
+
+                        def _collect_macro_raw_items(env_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+                            """Collect all macro-usable bindings with guardrails (caps/sampling).
+
+                            - Include any list[dict] rowsets (sample to cap), planner-produced items (type present), and small dicts as summaries.
+                            - Deduplicate discovered_proteins across bindings by (genome_id, protein_id).
+                            - Skip obvious debug/internal keys and huge scalars.
+                            """
+                            MAX_ROWS = 500
+                            MAX_BINDINGS = 50
+                            MAX_DICT_FIELDS = 200
+                            MAX_CELL_CHARS = 512
+
+                            items: List[Dict[str, Any]] = []
+                            seen_proteins: set[tuple[str, str]] = set()
+                            added = 0
+
+                            def _truncate_cell(val):
+                                try:
+                                    s = str(val)
+                                except Exception:
+                                    return val
+                                return (s[:MAX_CELL_CHARS] + '…') if len(s) > MAX_CELL_CHARS else s
+
+                            try:
+                                for k, v in (env_dict or {}).items():
+                                    if added >= MAX_BINDINGS:
+                                        break
+                                    if not k or k.startswith('__'):
+                                        continue
+                                    # Planner-produced structured item
+                                    if isinstance(v, dict) and isinstance(v.get('type'), str):
+                                        items.append(v)
+                                        added += 1
+                                        continue
+                                    # Rowsets: list of dicts
+                                    if isinstance(v, list) and v and all(isinstance(r, dict) for r in v):
+                                        rows = v
+                                        # Dedup discovered_proteins
+                                        if k == 'discovered_proteins':
+                                            filtered = []
+                                            dropped = 0
+                                            for r in rows:
+                                                gid = str(r.get('genome_id',''))
+                                                pid = str(r.get('protein_id',''))
+                                                sig = (gid, pid)
+                                                if sig in seen_proteins:
+                                                    dropped += 1
+                                                    continue
+                                                seen_proteins.add(sig)
+                                                filtered.append(r)
+                                            rows = filtered
+                                            if dropped:
+                                                logger.info(f"Context trim: dropped {dropped} duplicate discovered_proteins rows (binding='{k}')")
+                                        row_count = len(rows)
+                                        sample = rows[:MAX_ROWS]
+                                        # Truncate large string cells for safety
+                                        for r in sample:
+                                            for ck, cv in list(r.items()):
+                                                if isinstance(cv, str) and len(cv) > MAX_CELL_CHARS:
+                                                    r[ck] = _truncate_cell(cv)
+                                        items.append({'type': 'macro_result', 'name': k, 'rows': sample, 'row_count': row_count, 'sampled': row_count > MAX_ROWS})
+                                        added += 1
+                                        continue
+                                    # Dicts: include summaries or nested rowsets
+                                    if isinstance(v, dict):
+                                        # Common nested payloads, e.g., PresentKOsByGenome, CompletenessMatrix
+                                        extracted = False
+                                        for key, val in v.items():
+                                            if isinstance(val, list) and val and all(isinstance(r, dict) for r in val):
+                                                row_count = len(val)
+                                                sample = val[:MAX_ROWS]
+                                                items.append({'type': 'macro_result', 'name': f"{k}.{key}", 'rows': sample, 'row_count': row_count, 'sampled': row_count > MAX_ROWS})
+                                                added += 1
+                                                extracted = True
+                                                if added >= MAX_BINDINGS:
+                                                    break
+                                        if added >= MAX_BINDINGS:
+                                            break
+                                        if extracted:
+                                            continue
+                                        # Small dict summary
+                                        try:
+                                            keys = list(v.keys())
+                                            items.append({'type': 'macro_result', 'name': k, 'dict_summary': {'len': len(keys), 'keys_sample': keys[:min(len(keys), MAX_DICT_FIELDS)]}})
+                                            added += 1
+                                        except Exception:
+                                            pass
+                                        continue
+                                    # Scalars or other lists: skip or summarize length
+                                    if isinstance(v, list):
+                                        items.append({'type': 'macro_result', 'name': k, 'list_len': len(v)})
+                                        added += 1
+                                        continue
+                                    # Strings/numbers: skip huge scalars
+                                    if isinstance(v, (str, int, float)):
+                                        s = _truncate_cell(v)
+                                        items.append({'type': 'macro_result', 'name': k, 'value': s})
+                                        added += 1
+                                        continue
+                            except Exception:
+                                pass
+                            return items
+
+                        all_raw_items: List[Dict[str, Any]] = []
+                        combined_env: Dict[str, Any] = {}
+                        attempts = 0
+                        max_attempts = 2  # first pass + one retry
+
+                        while attempts < max_attempts:
+                            try:
+                                ops_list = [step.get("op") for step in plan.get("steps", [])]
+                                logger.info("🧭 MacroPlanner plan ops: %s", ", ".join([str(x) for x in ops_list]))
+                            except Exception:
+                                pass
+                            logger.info("🧭 MacroPlanner: executing %d steps (attempt %d/%d)", len(plan.get('steps', [])), attempts + 1, max_attempts)
+                            # Inject dataset_context for operator default scoping
+                            ds_ctx = {}
+                            try:
+                                # Reuse the builder above if available
+                                ds_ctx = _build_dataset_context()
+                            except Exception:
+                                ds_ctx = {}
+                            ctx = OperatorContext(
+                                neo4j_driver=self.neo4j_processor.driver,
+                                project_root=str(getattr(self, 'project_root', '')),
+                                dataset_context=ds_ctx,
+                                lancedb=getattr(self, 'lancedb_processor', None),
+                            )
+                            env = execute_plan(plan, ctx)
+
+                            similarity_plans: List[Dict[str, Any]] = []
+                            plan_obj = env.get('SimilarityPlan')
+                            if isinstance(plan_obj, dict):
+                                similarity_plans.append(plan_obj)
+                            elif isinstance(plan_obj, list):
+                                for entry in plan_obj:
+                                    if isinstance(entry, dict):
+                                        similarity_plans.append(entry)
+                            if similarity_plans:
+                                try:
+                                    sim_payload, sim_macro = await self._fulfill_similarity_plans(similarity_plans)
+                                    if sim_payload:
+                                        env['SimilarityResults'] = sim_payload
+                                    if sim_macro:
+                                        env['SimilarityResultsMacro'] = sim_macro
+                                except Exception as _sim_err:
+                                    logger.info(f"Similarity plan execution skipped: {_sim_err}")
+
+                            # Merge environments (last write wins on same keys)
+                            try:
+                                combined_env.update(env)
+                            except Exception:
+                                combined_env = env
+                            # Collect raw items for this attempt
+                            attempt_items = _collect_macro_raw_items(env)
+                            all_raw_items.extend(attempt_items)
+                            # Add plan note for this attempt
+                            plan_note = {"type": "task_note", "task_id": f"mfp_plan_attempt_{attempts+1}", "description": "Macro plan executed (operators + params)", "observations": [], "key_findings": [], "quantitative_data": {"operators": [step.get("op") for step in plan.get("steps", [])], "plan": plan}, "cross_task_connections": []}
+                            all_raw_items.append(plan_note)
+                            # Sufficiency check
+                            if _env_has_results(env) or attempts == max_attempts - 1:
+                                break
+                            # Retry: re-plan and re-execute
+                            logger.info("🔁 MacroPlanner retry: insufficient evidence, attempting broader pass")
+                            def planner_call_retry(module):
+                                retry_constraints = (
+                                    "ALLOW_KEYWORD_DISCOVERY=1\n" \
+                                    "HARD CONSTRAINTS:\n"
+                                    "- If you include NeighborhoodContext, you MUST provide explicit seeds (inputs.discovered_proteins OR params.protein_ids OR params.seed_pfam_ids/seed_ko_ids).\n"
+                                    "- Chain IDs via inputs (e.g., inputs.pfam_ids=pfam_ids) for rowset steps, then bind and pass discovered_proteins to NeighborhoodContext.\n"
+                                )
+                                return module(
+                                    question=question,
+                                    operator_catalog=json.dumps(operator_catalog()),
+                                    constraints=retry_constraints,
+                                    ko_reference=ko_ref,
+                                    pfam_reference=pf_ref,
+                                )
+                            try:
+                                import dspy
+                                model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
+                                lm = make_lm(model_id, step="planner")
+                                module = dspy.Predict(MacroPlannerSignature)
+                                import time as _t
+                                _t0 = _t.time()
+                                with dspy.context(lm=lm):
+                                    plan_res2 = module(
+                                        question=question,
+                                        operator_catalog=json.dumps(planner_catalog_overlay(include_similarity=include_similarity)),
+                                        constraints="allow_keyword_discovery=1",
+                                        ko_reference=ko_ref,
+                                        pfam_reference=pf_ref,
+                                    )
+                                _ms = int((_t.time() - _t0) * 1000)
+                                try:
+                                    from ..lm_factory import _extract_gpt5_effort as _eff
+                                    eff = _eff(model_id) or 'n/a'
+                                except Exception:
+                                    eff = 'n/a'
+                                logger.info(f"🕒 Planner retry latency: {_ms} ms (model={model_id}, effort={eff})")
+                            except Exception as _e3:
+                                logger.warning(f"Planner retry failed: {_e3}")
+                                plan_res2 = None
+                            plan2_text = getattr(plan_res2, 'plan_json', '') if plan_res2 else ''
+                            # Persist raw planner RETRY output for debugging
+                            try:
+                                if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                    sdir = self.note_keeper.synthesis_notes_path
+                                    os.makedirs(sdir, exist_ok=True)
+                                    with open(os.path.join(sdir, 'planner_raw_retry.txt'), 'w', encoding='utf-8') as f_pr2:
+                                        f_pr2.write(str(plan2_text) if plan2_text is not None else '')
+                            except Exception as _pr2_err:
+                                logger.info(f"Planner raw retry save skipped: {_pr2_err}")
+                            # Attempt JSON repair for retry output as well
+                            if isinstance(plan2_text, str) and plan2_text.strip():
+                                candidate2 = plan2_text.strip()
+                                if not candidate2.startswith('{') or not candidate2.endswith('}'):
+                                    repaired2 = _extract_first_json_object(candidate2)
+                                else:
+                                    repaired2 = candidate2
+                                try:
+                                    if repaired2:
+                                        p2 = json.loads(repaired2)
+                                        p2 = _rewrite_to_composites(p2)
+                                        plan = _expand_composites(p2, question)
+                                        if repaired2 != candidate2:
+                                            logger.info("🔧 Planner JSON (retry) repaired (trailing/preamble text ignored)")
+                                except Exception:
+                                    pass
+                            attempts += 1
+                            if attempts >= max_attempts:
+                                break
+                        # Follow-up proposals (if any) should come from planned operators,
+                        # not decided here. The synthesizer is invoked only at the end.
+
+                        # Always synthesize at the end (with whatever we gathered)
+                        # ProgressiveSynthesizer is deprecated here; final synthesis handled later
+                        # Debug: summarize raw items sizes to pinpoint context inflation sources
+                        try:
+                            summary = []
+                            for it in all_raw_items:
+                                if isinstance(it, dict) and it.get('type') == 'macro_result':
+                                    name = it.get('name','')
+                                    rows = it.get('rows') or []
+                                    summary.append((name, len(rows)))
+                            if summary:
+                                summary.sort(key=lambda x: x[1], reverse=True)
+                                top = ", ".join([f"{n}:{c}" for n,c in summary[:10]])
+                                total_rows = sum(c for _, c in summary)
+                                logger.debug(f"Context debug: {len(summary)} result lists, total_rows={total_rows}. Top lists: {top}")
+                        except Exception:
+                            pass
+
+                        # Phase 0 instrumentation: persist full MacroPlanner environment
+                        try:
+                            if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                sdir = self.note_keeper.synthesis_notes_path
+                                os.makedirs(sdir, exist_ok=True)
+                                with open(os.path.join(sdir, 'all_env.json'), 'w', encoding='utf-8') as f_env:
+                                    json.dump(combined_env, f_env, indent=2, default=str)
+                                try:
+                                    tool_calls = combined_env.get('__tool_calls')
+                                    if tool_calls:
+                                        with open(os.path.join(sdir, 'tool_calls.json'), 'w', encoding='utf-8') as f_tc:
+                                            json.dump(tool_calls, f_tc, indent=2, default=str)
+                                except Exception as _tc_err:
+                                    logger.info(f"Tool calls save skipped: {_tc_err}")
+                        except Exception as _env_save_err:
+                            logger.info(f"MacroPlanner env save skipped: {_env_save_err}")
+
+                        # Write analysis payload (skeleton) and matrices to session folder for downstream compute/viz
+                        try:
+                            if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                                import csv as _csv
+                                _sid_dir = self.note_keeper.session_path
+                                os.makedirs(_sid_dir, exist_ok=True)
+                                _mat_dir = os.path.join(_sid_dir, 'matrices')
+                                os.makedirs(_mat_dir, exist_ok=True)
+                                _plots_dir = os.path.join(_sid_dir, 'plots')
+                                os.makedirs(_plots_dir, exist_ok=True)
+                                # Build feature_profile section
+                                fp = {}
+                                if isinstance(combined_env.get('PerGenomeFeatureCounts'), list):
+                                    fp['per_genome_counts'] = combined_env.get('PerGenomeFeatureCounts')
+                                if isinstance(combined_env.get('FeatureProfileSummary'), dict):
+                                    fp['summary'] = combined_env.get('FeatureProfileSummary')
+                                if isinstance(combined_env.get('PerGenomeTopMatrix'), dict):
+                                    fp['per_genome_top_matrix'] = combined_env.get('PerGenomeTopMatrix')
+                                    # Emit CSVs for matrices if present
+                                    try:
+                                        mt = combined_env.get('PerGenomeTopMatrix') or {}
+                                        order = (mt.get('feature_order') or {})
+                                        # PFAM matrix
+                                        pf_rows = mt.get('pfam') or []
+                                        pf_cols = order.get('pfam') or []
+                                        if pf_rows and pf_cols:
+                                            pf_path = os.path.join(_mat_dir, 'per_genome_top_pfam.csv')
+                                            with open(pf_path, 'w', newline='', encoding='utf-8') as f:
+                                                w = _csv.writer(f)
+                                                w.writerow(['genome_id'] + list(pf_cols))
+                                                for r in pf_rows:
+                                                    row = [r.get('genome_id')] + [int(r.get(c, 0)) for c in pf_cols]
+                                                    w.writerow(row)
+                                    except Exception as _pfw:
+                                        logger.info(f"Matrix PFAM CSV write skipped: {_pfw}")
+                                    try:
+                                        mt = combined_env.get('PerGenomeTopMatrix') or {}
+                                        order = (mt.get('feature_order') or {})
+                                        ko_rows = mt.get('ko') or []
+                                        ko_cols = order.get('ko') or []
+                                        if ko_rows and ko_cols:
+                                            ko_path = os.path.join(_mat_dir, 'per_genome_top_ko.csv')
+                                            with open(ko_path, 'w', newline='', encoding='utf-8') as f:
+                                                w = _csv.writer(f)
+                                                w.writerow(['genome_id'] + list(ko_cols))
+                                                for r in ko_rows:
+                                                    row = [r.get('genome_id')] + [int(r.get(c, 0)) for c in ko_cols]
+                                                    w.writerow(row)
+                                    except Exception as _kow:
+                                        logger.info(f"Matrix KO CSV write skipped: {_kow}")
+                                # Build functional_profile section
+                                func = {}
+                                for key_src, key_dst in (
+                                    ('PresentKOsByGenome','present_kos_by_genome'),
+                                    ('CompletenessMatrix','completeness_matrix'),
+                                    ('CompletenessSummary','completeness_summary'),
+                                    ('CAZyRowsByGenome','cazy_rows'),
+                                    ('CazymeFamilyCounts','cazy_counts'),
+                                    ('BGCsByGenome','bgcs'),
+                                ):
+                                    if key_src in combined_env:
+                                        func[key_dst] = combined_env.get(key_src)
+                                # Write completeness matrix CSV if present
+                                try:
+                                    cm = combined_env.get('CompletenessMatrix') or []
+                                    if isinstance(cm, list) and cm:
+                                        cm_path = os.path.join(_mat_dir, 'pathway_completeness.csv')
+                                        cols = ['genome_id','pathway_id','pathway_name','present_kos','total_kos','completeness']
+                                        with open(cm_path, 'w', newline='', encoding='utf-8') as f:
+                                            w = _csv.DictWriter(f, fieldnames=cols)
+                                            w.writeheader()
+                                            for r in cm:
+                                                try:
+                                                    w.writerow({k: r.get(k) for k in cols})
+                                                except Exception:
+                                                    pass
+                                except Exception as _cmw:
+                                    logger.info(f"Completeness CSV write skipped: {_cmw}")
+
+                                # Dataset context
+                                try:
+                                    ds_ctx = _build_dataset_context()
+                                except Exception:
+                                    ds_ctx = {}
+
+                                payload = {
+                                    'question': question,
+                                    'dataset_context': ds_ctx,
+                                    'plan': plan,
+                                    'feature_profile': fp,
+                                    'functional_profile': func,
+                                    'provenance': combined_env.get('__tool_calls') or [],
+                                    'omitted': [],
+                                    'planner_decision': {
+                                        'run_code_interpreter': bool((plan or {}).get('run_code_interpreter', False))
+                                    },
+                                }
+                                with open(os.path.join(_sid_dir, 'analysis_payload.json'), 'w', encoding='utf-8') as f_pl:
+                                    json.dump(payload, f_pl, indent=2, default=str)
+                                logger.info("📝 Analysis payload written to session folder")
+                        except Exception as _ap_err:
+                            logger.info(f"Analysis payload save skipped: {_ap_err}")
+
+                        # Finalizer scaffold: CI mode acknowledgment (no-op)
+                        try:
+                            mode = getattr(self.config, 'CI_MODE', 'auto')
+                            # Decide whether to run CI: planner-controlled when CI_MODE=auto
+                            def _planner_wants_ci(plan_dict) -> bool:
+                                try:
+                                    return bool((plan_dict or {}).get('run_code_interpreter', False))
+                                except Exception:
+                                    return False
+                            planner_flag = _planner_wants_ci(plan)
+                            if mode == 'always':
+                                should_ci = True
+                            elif mode == 'never':
+                                should_ci = False
+                            else:
+                                # auto mode honors the planner decision; default False when absent
+                                should_ci = planner_flag
+                            if mode == 'never':
+                                logger.info("🧮 Finalizer (CI) mode: never — skipping code interpreter")
+                            elif not should_ci:
+                                logger.info("🧮 Finalizer (CI) mode: auto — conditions not met; skipping")
+                            else:
+                                # Health check
+                                try:
+                                    from .external_tools import check_code_interpreter_health, code_interpreter_tool
+                                    healthy = await check_code_interpreter_health(getattr(self.config, 'CODE_INTERPRETER_URL', 'http://localhost:8000'))  # type: ignore
+                                except Exception as _hc:
+                                    healthy = False
+                                    logger.info(f"CI health check failed: {_hc}")
+                                if not healthy:
+                                    logger.info("🧮 Code interpreter unavailable (service not running); skipping")
+                                    try:
+                                        console.print("⚠️ [dim]Finalizer: code interpreter unavailable; skipping[/dim]")
+                                    except Exception:
+                                        pass
+                                else:
+                                    # Build simple deterministic analysis code
+                                    try:
+                                        sid_dir = self.note_keeper.session_path if self.note_keeper else Path('data/session_notes/_unknown')
+                                        sid_value = self.note_keeper.session_id if self.note_keeper else '_unknown'
+                                    except Exception:
+                                        from pathlib import Path as _Path
+                                        sid_dir = _Path('data/session_notes/_unknown')
+                                        sid_value = '_unknown'
+                                    # Container-visible payload path (host data/ is mounted at /app/data)
+                                    host_payload = os.path.join(str(sid_dir), 'analysis_payload.json')
+                                    container_payload = os.path.join('/app', 'data', 'session_notes', sid_value, 'analysis_payload.json')
+                                    # Write plots into interpreter working dir (container); we will list them in report_v2
+                                    container_plots = '.'
+                                    from .finalizer import build_ci_code
+                                    code = build_ci_code(question, container_payload, container_plots)
+
+                                    # Paths already injected by build_ci_code; no replacements needed here
+                                    # Save the exact code sent to the interpreter for audit/debug
+                                    try:
+                                        code_path = os.path.join(str(sid_dir), 'ci_code.py')
+                                        with open(code_path, 'w', encoding='utf-8') as _cf:
+                                            _cf.write(code)
+                                        logger.info(f"📝 Saved CI code: {code_path}")
+                                    except Exception as _cse:
+                                        logger.info(f"CI code save skipped: {_cse}")
+                                    # Execute CI (and download artifacts to host plots folder)
+                                    session_id = self.note_keeper.session_id if self.note_keeper else 'session'
+                                    host_plots_dir = os.path.join(str(sid_dir), 'plots')
+                                    try:
+                                        console.print(f"🧮 Finalizer: calling code interpreter (model={getattr(self.config,'CI_MODEL','matplotlib')}, url={getattr(self.config,'CODE_INTERPRETER_URL','http://localhost:8000')})")
+                                    except Exception:
+                                        pass
+                                    # Defaults for CI context visible to reporter
+                                    ci_disp = None
+                                    ci_files: list[str] = []
+                                    ci_downloaded: list[str] = []
+                                    result = await code_interpreter_tool(code, session_id=session_id, timeout=int(getattr(self.config, 'timeout_seconds', 30)), download_dir=host_plots_dir)  # type: ignore
+                                    # Persist amended report (basic)
+                                    try:
+                                        disp = result.get('display_text') if isinstance(result, dict) else None
+                                        ci_disp = disp
+                                        stderr = None
+                                        try:
+                                            sd = (result or {}).get('structured_data') or []
+                                            if isinstance(sd, list) and sd:
+                                                stderr = (sd[0] or {}).get('stderr')
+                                        except Exception:
+                                            stderr = None
+                                        files = []
+                                        downloaded = []
+                                        try:
+                                            summ = (result or {}).get('summary') or {}
+                                            fc = summ.get('files_created') or []
+                                            if isinstance(fc, list):
+                                                files = fc
+                                            dl = summ.get('downloaded_files') or []
+                                            if isinstance(dl, list):
+                                                downloaded = dl
+                                        except Exception:
+                                            files = []
+                                        # expose to outer scope for reporter context
+                                        ci_files = list(files)
+                                        ci_downloaded = list(downloaded)
+                                        r2 = os.path.join(str(sid_dir), 'report_v2.md')
+                                        with open(r2, 'w', encoding='utf-8') as f:
+                                            f.write('# Amended Report (Code Analysis)\n\n')
+                                            f.write('## Code Interpreter Output\n\n')
+                                            if disp:
+                                                f.write('````\n'+disp+'\n````\n\n')
+                                            if stderr:
+                                                f.write('## Code Interpreter Stderr\n\n')
+                                                f.write('````\n'+stderr+'\n````\n\n')
+                                            if files:
+                                                f.write('## Generated Files (service working dir)\n')
+                                                for name in files:
+                                                    f.write(f'- {name}\n')
+                                            if downloaded:
+                                                f.write('\n## Downloaded Files (host)\n')
+                                                for path in downloaded:
+                                                    f.write(f'- {path}\n')
+                                        logger.info(f"📝 Amended report written: {r2}")
+                                        # Console summary
+                                        try:
+                                            if downloaded:
+                                                console.print(f"📈 [green]Downloaded {len(downloaded)} file(s) to[/green] {host_plots_dir}")
+                                            else:
+                                                console.print(f"ℹ️ [dim]No files downloaded; see 'Generated Files' in report_v2.md[/dim]")
+                                        except Exception:
+                                            pass
+                                    except Exception as _r2e:
+                                        logger.info(f"Amended report save skipped: {_r2e}")
+                        except Exception as _ci_err:
+                            logger.info(f"Finalizer (CI) skipped/failed: {_ci_err}")
+
+                        # Decide whether to bypass IRB based on token budget (small contexts go straight to final synthesis)
+                        def _estimate_tokens(s: str) -> int:
+                            try:
+                                import tiktoken
+                                enc = tiktoken.encoding_for_model(getattr(self.config, 'llm_model', 'gpt-4.1-mini'))
+                                return len(enc.encode(s or ''))
+                            except Exception:
+                                try:
+                                    # Rough heuristic
+                                    return max(1, int(len(s or '') / 4))
+                                except Exception:
+                                    return 1000000
+
+                        # Pretty-print a simple task graph for final synthesis context
+                        def _render_task_graph(plan_dict: dict) -> str:
+                            try:
+                                steps = plan_dict.get('steps', []) if isinstance(plan_dict, dict) else []
+                                lines = ["TASK GRAPH:"]
+                                for i, st in enumerate(steps, 1):
+                                    op = st.get('op')
+                                    params = st.get('params') or {}
+                                    # Keep params compact
+                                    import json as _json
+                                    p = _json.dumps(params, separators=(',',':'))[:200]
+                                    lines.append(f"{i}. {op} params={p}")
+                                return "\n".join(lines)
+                            except Exception:
+                                return ""
+
+                        # Compute raw context size once
+                        import json as _json
+                        raw_context_json = _json.dumps(all_raw_items, default=str, separators=(',',':'))
+                        # Bypass threshold defaults to 30k tokens; ensure it also fits target reporter context
+                        bypass_cap = 0
+                        try:
+                            import os as _os
+                            bypass_cap = int(_os.getenv('IRB_BYPASS_TOKENS', '30000'))
+                        except Exception:
+                            bypass_cap = 30000
+
+                        # Rough reporter context capacity
+                        def _reporter_cap() -> int:
+                            try:
+                                rep = getattr(self.config, 'reporter_model', None)
+                                if not rep:
+                                    # Use allocator's premium model default (gpt-5 ~30k)
+                                    return 30000
+                                low = rep.lower()
+                                if 'gpt-5' in low or '/o1' in low:
+                                    return 30000
+                                if 'gpt-4.1' in low:
+                                    return 1_000_000
+                                if 'claude-sonnet-4' in low:
+                                    return 200_000
+                                return 100_000
+                            except Exception:
+                                return 30000
+
+                        # Add CI artifacts note for the reporter to reference visual outputs
+                        ci_section = ""
+                        try:
+                            sid_val = self.note_keeper.session_id if self.note_keeper else "session"
+                            plots_dir_host = host_plots_dir
+                            if 'ci_files' in locals() or 'ci_downloaded' in locals():
+                                files_list = "\n".join([f"- {os.path.basename(p)}" for p in (ci_files or [])])
+                                downloaded_list = "\n".join([f"- {p}" for p in (ci_downloaded or [])])
+                                guidance = (
+                                    "Reporter guidance: Visual assets were generated by the code interpreter. "
+                                    "Prefer referencing the plots rather than reprinting raw matrices; summarize key patterns and clustering, "
+                                    "and include the plot file paths."
+                                )
+                                ci_section = (
+                                    "\n\n=== CODE INTERPRETER ARTIFACTS ===\n"
+                                    f"Session: {sid_val}\n"
+                                    f"Plots directory (host): {plots_dir_host}\n"
+                                    + ("Generated files (service):\n" + files_list + "\n" if (ci_files or []) else "")
+                                    + ("Downloaded files (host):\n" + downloaded_list + "\n" if (ci_downloaded or []) else "")
+                                    + guidance + "\n"
+                                )
+                        except Exception:
+                            ci_section = ""
+
+                        raw_tokens = _estimate_tokens(raw_context_json)
+                        fits_window = raw_tokens <= max(1, _reporter_cap() - 1000)
+                        should_bypass_irb = (not getattr(self.config, 'IRB_ENABLED', True)) or (raw_tokens <= bypass_cap and fits_window)
+
+                        report_context = None
+                        task_graph_text = _render_task_graph(plan)
+
+                        if should_bypass_irb:
+                            # Bypass IRB: synthesize directly from compact JSON context
+                            report_context = (task_graph_text + ci_section + "\n\nCONTEXT (JSON):\n" + raw_context_json)
+                        else:
+                            # IRB (Incremental Report Builder) path
+                            try:
+                                from .memory.incremental_report_builder import IncrementalReportBuilder
+                                from .memory.doc_ast import to_markdown as _to_md
+                            except Exception as e:
+                                logger.error(f"IRB import failed: {e}")
+                                raise
+                            # Build tool cache compatible with NoteKeeper
+                            trc = None
+                            try:
+                                if self.note_keeper and hasattr(self.note_keeper, 'session_path'):
+                                    from .memory.tool_result_cache import ToolResultCache
+                                    trc = ToolResultCache(str(self.note_keeper.session_path))
+                            except Exception:
+                                trc = None
+                            irb = IncrementalReportBuilder(self.note_keeper, None, trc, self.config)
+                            doc = irb.run(all_raw_items, obligations=[])
+                            if getattr(irb, 'failed', False):
+                                raise RuntimeError(f"IRB bug-out: {getattr(irb, 'fail_reason', 'unknown')}")
+                            irb_markdown = _to_md(doc)
+                            report_context = (task_graph_text + ci_section + "\n\n" + irb_markdown)
+                            # Persist IRB outputs for inspection under session notes
+                            try:
+                                if self.note_keeper and hasattr(self.note_keeper, 'synthesis_notes_path'):
+                                    sdir = self.note_keeper.synthesis_notes_path
+                                    os.makedirs(sdir, exist_ok=True)
+                                    # Save the raw IRB markdown
+                                    with open(os.path.join(sdir, 'irb_report.md'), 'w', encoding='utf-8') as f_md:
+                                        f_md.write(irb_markdown)
+                                    # Save the exact report context handed to the reporter
+                                    with open(os.path.join(sdir, 'report_context.md'), 'w', encoding='utf-8') as f_ctx:
+                                        f_ctx.write(report_context)
+                                    # Save the IRB document AST as JSON for deeper inspection
+                                    try:
+                                        import json as _json
+                                        payload = None
+                                        try:
+                                            payload = doc.model_dump()
+                                        except Exception:
+                                            payload = getattr(doc, 'dict', lambda: {})()
+                                        with open(os.path.join(sdir, 'irb_report.json'), 'w', encoding='utf-8') as f_js:
+                                            _json.dump(payload, f_js, indent=2, default=str)
+                                    except Exception as _serr:
+                                        logger.info(f"IRB AST serialization skipped: {_serr}")
+                            except Exception as _save_err:
+                                logger.info(f"IRB report save skipped: {_save_err}")
+
+                        # Final report generation (GPT-5 via DSPy) using GenomicSynthesizer
+                        final_answer = None
+                        try:
+                            from .dspy_signatures import GenomicSynthesizer
+                            import dspy
+                            model_id = getattr(self.config, 'reporter_model', None) or 'gpt-5-high'
+                            lm = make_lm(model_id, step="reporter")
+                            module = dspy.Predict(GenomicSynthesizer)
+                            # Optional neighborhoods payload from MacroPlanner env
+                            neighborhoods_payload = None
+                            try:
+                                if isinstance(combined_env, dict):
+                                    nb = combined_env.get('neighborhood_macro_result')
+                                    if nb:
+                                        import json as _json
+                                        neighborhoods_payload = _json.dumps(nb, default=str)
+                            except Exception:
+                                neighborhoods_payload = None
+
+                            with dspy.context(lm=lm):
+                                synth_res = module(
+                                    question=question,
+                                    context=report_context,
+                                    task_graph=task_graph_text,
+                                    synthesis_mode="comprehensive_report",
+                                    neighborhoods_json=neighborhoods_payload or "",
+                                )
+                            if synth_res and hasattr(synth_res, 'summary'):
+                                final_answer = synth_res.summary
+                        except Exception as e:
+                            logger.warning(f"Final report synthesis call failed or unavailable: {e}")
+
+                        # Fallbacks if synthesis not available
+                        if not final_answer:
+                            if not should_bypass_irb:
+                                # IRB markdown is a reasonable fallback
+                                final_answer = irb_markdown
+                            else:
+                                # As a last resort, emit a compact JSON summary
+                                final_answer = (
+                                    "Report synthesis unavailable; returning compact context.\n\n" + report_context[:20000]
+                                )
+                        # If CI produced local plots, prepend a concise artifacts note
+                        try:
+                            if 'ci_downloaded' in locals() and ci_downloaded:
+                                vis_note = "\n\n[Visual assets saved to:]\n" + "\n".join(f"- {p}" for p in ci_downloaded)
+                                final_answer = vis_note + "\n\n" + (final_answer or "")
+                        except Exception:
+                            pass
+
+                        return {
+                            "question": question,
+                            "answer": final_answer,
+                            "confidence": "high",
+                            "citations": "",
+                            "query_metadata": {
+                                "execution_mode": "mfp_planned",
+                                "note_taking_enabled": self.note_keeper is not None,
+                                "steps": len(plan.get('steps', [])),
+                                "attempts": attempts + 1,
+                            },
+                        }
+            except Exception as e:
+                logger.info(f"MacroPlanner path skipped: {e}")
+
+            # STEP 0B: Macro Fast Path (canonicalizer-first, deterministic execution)
+            try:
+                if getattr(self.config, "FAST_PATH_ENABLED", True):
+                    from .agent_executor import UnifiedAgentExecutor
+                    fp_agent = UnifiedAgentExecutor(self, note_keeper=self.note_keeper)
+                    fp_result = await fp_agent._try_fast_path_locus_discovery(question)
+                    if fp_result is not None:
+                        console.print("🚄 [bold green]Macro Fast Path executed[/bold green]")
+                        return {
+                            "question": question,
+                            "answer": fp_result.final_answer,
+                            "confidence": fp_result.confidence,
+                            "citations": fp_result.citations,
+                            "query_metadata": {
+                                "execution_mode": "macro_fast_path",
+                                "total_steps": fp_result.total_steps,
+                                "tools_used": fp_result.tools_used,
+                                "execution_time": fp_result.total_execution_time,
+                                "note_taking_enabled": self.note_keeper is not None,
+                            },
+                        }
+                    # If fast path seeded steps for FSM, continue using the same executor
+                    if getattr(fp_agent, "_seed_steps", None):
+                        if getattr(self.config, 'DISABLE_FSM', False):
+                            logger.info("FSM disabled by configuration; ignoring fast-path seed steps and continuing without FSM")
+                        else:
+                            console.print("🚦 [bold cyan]Fast Path seed ready → continuing with FSM[/bold cyan]")
+                            agent_res = await fp_agent._execute_agent_workflow_fsm(question, selected_genome=None)
+                            return {
+                                "question": question,
+                                "answer": agent_res.final_answer,
+                                "confidence": agent_res.confidence,
+                                "citations": agent_res.citations,
+                                "query_metadata": {
+                                    "execution_mode": "macro_fast_path_seeded_fsm",
+                                    "total_steps": agent_res.total_steps,
+                                    "tools_used": agent_res.tools_used,
+                                    "execution_time": agent_res.total_execution_time,
+                                    "note_taking_enabled": self.note_keeper is not None,
+                                },
+                            }
+            except Exception as e:
+                # Respect fail-fast on grammar/tool compile errors
+                if getattr(self.config, 'FAIL_FAST_ON_GRAMMAR_ERROR', False):
+                    raise
+                logger.info(f"Macro Fast Path not taken: {e}")
+
+            # STEP 1: Let the LLM decide execution strategy directly
+            if getattr(self.config, 'DISABLE_FSM', False):
+                console.print("🛑 [bold red]FSM disabled by configuration[/bold red]")
+                return {
+                    "question": question,
+                    "answer": "Macro Fast Path did not yield sufficient results and FSM is disabled. Please refine the marker/signature or enable FSM for agentic exploration.",
+                    "confidence": "low",
+                    "citations": "",
+                    "query_metadata": {
+                        "execution_mode": "disabled_fsm",
+                        "note_taking_enabled": self.note_keeper is not None,
+                    },
+                }
+            console.print("🤖 [bold]Using LLM-based execution planning[/bold]")
+            
+            # Use model allocation for planning (gpt-5 for complex planning tasks)
+>>>>>>> feat/agent-router-typed
             logger.info("🧠 Using model allocation for intelligent planning")
             
             def planning_call(module):
                 return module(user_query=question)
             
+<<<<<<< HEAD
             planning_result = self.model_allocator.create_context_managed_call(
                 task_name="agentic_planning",  # Maps to COMPLEX = o3
                 signature_class=PlannerAgent,
@@ -275,12 +1579,34 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 query=question,
                 task_context="Agentic planning for user query"
             )
+=======
+            planning_result = None
+            try:
+                import dspy
+                model_id = getattr(self.config, 'planner_model', None) or 'gpt-5-high'
+                lm = make_lm(model_id, step="planner")
+                module = dspy.Predict(PlannerAgent)
+                with dspy.context(lm=lm):
+                    planning_result = module(user_query=question)
+            except Exception as _e:
+                logger.warning(f"Planner call failed: {_e}")
+>>>>>>> feat/agent-router-typed
             
             if planning_result is None:
                 logger.warning("Model allocation failed for planning, falling back to default")
                 planning_result = self._run("agentic_planning", PlannerAgent, user_query=question)
             
             console.print(f"🎯 Planning decision: {'agentic' if planning_result.requires_planning else 'traditional'}")
+<<<<<<< HEAD
+=======
+            try:
+                self.tracer.emit("pipeline.plan_decision", {
+                    "requires_planning": bool(planning_result.requires_planning),
+                    "reasoning": getattr(planning_result, 'reasoning', None),
+                })
+            except Exception:
+                pass
+>>>>>>> feat/agent-router-typed
             console.print(f"💭 Reasoning: {planning_result.reasoning}")
             
             # Execute based on LLM's decision
@@ -356,21 +1682,232 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
     async def _execute_traditional_query(self, question: str, routing_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute traditional single-step query with enhanced genome scoping and compression."""
         console.print("📋 [dim]Using traditional query path[/dim]")
+<<<<<<< HEAD
         
         # Step 1: Classify the query type using model allocation (o3 for biological reasoning)
+=======
+
+        # Stage A deterministic guardrail via unified router
+        try:
+            router_decision = self.router.route(question)
+            if router_decision.tool == "whole_genome_reader":
+                toolcall = {"tool": router_decision.tool, "params": router_decision.params}
+                ok, errs = validate_toolcall(toolcall)
+                if not ok:
+                    raise ValueError(f"StageA whole_genome_reader toolcall invalid: {'; '.join(errs)}")
+
+                console.print("🧬 [bold cyan]Stage A routed to whole_genome_reader[/bold cyan]")
+                # Use curated spatial reader (global by default if no specific genome provided)
+                from .whole_genome_reader import read_all_genomes_spatial
+                spatial_results = await read_all_genomes_spatial(self.neo4j_processor)
+
+                if spatial_results and spatial_results.get('success') and spatial_results.get('genome_contexts'):
+                    scope = GenomeScope(genome_id="*", contig_ids=tuple(), coordinate_window=(0, 0))
+                    context = GenomicContext(
+                        structured_data=spatial_results['genome_contexts'],
+                        semantic_data=[],
+                        metadata={'analysis_type': 'SPATIAL_GENOMIC', 'tool_used': 'whole_genome_reader', 'genome_scope': scope.__dict__},
+                        query_time=0.0,
+                        compressed_context=""
+                    )
+                    formatted_context = self._format_spatial_context(context)
+                    return await self._synthesize_answer(
+                        question,
+                        formatted_context,
+                        query_type="SPATIAL_GENOMIC",
+                        analysis_type="spatial_genomic",
+                    )
+                else:
+                    return {
+                        "question": question,
+                        "answer": spatial_results.get('tool_output') if isinstance(spatial_results, dict) else "No spatial genomic data retrieved.",
+                        "confidence": "low",
+                        "citations": "",
+                        "query_metadata": {"analysis_type": "SPATIAL_GENOMIC", "tool_used": "whole_genome_reader"}
+                    }
+            # Stage B: database_query via templates
+            if router_decision.tool == "database_query":
+                params = router_decision.params or {}
+                template = params.get("template")
+                slots = params.get("slots", {})
+                # Inject default limit if not provided
+                if isinstance(slots, dict) and "limit" not in slots:
+                    try:
+                        slots["limit"] = int(self.policy_engine.get_max_results("database_query"))
+                    except Exception:
+                        slots["limit"] = 100
+                if template:
+                    try:
+                        self.tracer.emit("router.db_template.start", {"template": template})
+                    except Exception:
+                        pass
+                    # Execute template safely via processor
+                    db_result = await self.neo4j_processor.execute_named_template(template, slots)
+                    # Derive scope (non-overridable) from slots when available
+                    scope = self._derive_scope_from_slots(slots)
+                    # Convert to GenomicContext and synthesize
+                    context = GenomicContext(
+                        structured_data=db_result.results,
+                        semantic_data=[],
+                        metadata={
+                            'analysis_type': 'FUNCTIONAL_ANNOTATION',
+                            'tool_used': 'database_query',
+                            'template': template,
+                            'genome_scope': scope.__dict__ if scope else None,
+                            'result_count': db_result.metadata.get('result_count', 0)
+                        },
+                        query_time=db_result.execution_time,
+                        compressed_context=""
+                    )
+                    formatted_context = self._format_context(context)
+                    return await self._synthesize_answer(
+                        question,
+                        formatted_context,
+                        query_type=f"template:{template}",
+                        analysis_type="functional_annotation",
+                    )
+            # Stage B: literature_search
+            if router_decision.tool == "literature_search":
+                try:
+                    self.tracer.emit("router.literature.start", {})
+                except Exception:
+                    pass
+                lit = await self._execute_literature_search(question)
+                return {
+                    "question": question,
+                    "answer": lit or "",
+                    "confidence": "medium" if lit else "low",
+                    "citations": "",
+                    "query_metadata": {"tool": "literature_search", "genome_scope": None}
+                }
+            # Stage B: code_interpreter (no context yet; pass empty context)
+            if router_decision.tool == "code_interpreter":
+                try:
+                    self.tracer.emit("router.code_interpreter.start", {})
+                except Exception:
+                    pass
+                ci = await self._execute_code_interpreter(question, GenomicContext([], [], {}, 0.0))
+                return {
+                    "question": question,
+                    "answer": ci or "",
+                    "confidence": "medium" if ci else "low",
+                    "citations": "",
+                    "query_metadata": {"tool": "code_interpreter", "genome_scope": None}
+                }
+            # Stage B: similarity_search via LanceDB (by_id only)
+            if router_decision.tool == "similarity_search":
+                params = router_decision.params or {}
+                mode = params.get("mode", "by_id")
+                k = int(params.get("k", 10))
+                filters = params.get("filters", {})
+                if mode == "by_id":
+                    protein_id = params.get("id")
+                    try:
+                        self.tracer.emit("router.similarity.start", {"mode": mode, "k": k})
+                    except Exception:
+                        pass
+                    sim = await self.lancedb_processor.execute_similarity(mode, k, protein_id=protein_id, filters=filters)
+                    context = GenomicContext(
+                        structured_data=sim.results,
+                        semantic_data=[],
+                        metadata={
+                            'analysis_type': 'SIMILARITY_SEARCH',
+                            'tool_used': 'similarity_search',
+                            'mode': mode,
+                            'k': k,
+                            'genome_scope': None,
+                        },
+                        query_time=sim.execution_time,
+                        compressed_context=""
+                    )
+                    formatted_context = self._format_context(context)
+                    return await self._synthesize_answer(
+                        question,
+                        formatted_context,
+                        query_type=f"similarity:{mode}",
+                        analysis_type="functional_annotation",
+                    )
+                else:
+                    # by_sequence supported via runtime embedder (if deps available)
+                    sequence = params.get("sequence")
+                    try:
+                        sim = await self.lancedb_processor.execute_similarity(mode, k, sequence=sequence, filters=filters)
+                        context = GenomicContext(
+                            structured_data=sim.results,
+                            semantic_data=[],
+                            metadata={
+                                'analysis_type': 'SIMILARITY_SEARCH',
+                                'tool_used': 'similarity_search',
+                                'mode': mode,
+                                'k': k,
+                            },
+                            query_time=sim.execution_time,
+                            compressed_context=""
+                        )
+                        formatted_context = self._format_context(context)
+                        return await self._synthesize_answer(
+                            question,
+                            formatted_context,
+                            query_type=f"similarity:{mode}",
+                            analysis_type="functional_annotation",
+                        )
+                    except Exception as e:
+                        return {
+                            "question": question,
+                            "answer": f"Similarity by sequence unavailable: {e}",
+                            "confidence": "low",
+                            "citations": "",
+                            "error": "similarity_by_sequence_unavailable"
+                        }
+        except Exception as e:
+            logger.error(f"Stage A/B routing failed or not applicable: {e}")
+
+        # If router suggested something else, log suggestion for tracing
+        try:
+            if 'router_decision' in locals() and router_decision and router_decision.tool != "whole_genome_reader":
+                console.print(f"🧭 [dim]Router suggests: {router_decision.tool}[/dim]")
+        except Exception:
+            pass
+        
+        # Optional strict DB template mode: avoid free-form LLM Cypher by mapping question → template
+        import os as _os
+        if _os.getenv("AGENT_DB_TEMPLATES_ONLY", "1") == "1":
+            mapped = await self._execute_from_templates_only(question)
+            if mapped is not None:
+                return mapped
+
+        # Step 1: Classify the query type using model allocation (gpt-5 for biological reasoning)
+>>>>>>> feat/agent-router-typed
         def classification_call(module):
             return module(question=question)
         
         from .dspy_signatures import QueryClassifier
+<<<<<<< HEAD
         classification = self.model_allocator.create_context_managed_call(
             task_name="query_classification",  # Now maps to COMPLEX = o3
             signature_class=QueryClassifier,
             module_call_func=classification_call
         )
+=======
+        try:
+            import dspy
+            lm = make_lm(getattr(self.config, 'planner_model', None) or 'gpt-5-high', step="planner")
+            module = dspy.Predict(QueryClassifier)
+            with dspy.context(lm=lm):
+                classification = classification_call(module)
+        except Exception:
+            # Fallback to a small model
+            import dspy
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(QueryClassifier)
+            with dspy.context(lm=lm):
+                classification = classification_call(module)
+>>>>>>> feat/agent-router-typed
         
         # Step 1.5: Determine analysis type for biological context
         analysis_type = self._determine_analysis_type(question)
         
+<<<<<<< HEAD
         # Step 1.6: Handle SPATIAL_GENOMIC analysis with tool selection
         if analysis_type == "SPATIAL_GENOMIC":
             console.print("🧬 [bold cyan]Spatial genomic analysis detected - using whole_genome_reader tool[/bold cyan]")
@@ -408,6 +1945,12 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 logger.warning("No default LM configured, setting up fallback")
                 fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                 dspy.settings.configure(lm=fallback_lm)
+=======
+        # Step 1.6: Stage A handled spatial routing already; proceed with standard flow
+        
+        # classification should be set by now; if still missing, try minimal default
+        if classification is None:
+>>>>>>> feat/agent-router-typed
             classification = self._run("query_classification", QueryClassifier, question=question)
         
         console.print(f"📊 Query type: {classification.query_type}")
@@ -461,6 +2004,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             )
         
         from .dspy_signatures import ContextRetriever
+<<<<<<< HEAD
         retrieval_plan = self.model_allocator.create_context_managed_call(
             task_name="context_preparation",  # Now maps to COMPLEX = o3
             signature_class=ContextRetriever,
@@ -474,6 +2018,20 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 logger.warning("No default LM configured, setting up fallback")
                 fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                 dspy.settings.configure(lm=fallback_lm)
+=======
+        try:
+            import dspy
+            # Use planner model for retrieval planning (or default GPT-5)
+            lm = make_lm(getattr(self.config, 'planner_model', None) or 'gpt-5-high', step="planner")
+            module = dspy.Predict(ContextRetriever)
+            with dspy.context(lm=lm):
+                retrieval_plan = retrieval_call(module)
+        except Exception:
+            retrieval_plan = None
+        
+        if retrieval_plan is None:
+            logger.warning("Retrieval planning fell back to minimal default")
+>>>>>>> feat/agent-router-typed
             retrieval_plan = self._run("context_preparation", ContextRetriever,
                 db_schema=NEO4J_SCHEMA,
                 question=question,
@@ -590,6 +2148,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             )
         
         from .dspy_signatures import GenomicAnswerer
+<<<<<<< HEAD
         answer_result = self.model_allocator.create_context_managed_call(
             task_name="biological_interpretation",  # Maps to COMPLEX = o3
             signature_class=GenomicAnswerer,
@@ -604,6 +2163,20 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
                 fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                 dspy.settings.configure(lm=fallback_lm)
             
+=======
+        try:
+            import dspy
+            # Default to cost-effective model for intermediate answers
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(GenomicAnswerer)
+            with dspy.context(lm=lm):
+                answer_result = answer_call(module)
+        except Exception:
+            answer_result = None
+        
+        if answer_result is None:
+            logger.warning("Model allocation failed for answer generation, falling back to default")
+>>>>>>> feat/agent-router-typed
             answer_result = self._run("biological_interpretation", GenomicAnswerer,
                 question=question,
                 context=formatted_context
@@ -707,6 +2280,86 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             return True
         
         return False
+<<<<<<< HEAD
+=======
+
+    async def _execute_from_templates_only(self, question: str) -> Optional[Dict[str, Any]]:
+        """Map question heuristically to a named template (strict mode) and execute.
+
+        Returns a response dict if a template mapping is found, else None to continue legacy flow.
+        """
+        import re
+        # Protein by id: look for protein:ID pattern
+        m = re.search(r"\bprotein:([A-Za-z0-9:_\-\.]+)\b", question)
+        if m:
+            template = "protein_by_id"
+            pid = m.group(0) if m.group(0).startswith("protein:") else f"protein:{m.group(1)}"
+            slots = {"id": pid}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        # KO id: Kxxxxx
+        m = re.search(r"\bK(\d{5})\b", question)
+        if m:
+            template = "proteins_with_ko"
+            slots = {"ko": f"K{m.group(1)}"}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        # CAZy family: GH/PL/CE digits
+        m = re.search(r"\b(GH|PL|CE)(\d+)\b", question, re.IGNORECASE)
+        if m:
+            template = "cazy_family"
+            slots = {"family": f"{m.group(1).upper()}{m.group(2)}"}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        # Pathway map id: mapxxxxx
+        m = re.search(r"\bmap(\d{5})\b", question, re.IGNORECASE)
+        if m:
+            template = "pathway_membership"
+            slots = {"pathway": f"map{m.group(1)}"}
+            db_result = await self.neo4j_processor.execute_named_template(template, slots)
+            scope = self._derive_scope_from_slots(slots)
+            ctx = GenomicContext(
+                structured_data=db_result.results,
+                semantic_data=[],
+                metadata={"analysis_type": "FUNCTIONAL_ANNOTATION", "tool_used": "database_query", "template": template},
+                query_time=db_result.execution_time,
+                compressed_context="",
+            )
+            formatted = self._format_context(ctx)
+            return await self._synthesize_answer(question, formatted, query_type=f"template:{template}", analysis_type="functional_annotation")
+
+        return None
+>>>>>>> feat/agent-router-typed
     
     async def _execute_literature_search(self, question: str) -> Optional[str]:
         """Execute literature search tool."""
@@ -719,8 +2372,18 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             # Execute search
             result = literature_search(question, email, max_results=max_results)
+<<<<<<< HEAD
             logger.info(f"Literature search completed: {len(result)} characters")
             return result
+=======
+            # Handle envelope format
+            if isinstance(result, dict):
+                display = result.get("display_text") or ""
+            else:
+                display = str(result)
+            logger.info(f"Literature search completed: {len(display)} characters")
+            return display
+>>>>>>> feat/agent-router-typed
             
         except Exception as e:
             logger.error(f"Literature search failed: {e}")
@@ -739,6 +2402,7 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             
             # Execute code
             result = await code_interpreter_tool(analysis_code)
+<<<<<<< HEAD
             
             if result.get("success"):
                 logger.info("Code interpreter execution completed successfully")
@@ -746,6 +2410,19 @@ class GenomicRAG(dspy.Module if DSPY_AVAILABLE else object):
             else:
                 logger.warning(f"Code interpreter execution failed: {result.get('error', 'Unknown error')}")
                 return None
+=======
+            if isinstance(result, dict):
+                success = bool(result.get("success"))
+                display = result.get("display_text") or result.get("output") or ""
+                if success:
+                    logger.info("Code interpreter execution completed successfully")
+                    return display
+                else:
+                    logger.warning(f"Code interpreter execution failed: {result.get('message', result.get('error', 'Unknown error'))}")
+                    return None
+            # Fallback
+            return None
+>>>>>>> feat/agent-router-typed
                 
         except Exception as e:
             logger.error(f"Code interpreter execution failed: {e}")
@@ -797,6 +2474,138 @@ print("Data summary:", data_summary)
 print("General analysis for question: {question[:50]}...")
 print("Data available: {data_summary}")
 """
+<<<<<<< HEAD
+=======
+
+    # Fast-path finalization helper: render structure-first summary or optionally call heavy model
+    def _finalize_from_locus_cards(self, cards, meta, use_heavy: bool = False) -> str:
+        try:
+            if not use_heavy:
+                lines = []
+                lines.append(f"LocusDiscovery (deterministic): {len(cards)} seeds contextualized.")
+                for i, c in enumerate(cards or [], 1):
+                    contig = getattr(c, 'contig_id', '')
+                    genome = getattr(c, 'genome_id', '')
+                    neigh = len(getattr(c, 'neighbors', []) or [])
+                    seed_id = getattr(c, 'seed_protein_id', None) or '?'
+                    lines.append(f"{i}. seed={seed_id} contig={contig} genome={genome} neighbors={neigh}")
+                # Append concise kNN neighbor info if available
+                if meta and meta.get('knn'):
+                    lines.append("kNN stage executed.")
+                    kr = meta.get('knn_results')
+                    try:
+                        # kr may be a list with one dict mapping or a dict
+                        if isinstance(kr, list) and kr and isinstance(kr[0], dict):
+                            kr = kr[0]
+                        if isinstance(kr, dict):
+                            lines.append("Nearest neighbors:")
+                            shown = 0
+                            for sid, items in kr.items():
+                                if shown >= 5:
+                                    break
+                                top = items[:2] if isinstance(items, list) else []
+                                nbrs = ", ".join([f"{r.get('protein_id')} (d={r.get('distance')})" for r in top])
+                                lines.append(f"  - {sid}: {nbrs}")
+                                shown += 1
+                    except Exception:
+                        pass
+                # Append signature witness (boolean motifs) if present
+                try:
+                    if isinstance(meta, dict) and meta.get('witness'):
+                        lines.append("")
+                        if meta.get('signature'):
+                            lines.append(f"Signature: {meta.get('signature')}")
+                        lines.append("Signature Witness (boolean motifs):")
+                        wit = meta.get('witness') or {}
+                        shown = 0
+                        for sid, w in wit.items():
+                            if shown >= 5:
+                                break
+                            clauses = ", ".join(w.get('clauses', [])[:3]) if isinstance(w, dict) else ''
+                            motifs = ", ".join(w.get('motifs_true', [])[:4]) if isinstance(w, dict) else ''
+                            lines.append(f"  - {sid}: clauses=[{clauses}] motifs=[{motifs}]")
+                            shown += 1
+                except Exception:
+                    pass
+                return "\n".join(lines)
+            # Optional: single heavy synthesis over structured cards
+            # Deprecated heavy synthesis path removed; produce a simple structured summary
+            payload = {
+                "cards": [c.__dict__ if hasattr(c, '__dict__') else c for c in (cards or [])],
+                "meta": meta or {},
+            }
+            # Promote kNN neighbors to top-level keys for summary
+            try:
+                if isinstance(meta, dict):
+                    if 'neighbors_full' in meta:
+                        payload['neighbors_full'] = meta.get('neighbors_full')
+                    if 'knn_results' in meta:
+                        payload['knn_picked'] = meta.get('knn_results')
+                    if 'knn_stats' in meta:
+                        payload['knn_stats'] = meta.get('knn_stats')
+            except Exception:
+                pass
+            # Minimal textual summary
+            import json as _json
+            result_text = "LocusDiscovery summary (light):\n" + _json.dumps(payload, default=str, indent=2)[:8000]
+            # Deterministic postscript: always report LanceDB stage outcome if present
+            try:
+                ps_lines = []
+                if isinstance(payload, dict):
+                    has_knn = bool(payload.get('meta', {}).get('knn')) if isinstance(payload.get('meta'), dict) else False
+                    stats = payload.get('knn_stats') if 'knn_stats' in payload else payload.get('meta', {}).get('knn_stats')
+                    if has_knn or isinstance(stats, dict):
+                        ps_lines.append("\n\nLanceDB kNN (deterministic summary):")
+                        if isinstance(stats, dict):
+                            counts = stats.get('neighbors_counts') or {}
+                            topk = stats.get('topk')
+                            total_seeds = len(counts) if isinstance(counts, dict) else 0
+                            total_neighbors = 0
+                            if isinstance(counts, dict):
+                                try:
+                                    total_neighbors = sum(int(v or 0) for v in counts.values())
+                                except Exception:
+                                    total_neighbors = 0
+                            ps_lines.append(f"- Queried seeds: {total_seeds}; topk: {topk}")
+                            ps_lines.append(f"- Neighbors after filtering: {total_neighbors}")
+                            # List per-seed neighbor counts without artificial cap
+                            if isinstance(counts, dict) and counts:
+                                # Stable order: sort by count desc, then seed id
+                                try:
+                                    for sid, cnt in sorted(counts.items(), key=lambda kv: (-int(kv[1] or 0), str(kv[0]))):
+                                        ps_lines.append(f"  • {sid}: {cnt}")
+                                except Exception:
+                                    for sid, cnt in counts.items():
+                                        ps_lines.append(f"  • {sid}: {cnt}")
+                        else:
+                            ps_lines.append("- kNN stage executed; no statistics available")
+                    # Signature witness section
+                    wit = payload.get('meta', {}).get('witness') if isinstance(payload.get('meta'), dict) else None
+                    if isinstance(wit, dict) and wit:
+                        ps_lines.append("\nSignature Witness (boolean motifs):")
+                        if isinstance(payload.get('meta'), dict) and payload.get('meta', {}).get('signature'):
+                            ps_lines.append(f"- Signature: {payload.get('meta', {}).get('signature')}")
+                        shown = 0
+                        for sid, w in wit.items():
+                            if shown >= 5:
+                                break
+                            clauses = ", ".join(w.get('clauses', [])[:3]) if isinstance(w, dict) else ''
+                            motifs = ", ".join(w.get('motifs_true', [])[:4]) if isinstance(w, dict) else ''
+                            ps_lines.append(f"  • {sid}: clauses=[{clauses}] motifs=[{motifs}]")
+                            shown += 1
+                if ps_lines:
+                    try:
+                        ps_block = ''.join((line + '\n') for line in ps_lines)
+                        result_text = (result_text + "\n" + ps_block).rstrip()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return result_text
+        except Exception as e:
+            logger.warning(f"_finalize_from_locus_cards error: {e}")
+            return "No loci passed deterministic gating; planner escalation not needed."
+>>>>>>> feat/agent-router-typed
     
     def _integrate_tool_results(self, original_context: str, tool_results: Dict[str, Any]) -> str:
         """Integrate tool results into the context."""
@@ -893,11 +2702,159 @@ print("Data available: {data_summary}")
                 # Add metadata about fallback
                 fallback_context.metadata['used_fallback'] = True
                 fallback_context.metadata['fallback_reason'] = "Scoped query returned no results"
+<<<<<<< HEAD
                 return fallback_context
         
         logger.warning("❌ Both scoped and unscoped queries returned no results")
         return context
     
+=======
+        return fallback_context
+
+        logger.warning("❌ Both scoped and unscoped queries returned no results")
+        return context
+
+    async def _fetch_protein_annotations(self, protein_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not protein_ids:
+            return {}
+        try:
+            result = await self.neo4j_processor.execute_named_template(
+                'protein_annotations_by_ids',
+                {'protein_ids': protein_ids},
+            )
+        except Exception as exc:
+            logger.info(f"Annotation lookup skipped: {exc}")
+            return {}
+        rows = result.results if hasattr(result, 'results') else []
+        out: Dict[str, Dict[str, Any]] = {}
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                pid = row.get('protein_id')
+                if not isinstance(pid, str):
+                    continue
+                out[pid] = {
+                    'genome_id': row.get('genome_id'),
+                    'gene_id': row.get('gene_id'),
+                    'pfam_ids': row.get('pfam_ids') or [],
+                    'pfam_desc': row.get('pfam_desc') or [],
+                    'ko_ids': row.get('ko_ids') or [],
+                    'ko_desc': row.get('ko_desc') or [],
+                }
+        return out
+
+    async def _fulfill_similarity_plans(
+        self,
+        plans: List[Dict[str, Any]],
+    ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        if not plans:
+            return None, None
+        processor = getattr(self, 'lancedb_processor', None)
+        if processor is None:
+            raise RuntimeError("LanceDB processor not configured; cannot execute similarity search")
+
+        result_plans: List[Dict[str, Any]] = []
+        aggregate_rows: List[Dict[str, Any]] = []
+        annotations_needed: Set[str] = set()
+        any_annotate = False
+
+        for idx, plan in enumerate(plans, start=1):
+            normalized = [str(s).strip() for s in plan.get('seeds', []) if isinstance(s, str) and str(s).strip()]
+            raw = [str(s).strip() for s in plan.get('raw_seeds', []) if isinstance(s, str) and str(s).strip()]
+            if not normalized:
+                normalized = raw
+            if not normalized:
+                continue
+            try:
+                nn = max(1, min(int(plan.get('nn', 10)), 50))
+            except Exception:
+                nn = 10
+            filters = plan.get('filters') if isinstance(plan.get('filters'), dict) else {}
+            annotate = bool(plan.get('annotate', True))
+            any_annotate = any_annotate or annotate
+
+            qr = await processor.execute_similarity_batch(normalized, nn, filters=filters)
+            result_map: Dict[str, List[Dict[str, Any]]] = {}
+            if isinstance(qr.results, list) and qr.results and isinstance(qr.results[0], dict):
+                result_map = qr.results[0]  # type: ignore[assignment]
+
+            plan_rows: List[Dict[str, Any]] = []
+            for seed_raw, seed_norm in zip(raw if raw else normalized, normalized):
+                neighbors = result_map.get(seed_norm, []) if isinstance(result_map, dict) else []
+                for rank, item in enumerate(neighbors[:nn], start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    neighbor_id = item.get('protein_id')
+                    row = {
+                        'seed_protein_id': seed_raw or seed_norm,
+                        'neighbor_rank': rank,
+                        'neighbor_protein_id': neighbor_id,
+                        'similarity': item.get('similarity'),
+                        'distance': item.get('distance'),
+                        'genome_id': item.get('genome_id'),
+                        'sequence_length': item.get('sequence_length'),
+                    }
+                    plan_rows.append(row)
+                    aggregate_rows.append({
+                        'seed_protein_id': seed_raw or seed_norm,
+                        'neighbor_protein_id': neighbor_id,
+                        'similarity': item.get('similarity'),
+                        'genome_id': item.get('genome_id'),
+                    })
+                    if annotate and isinstance(neighbor_id, str):
+                        annotations_needed.add(neighbor_id)
+
+            result_plans.append({
+                'plan_index': idx,
+                'seeds': normalized,
+                'raw_seeds': raw,
+                'nn': nn,
+                'filters': filters,
+                'annotate': annotate,
+                'neighbors': plan_rows,
+                'execution_time': getattr(qr, 'execution_time', None),
+            })
+
+        if not result_plans:
+            return None, None
+
+        if any_annotate and annotations_needed:
+            ann_ids: List[str] = []
+            for pid in annotations_needed:
+                if not isinstance(pid, str):
+                    continue
+                pid = pid.strip()
+                if not pid:
+                    continue
+                if not pid.startswith('protein:'):
+                    pid = f'protein:{pid}'
+                ann_ids.append(pid)
+            annotations = await self._fetch_protein_annotations(ann_ids)
+            for plan in result_plans:
+                for row in plan['neighbors']:
+                    pid = row.get('neighbor_protein_id')
+                    lookup_key = pid if isinstance(pid, str) and pid.startswith('protein:') else f'protein:{pid}' if isinstance(pid, str) else None
+                    if lookup_key and lookup_key in annotations:
+                        row['annotations'] = annotations[lookup_key]
+
+        payload = {
+            'type': 'similarity_results',
+            'plan_count': len(result_plans),
+            'total_neighbors': sum(len(plan['neighbors']) for plan in result_plans),
+            'plans': result_plans,
+        }
+
+        macro_rows = aggregate_rows[:500]
+        macro = {
+            'type': 'macro_result',
+            'name': 'SimilarityResults',
+            'rows': macro_rows,
+            'row_count': len(aggregate_rows),
+        }
+        return payload, macro
+
+>>>>>>> feat/agent-router-typed
     async def _retrieve_context(self, query_type: str, retrieval_plan, question: str = "") -> GenomicContext:
         """
         Retrieve context based on query type and plan.
@@ -1111,6 +3068,7 @@ print("Data available: {data_summary}")
                 formatted_parts.append(f"{key}: {value}")
         
         return "\\n".join(formatted_parts)
+<<<<<<< HEAD
     
     async def _synthesize_answer(self, question: str, formatted_context: str, query_type: str, analysis_type: str) -> Dict[str, Any]:
         """Synthesize answer from formatted context using appropriate model allocation."""
@@ -1138,6 +3096,40 @@ print("Data available: {data_summary}")
                     fallback_lm = dspy.LM(model="openai/gpt-4.1-mini", temperature=0.0, max_tokens=8000)
                     dspy.settings.configure(lm=fallback_lm)
                 
+=======
+
+    def _derive_scope_from_slots(self, slots: Dict[str, Any]) -> Optional[GenomeScope]:
+        """Derive an immutable GenomeScope from DB template slots when possible."""
+        try:
+            if not isinstance(slots, dict):
+                return None
+            gid = slots.get("genome_id")
+            if isinstance(gid, str) and gid:
+                return GenomeScope(genome_id=str(gid), contig_ids=tuple(), coordinate_window=(0, 0))
+            contig = slots.get("contig")
+            if isinstance(contig, str) and contig:
+                return GenomeScope(genome_id="*", contig_ids=(str(contig),), coordinate_window=(0, 0))
+        except Exception:
+            pass
+        return None
+    
+    async def _synthesize_answer(self, question: str, formatted_context: str, query_type: str, analysis_type: str) -> Dict[str, Any]:
+        """Synthesize answer from formatted context using manual model selection (no allocator)."""
+        try:
+            from .dspy_signatures import GenomicAnswerer
+            import dspy
+            lm = dspy.LM(model="openai/gpt-4.1-mini")
+            module = dspy.Predict(GenomicAnswerer)
+            with dspy.context(lm=lm):
+                answer_result = module(
+                    question=question,
+                    context=formatted_context,
+                    analysis_type=analysis_type,
+                )
+            
+            # Fallback through _run if needed
+            if answer_result is None:
+>>>>>>> feat/agent-router-typed
                 answer_result = self._run("biological_interpretation", GenomicAnswerer,
                     question=question,
                     context=formatted_context,
@@ -1245,4 +3237,8 @@ print("Data available: {data_summary}")
         else:
             # Default to functional annotation for general queries
             logger.info(f"📊 Analysis type: FUNCTIONAL_ANNOTATION (default for general queries)")
+<<<<<<< HEAD
             return "functional_annotation"
+=======
+            return "functional_annotation"
+>>>>>>> feat/agent-router-typed

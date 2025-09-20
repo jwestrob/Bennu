@@ -1,0 +1,132 @@
+# Microbial Claude Matter Pipeline Configuration
+# All values reflect current defaults from the codebase
+
+# Global Pipeline Settings
+pipeline:
+  default_threads: 16                    # src/cli.py:81
+  input_directory: "data/raw"           # src/cli.py:61  
+  output_directory: "data"              # src/cli.py:66
+  from_stage: 0                         # src/cli.py:71
+  to_stage: 8                           # src/cli.py:76
+  file_extensions: [".fasta", ".fa", ".fna"]  # src/cli.py:136
+  copy_files: false                     # symlink mode, src/cli.py:138
+
+# Stage 0: Input Preparation
+input_preparation:
+  validate_format: true                 # src/ingest/00_prepare_inputs.py:167
+  valid_fasta_chars: "ATCGNRYSWKMBVDHX-"  # src/ingest/00_prepare_inputs.py:83
+  checksum_algorithm: "MD5"             # src/ingest/00_prepare_inputs.py:109
+
+# Stage 1: QUAST Quality Assessment  
+quast:
+  min_contig_length: 500               # src/cli.py:147, src/ingest/01_run_quast.py:379
+  threads_per_genome: 1                # src/cli.py:148, src/ingest/01_run_quast.py:384
+  max_workers: "cpu_count_minus_1"     # src/ingest/01_run_quast.py:461
+  flags: ["--no-html", "--no-icarus", "--no-snps", "--no-plots"]  # src/ingest/01_run_quast.py:203-206
+
+# Stage 2: DFAST_QC Taxonomy
+dfast_qc:
+  threads_per_genome: 8                # src/cli.py:159, src/ingest/02_dfast_qc.py:377
+  max_workers: "min_threads_2"         # src/cli.py:160
+  enable_completeness_contamination: false  # src/cli.py:161, src/ingest/02_dfast_qc.py:387
+  completeness_threshold: 90           # src/ingest/02_dfast_qc.py:66
+
+# Stage 3: Prodigal Gene Prediction
+prodigal:
+  mode: "single"                       # src/cli.py:170 (default, can be "meta")
+  genetic_code: 11                     # src/cli.py:171, src/ingest/03_prodigal.py:440
+  min_gene_length: 90                  # src/cli.py:172, src/ingest/03_prodigal.py:445
+  max_workers: "cpu_count_minus_1"     # src/ingest/03_prodigal.py:519
+  include_nucleotides: true            # src/cli.py:174, src/ingest/03_prodigal.py:455
+
+# Stage 4: Astra Functional Annotation
+astra:
+  threads: 16                           # src/ingest/04_astra_scan.py:130
+  databases: ["PFAM", "KOFAM"]         # src/cli.py:184, src/ingest/04_astra_scan.py:135
+  use_cutoffs: true                    # src/cli.py:185, src/ingest/04_astra_scan.py:140
+  search_strategies:
+    PFAM: "--cut_ga"                   # gathering cutoffs, src/ingest/04_astra_scan.py:73
+    KOFAM: "--cascade"                 # comprehensive search, src/ingest/04_astra_scan.py:75
+
+# Stage 5a: GECCO BGC Detection  
+gecco:
+  threads_per_job: 4                   # src/cli.py:194, src/ingest/gecco_bgc.py:514
+  max_workers: 2                       # src/cli.py:195, src/ingest/gecco_bgc.py:515
+  metagenome_mode: false              # src/ingest/gecco_bgc.py:32
+
+# Stage 5b: dbCAN CAZyme Annotation
+dbcan:
+  max_workers: 4                       # src/cli.py:204, src/ingest/dbcan_cazyme.py:330
+  threads_per_job: 4                   # src/cli.py:205, src/ingest/dbcan_cazyme.py:331
+  database_path: "data/dbcan_db"       # src/ingest/dbcan_cazyme.py:90
+  evalue_threshold: 1e-15              # src/ingest/dbcan_cazyme.py:332
+  coverage_threshold: 0.35             # src/ingest/dbcan_cazyme.py:333
+  overview_defaults:
+    evalue: 1e-16                      # src/ingest/dbcan_cazyme.py:228
+    coverage: 0.8                      # src/ingest/dbcan_cazyme.py:229
+
+# Stage 6: Knowledge Graph Construction
+knowledge_graph:
+  batch_processing_workers: 16          # src/build_kg/ various files
+  batch_size: 100                      # src/build_kg/ line 378
+  sequence_db_batch_size: 1000         # src/build_kg/ line 124
+  serialization_format: "turtle"      # src/build_kg/rdf_builder.py:837
+
+# Stage 7: ESM2 Protein Embeddings
+esm2:
+  model_name: "facebook/esm2_t6_8M_UR50D"  # src/ingest/06_esm2_embeddings.py:40
+  embedding_dimension: 320             # src/ingest/06_esm2_embeddings.py:71
+  max_sequence_length: 1024            # src/ingest/06_esm2_embeddings.py:113
+  batch_sizes:
+    mps: 16                            # Apple Silicon, src/ingest/06_esm2_embeddings.py:407
+    cuda: 32                           # NVIDIA GPU, src/ingest/06_esm2_embeddings.py:409  
+    cpu: 16                             # CPU fallback, src/ingest/06_esm2_embeddings.py:411
+  device_priority: ["mps", "cuda", "cpu"]  # src/ingest/06_esm2_embeddings.py:52-57
+
+# Database Configuration
+databases:
+  dbcan_path: "data/dbcan_db"          # src/ingest/dbcan_cazyme.py:90
+  reference_path: "data/reference"     # src/build_kg/rdf_builder.py:938
+  neo4j:
+    uri: "bolt://localhost:7687"       # src/llm/config.py:17
+    user: "neo4j"                      # src/llm/config.py:18
+    password: "your_new_password"      # src/llm/config.py:19
+  lancedb_path: "data/stage08_esm2/lancedb"  # src/llm/config.py:20
+
+# LLM Configuration  
+llm:
+  default_provider: "openai"           # src/llm/config.py:30
+  default_model: "gpt-5-2025-08-07"      # src/llm/config.py:31
+  cost_effective_model: "gpt-5-mini-2025-08-07"  # src/llm/config.py:36
+  premium_model: "gpt-5-2025-08-07"      # src/llm/config.py:37
+  model_mode: "cost_effective"         # src/llm/config.py:38
+  embedding_model: "text-embedding-3-small"  # src/llm/config.py:41
+  max_context_length: 8000             # src/llm/config.py:45
+  similarity_threshold: 0.7            # src/llm/config.py:46
+  max_results_per_query: 10            # src/llm/config.py:47
+  timeout: 30                          # src/llm/config.py:50
+  cache_enabled: true                  # src/llm/config.py:51
+
+# RAG System Configuration
+rag_system:
+  policy_engine_max_tokens: 30000      # src/llm/rag_system/policy_engine.py:21
+  compression_threshold: 30000         # src/llm/rag_system/policy_engine.py:36
+  progressive_synthesis_threshold: 20000  # src/llm/rag_system/progressive_synthesizer.py:491
+  task_splitter_max_tokens: 15000     # src/llm/rag_system/intelligent_task_splitter.py:41
+  max_chunks_per_operation: 8         # various RAG files
+  annotation_batch_size: 25           # annotation_tools.py
+  parallel_processing_batch: 25       # parallel_config.py
+
+# Performance Optimization
+performance:
+  apple_silicon_optimized: true       # ESM2 batch size 16, MPS priority
+  cpu_utilization: "cpu_count_minus_1"  # most stages
+  gpu_memory_cleanup: true            # automatic CUDA/MPS cache clearing
+  rate_limiting_tpm: 30000            # OpenAI 30K tokens per minute
+
+# Model Token Limits
+model_limits:
+  o3_premium_max_tokens: 20000        # temperature 1.0
+  gpt41_mini_max_tokens: 8000         # temperature 0.0
+  cost_effective_max_tokens: 8000     # various models
+  genomic_analyzer_default: 8000      # chunk analyzer limit

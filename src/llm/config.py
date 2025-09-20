@@ -17,7 +17,7 @@ class DatabaseConfig(BaseModel):
     neo4j_uri: str = Field(default="bolt://localhost:7687", description="Neo4j connection URI")
     neo4j_user: str = Field(default="neo4j", description="Neo4j username")
     neo4j_password: str = Field(default="your_new_password", description="Neo4j password")
-    lancedb_path: str = Field(default="data/stage06_esm2/lancedb", description="LanceDB database path")
+    lancedb_path: str = Field(default="data/stage08_esm2/lancedb", description="LanceDB database path")
 
 
 class LLMConfig(BaseModel):
@@ -28,13 +28,17 @@ class LLMConfig(BaseModel):
     
     # LLM provider settings
     llm_provider: str = Field(default="openai", description="LLM provider (openai, anthropic, local)")
-    llm_model: str = Field(default="o3", description="LLM model name")
+    llm_model: str = Field(default="gpt-5-2025-08-07", description="LLM model name")
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
     
     # Model selection configuration
     cost_effective_model: str = Field(default="gpt-4.1-mini", description="Cost-effective model for development and testing")
+<<<<<<< HEAD
     premium_model: str = Field(default="o3", description="Premium model for production and final synthesis")
+=======
+    premium_model: str = Field(default="gpt-5-2025-08-07", description="Premium model for production and final synthesis")
+>>>>>>> feat/agent-router-typed
     model_mode: str = Field(default="cost_effective", description="Current model mode: 'cost_effective' or 'premium'")
     
     # Embedding settings
@@ -49,6 +53,36 @@ class LLMConfig(BaseModel):
     # Performance settings
     timeout_seconds: int = Field(default=30, description="Query timeout in seconds")
     cache_enabled: bool = Field(default=True, description="Enable query result caching")
+
+    # Feature flags
+    IRB_ENABLED: bool = Field(default=True, description="Enable Incremental Report Builder (IRB) for synthesis; replaces ProgressiveSynthesizer when true.")
+    IRB_ALLOW_NLI: bool = Field(default=False, description="Allow optional NLI check for high-risk patches during IRB validation.")
+    IRB_EDITOR_TIER: str = Field(default="premium", description="Editor model tier for IRB (nano|mini|standard|premium). Default: premium (gpt-5 minimal).")
+    IRB_EDITOR_MAX_TOKENS: int = Field(default=800, description="Max tokens for each IRB editor call (keeps GPT-5 minimal). Default: 800")
+    IRB_MAX_EDITOR_CALLS: int = Field(default=30, description="Max number of IRB editor calls per run. Default: 30")
+    FAST_PATH_ENABLED: bool = Field(default=True, description="Enable deterministic macro options for common queries; bypass per-step LLM.")
+    USE_MFP_PLANNER: bool = Field(default=True, description="Enable agent-designed macro plan (operators) executed by Macro Fast Path.")
+    USE_CODE_INTERPRETER_IN_FAST_PATH: bool = Field(default=False, description="If true, run code interpreter post-processing in fast path when supported.")
+    CODE_INTERPRETER_URL: str = Field(default="http://localhost:8000", description="Base URL for code interpreter service")
+    CI_MODE: str = Field(default="auto", description="Code interpreter mode for finalizer: 'auto'|'always'|'never'")
+    CI_MODEL: str = Field(default="matplotlib", description="Finalizer analysis engine label (for printouts/logging): e.g., 'matplotlib', 'polars', 'python-ci'")
+    USE_CI_TOTALS_FOR_PATHWAYS: bool = Field(default=False, description="If true, always compute pathway totals via code interpreter (ko_pathway.list) rather than Neo4j graph totals.")
+    USE_NATIVE_TOTALS_FOR_PATHWAYS: bool = Field(default=True, description="If true, compute pathway totals natively from ko_pathway.list (recommended). Overrides DB totals.")
+    SKEPTIC_ENABLED: bool = Field(default=True, description="Run auditor after costly batched ops; may request mini-model adjudication on anomaly.")
+    FAIL_FAST_ON_GRAMMAR_ERROR: bool = Field(default=True, description="If grammar parse fails for fast-path intent, abort instead of falling back to FSM.")
+    FAIL_FAST_ON_TOOL_ERROR: bool = Field(default=True, description="If a tool step fails to compile/execute (e.g., template missing), abort agent workflow immediately.")
+    # Agent control flags
+    DISABLE_FSM: bool = Field(default=True, description="Disable FSM-based agent workflow entirely.")
+    DISABLE_WHOLE_GENOME_READER: bool = Field(default=True, description="Disable whole_genome_reader tool (blocks global genome reads).")
+    WGR_MAX_TOTAL_GENES: int = Field(default=100000, description="Hard cap on total genes for whole_genome_reader global runs.")
+    # Follow-up behavior
+    EMIT_FOLLOWUP_REQUESTS: bool = Field(default=True, description="Emit a follow-up proposal when evidence is thin")
+    FOLLOWUP_MIN_ROWS: int = Field(default=5, description="Minimum rows threshold to avoid follow-up proposal")
+
+    # Per-step model overrides (optional CLI/env)
+    planner_model: Optional[str] = Field(default=None, description="Override model for planner step")
+    irb_model: Optional[str] = Field(default=None, description="Override model for IRB editor step")
+    reporter_model: Optional[str] = Field(default=None, description="Override model for final report synthesis")
     
     @classmethod
     def from_env(cls) -> 'LLMConfig':
@@ -66,6 +100,21 @@ class LLMConfig(BaseModel):
         if os.getenv('LANCEDB_PATH'):
             db_config['lancedb_path'] = os.getenv('LANCEDB_PATH')
         
+        # Fallback: read connection.json written by Stage 07 (auth-less docker)
+        if not db_config.get('neo4j_uri'):
+            try:
+                conn_path = Path('data/neo4j/connection.json')
+                if conn_path.exists():
+                    conn = json.loads(conn_path.read_text())
+                    uri = conn.get('uri')
+                    if uri:
+                        db_config['neo4j_uri'] = uri
+                        # Auth-less container: leave user/password empty
+                        db_config['neo4j_user'] = ''
+                        db_config['neo4j_password'] = ''
+            except Exception:
+                pass
+
         if db_config:
             config_data['database'] = db_config
         
@@ -86,7 +135,67 @@ class LLMConfig(BaseModel):
             config_data['similarity_threshold'] = float(os.getenv('SIMILARITY_THRESHOLD'))
         if os.getenv('TIMEOUT_SECONDS'):
             config_data['timeout_seconds'] = int(os.getenv('TIMEOUT_SECONDS'))
-        
+        # Feature flags
+        if os.getenv('IRB_ENABLED') is not None:
+            config_data['IRB_ENABLED'] = os.getenv('IRB_ENABLED') not in ('0', 'false', 'False')
+        if os.getenv('IRB_ALLOW_NLI') is not None:
+            config_data['IRB_ALLOW_NLI'] = os.getenv('IRB_ALLOW_NLI') not in ('0', 'false', 'False')
+        if os.getenv('IRB_EDITOR_TIER') is not None:
+            config_data['IRB_EDITOR_TIER'] = os.getenv('IRB_EDITOR_TIER')
+        if os.getenv('IRB_EDITOR_MAX_TOKENS') is not None:
+            try:
+                config_data['IRB_EDITOR_MAX_TOKENS'] = int(os.getenv('IRB_EDITOR_MAX_TOKENS'))
+            except Exception:
+                pass
+        if os.getenv('IRB_MAX_EDITOR_CALLS') is not None:
+            try:
+                config_data['IRB_MAX_EDITOR_CALLS'] = int(os.getenv('IRB_MAX_EDITOR_CALLS'))
+            except Exception:
+                pass
+        if os.getenv('FAST_PATH_ENABLED') is not None:
+            config_data['FAST_PATH_ENABLED'] = os.getenv('FAST_PATH_ENABLED') not in ('0', 'false', 'False')
+        if os.getenv('SKEPTIC_ENABLED') is not None:
+            config_data['SKEPTIC_ENABLED'] = os.getenv('SKEPTIC_ENABLED') not in ('0', 'false', 'False')
+        if os.getenv('FAIL_FAST_ON_GRAMMAR_ERROR') is not None:
+            config_data['FAIL_FAST_ON_GRAMMAR_ERROR'] = os.getenv('FAIL_FAST_ON_GRAMMAR_ERROR') not in ('0', 'false', 'False')
+        if os.getenv('FAIL_FAST_ON_TOOL_ERROR') is not None:
+            config_data['FAIL_FAST_ON_TOOL_ERROR'] = os.getenv('FAIL_FAST_ON_TOOL_ERROR') not in ('0', 'false', 'False')
+        if os.getenv('DISABLE_FSM') is not None:
+            config_data['DISABLE_FSM'] = os.getenv('DISABLE_FSM') not in ('0', 'false', 'False')
+        if os.getenv('DISABLE_WHOLE_GENOME_READER') is not None:
+            config_data['DISABLE_WHOLE_GENOME_READER'] = os.getenv('DISABLE_WHOLE_GENOME_READER') not in ('0', 'false', 'False')
+        if os.getenv('WGR_MAX_TOTAL_GENES'):
+            try:
+                config_data['WGR_MAX_TOTAL_GENES'] = int(os.getenv('WGR_MAX_TOTAL_GENES'))
+            except Exception:
+                pass
+        if os.getenv('EMIT_FOLLOWUP_REQUESTS') is not None:
+            config_data['EMIT_FOLLOWUP_REQUESTS'] = os.getenv('EMIT_FOLLOWUP_REQUESTS') not in ('0', 'false', 'False')
+        if os.getenv('FOLLOWUP_MIN_ROWS'):
+            try:
+                config_data['FOLLOWUP_MIN_ROWS'] = int(os.getenv('FOLLOWUP_MIN_ROWS'))
+            except Exception:
+                pass
+        # Per-step model overrides via env (optional)
+        if os.getenv('PLANNER_MODEL'):
+            config_data['planner_model'] = os.getenv('PLANNER_MODEL')
+        if os.getenv('IRB_MODEL'):
+            config_data['irb_model'] = os.getenv('IRB_MODEL')
+        if os.getenv('REPORTER_MODEL'):
+            config_data['reporter_model'] = os.getenv('REPORTER_MODEL')
+        # Native/CI totals toggles
+        if os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') is not None:
+            config_data['USE_NATIVE_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_NATIVE_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
+        if os.getenv('USE_CI_TOTALS_FOR_PATHWAYS') is not None:
+            config_data['USE_CI_TOTALS_FOR_PATHWAYS'] = os.getenv('USE_CI_TOTALS_FOR_PATHWAYS') not in ('0', 'false', 'False')
+        # Code interpreter mode
+        if os.getenv('CI_MODE') is not None:
+            _ci = os.getenv('CI_MODE').strip().lower()
+            if _ci in ('auto','always','never'):
+                config_data['CI_MODE'] = _ci
+        if os.getenv('CI_MODEL') is not None:
+            config_data['CI_MODEL'] = os.getenv('CI_MODEL').strip()
+
         return cls(**config_data)
     
     @classmethod
@@ -141,11 +250,11 @@ class LLMConfig(BaseModel):
         status = {}
         
         # Check database connections
-        status['neo4j_configured'] = bool(
-            self.database.neo4j_uri and 
-            self.database.neo4j_user and 
-            self.database.neo4j_password
-        )
+        # Consider auth-less docker (empty user/password) as configured if URI present
+        has_uri = bool(self.database.neo4j_uri)
+        has_auth = bool(self.database.neo4j_user and self.database.neo4j_password)
+        authless_ok = has_uri and (self.database.neo4j_user == '' and self.database.neo4j_password == '')
+        status['neo4j_configured'] = bool((has_uri and has_auth) or authless_ok)
         
         status['lancedb_configured'] = bool(
             self.database.lancedb_path and 

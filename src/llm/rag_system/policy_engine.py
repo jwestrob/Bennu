@@ -18,8 +18,13 @@ class PolicyConfig:
     """Configuration for user preferences and policies."""
     
     # Performance and cost policies
+<<<<<<< HEAD
     max_tokens_per_query: int = 30000   # Match OpenAI's 30K TPM rate limit for o3
     max_latency_seconds: int = 600      # 10 minutes for complex o3 reasoning
+=======
+    max_tokens_per_query: int = 30000   # Match OpenAI's 30K TPM rate limit for premium (gpt-5)
+    max_latency_seconds: int = 600      # 10 minutes for complex gpt-5 reasoning
+>>>>>>> feat/agent-router-typed
     allow_expensive_tools: bool = True
     max_refinement_depth: int = 10      # Higher limit to allow proper recursive analysis when needed
     
@@ -226,4 +231,8 @@ def update_policy(key: str, value: Any):
 def get_current_policies() -> Dict[str, Any]:
     """Get current policy configuration."""
     global policy_engine
+<<<<<<< HEAD
     return policy_engine.get_policy_summary()
+=======
+    return policy_engine.get_policy_summary()
+>>>>>>> feat/agent-router-typed

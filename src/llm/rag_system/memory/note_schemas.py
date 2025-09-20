@@ -6,7 +6,11 @@ with validation, serialization, and type safety.
 """
 
 from datetime import datetime
+<<<<<<< HEAD
 from typing import Dict, List, Any, Optional, Union
+=======
+from typing import Dict, List, Any, Optional, Union, Set
+>>>>>>> feat/agent-router-typed
 from pydantic import BaseModel, Field, validator
 from enum import Enum
 
@@ -173,4 +177,25 @@ class SessionStats(BaseModel):
     def calculate_note_efficiency(cls, v, values):
         if 'total_tasks' in values and values['total_tasks'] > 0:
             return values['tasks_with_notes'] / values['total_tasks']
+<<<<<<< HEAD
         return 0.0
+=======
+        return 0.0
+
+
+# === IRB state notes ===
+class PatchNote(BaseModel):
+    patch_id: str
+    anchor: str
+    obligations: List[str]
+    applied: bool
+    validator_report: List[str] = []
+    evidence: Dict[str, Any] = {}
+    rationale: str = ""
+
+
+class ReportState(BaseModel):
+    processed_ids: Set[str] = set()
+    totals: Dict[str, int] = {}
+    reservoirs: Dict[str, List[str]] = {}
+>>>>>>> feat/agent-router-typed
